@@ -696,6 +696,67 @@ async def interpreter_execute(req: InterpreterPayload):
         
     return res.model_dump()
 
+# --- Görev geçmişi ve veri silme (FAZ 3 / etik çerçeve: kişisel veri hedefli sistemde
+#     retention hakkı): bellekteki kanıt dosyaları listelenir ve KALICI olarak silinir. ---
+
+@app.get("/api/tasks")
+async def api_list_tasks(client_id: str):
+    room = get_room(client_id)
+    storage = room["executor"].memory.storage_path
+    tasks = []
+    if os.path.isdir(storage):
+        for fn in sorted(os.listdir(storage)):
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(storage, fn)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                tasks.append({
+                    "task_id": data.get("task_id", fn[:-5]),
+                    "last_updated": data.get("last_updated"),
+                    "evidence_count": len(data.get("evidence", [])),
+                    "confidence": data.get("confidence"),
+                })
+            except Exception:
+                continue
+    active = list(room.get("active_tasks", {}).keys())
+    return {"tasks": tasks, "active_tasks": active}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def api_delete_task(task_id: str, client_id: str):
+    """Bir görevin tüm izlerini kalıcı siler (bellek dosyası + aktif snapshot)."""
+    room = get_room(client_id)
+    removed_snapshot = room.get("active_tasks", {}).pop(task_id, None)
+
+    mem_path = os.path.join(room["executor"].memory.storage_path, f"{task_id}.json")
+    file_deleted = False
+    if os.path.exists(mem_path):
+        try:
+            os.remove(mem_path)
+            file_deleted = True
+        except OSError as e:
+            return JSONResponse(
+                {"error": {"code": "DELETE_FAILED", "message": str(e)[:120]}},
+                status_code=500,
+            )
+
+    if not removed_snapshot and not file_deleted:
+        return JSONResponse(
+            {"error": {"code": "NOT_FOUND", "message": f"Görev bulunamadı: {task_id}"}},
+            status_code=404,
+        )
+
+    broadcast_log(client_id, "INFO", f"VERİ SİLME: '{task_id}' görev izleri kalıcı olarak silindi (retention).")
+    return {
+        "status": "deleted",
+        "task_id": task_id,
+        "snapshot_removed": removed_snapshot is not None,
+        "memory_file_deleted": file_deleted,
+    }
+
+
 static_dir = "frontend/dist" if os.path.exists("frontend/dist") else "frontend"
 os.makedirs(static_dir, exist_ok=True)
 # Sona ekliyoruz ki api rotaları statik dosyalardan önce ezilmesin
