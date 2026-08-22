@@ -228,9 +228,13 @@
   const agentList = [
     { id: "mirror_truth", name: "MIRROR TRUTH", colorHex: "#16a34a" },
     { id: "autonomous_verifier", name: "VERIFIER", colorHex: "#9333ea" },
-    { id: "human_behavior", name: "HUMAN BEHAVIOR", colorHex: "#d97706" },
+    { id: "human_behavior", name: "BEHAVIOR", colorHex: "#d97706" },
+    { id: "passion_mapper", name: "PASSION MAPPER", colorHex: "#f59e0b" },
+    { id: "friction_detector", name: "FRICTION & BOUNDS", colorHex: "#ef4444" },
+    { id: "cognitive_profiler", name: "COGNITIVE TONE", colorHex: "#06b6d4" },
     { id: "resonance_calc", name: "RESONANCE CALC", colorHex: "#2563eb" },
-    { id: "pattern_interrupt", name: "PATTERN INTERRUPT", colorHex: "#dc2626" }
+    { id: "pattern_interrupt", name: "PATTERN INTERRUPT", colorHex: "#dc2626" },
+    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE", colorHex: "#10b981" }
   ];
   let runs: Record<string, any> = {};
   let currentAgent = "";
@@ -240,6 +244,15 @@
   let haltedReason: string | null = null;
   let taskState = "IDLE";
   let taskId = "";
+  let holisticProfile: any = null;
+  let copyFeedback = false;
+
+  function copyMessage(text: string) {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    copyFeedback = true;
+    setTimeout(() => { copyFeedback = false; }, 2000);
+  }
 
   $: {
     if ($taskStatus) {
@@ -248,6 +261,7 @@
       if ($taskStatus.planned_agents) plannedAgents = $taskStatus.planned_agents;
       if ($taskStatus.completed_agents) completedAgents = $taskStatus.completed_agents;
       if ($taskStatus.halted_reason !== undefined) haltedReason = $taskStatus.halted_reason;
+      if ($taskStatus.holistic_profile) holisticProfile = $taskStatus.holistic_profile;
 
       if ($taskStatus.reso) {
         ritualMatchScore = ($taskStatus.reso.ritual_match_score || 0) * 100;
@@ -437,6 +451,91 @@
         <span class="text-[8px] text-gray-500 font-mono">ASPASIA Gözlemci Modu Aktif</span>
       </div>
     </div>
+
+    <!-- 360° HOLISTIC HUMAN RECOGNITION PANEL -->
+    {#if holisticProfile}
+    <div class="brass rounded-[8px] p-4 mt-1 border-2 border-[#10b981]/50 shadow-lg">
+      <div class="flex justify-between items-center mb-3">
+        <div class="font-cinzel font-extrabold text-[13px] tracking-wider text-dark flex items-center gap-2">
+          <span>🧠 360° BÜTÜNCÜL İNSAN ÇÖZÜMLEMESİ</span>
+          <span class="bg-[#10b981] text-black font-mono text-[9px] px-2 py-0.5 rounded font-bold">TAM HARİTA</span>
+        </div>
+        <div class="text-[9px] font-bold text-dark font-mono">@{holisticProfile.username || 'target'}</div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <!-- Tutkular & Neşe -->
+        <div class="bg-black/90 p-2.5 rounded border border-[#f59e0b]/40">
+          <div class="text-[9px] font-bold text-[#f59e0b] tracking-wider mb-1 flex items-center gap-1">
+            <span>✨ TUTKULAR & NEŞE</span>
+          </div>
+          {#if holisticProfile.passions?.core_passions?.length}
+            <div class="flex flex-wrap gap-1 mt-1">
+              {#each holisticProfile.passions.core_passions as p}
+                <span class="bg-[#f59e0b]/20 text-[#fcd34d] text-[8px] px-1.5 py-0.5 rounded border border-[#f59e0b]/30">{p}</span>
+              {/each}
+            </div>
+          {:else}
+            <div class="text-[8px] text-gray-500 italic">Tespit edilemedi</div>
+          {/if}
+          {#if holisticProfile.passions?.energizing_topics?.length}
+            <div class="text-[7px] text-[#c9a86a] mt-2">Enerji Veren: {holisticProfile.passions.energizing_topics.join(', ')}</div>
+          {/if}
+        </div>
+
+        <!-- Hassasiyetler & Sınırlar -->
+        <div class="bg-black/90 p-2.5 rounded border border-[#ef4444]/40">
+          <div class="text-[9px] font-bold text-[#ef4444] tracking-wider mb-1 flex items-center gap-1">
+            <span>🛡️ HASSASİYETLER & SINIRLAR</span>
+          </div>
+          {#if holisticProfile.frictions?.sensitivities?.length}
+            <div class="flex flex-wrap gap-1 mt-1">
+              {#each holisticProfile.frictions.sensitivities as s}
+                <span class="bg-[#ef4444]/20 text-[#fca5a5] text-[8px] px-1.5 py-0.5 rounded border border-[#ef4444]/30">{s}</span>
+              {/each}
+            </div>
+          {:else}
+            <div class="text-[8px] text-gray-500 italic">Belirgin sınır yok</div>
+          {/if}
+          {#if holisticProfile.frictions?.boundary_signals?.length}
+            <div class="text-[7px] text-red-400 mt-2">Sınırlar: {holisticProfile.frictions.boundary_signals.join(', ')}</div>
+          {/if}
+        </div>
+
+        <!-- İletişim Üslubu & Bilişsel Ton -->
+        <div class="bg-black/90 p-2.5 rounded border border-[#06b6d4]/40">
+          <div class="text-[9px] font-bold text-[#06b6d4] tracking-wider mb-1 flex items-center gap-1">
+            <span>💬 İLETİŞİM ÜSLUBU</span>
+          </div>
+          <div class="text-[8px] text-gray-300 space-y-0.5 mt-1">
+            <div>Ton: <b class="text-[#67e8f9]">{holisticProfile.cognitive?.communication_tone || 'Dengeli'}</b></div>
+            <div>Düzey: <b class="text-[#67e8f9]">{holisticProfile.cognitive?.complexity_level || 'Orta'}</b></div>
+            <div>Sosyal Yaklaşım: <b class="text-[#67e8f9]">{holisticProfile.cognitive?.social_orientation || 'Bağımsız'}</b></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sahici Köprü ve Mesaj Önerisi -->
+      {#if holisticProfile.bridge}
+        <div class="bg-black p-3 rounded border-2 border-[#10b981] relative">
+          <div class="flex justify-between items-center mb-1">
+            <div class="text-[10px] font-bold text-[#10b981] tracking-wider">🌿 SAHİCİ DİYALOG KÖPRÜSÜ (ÖNERİLEN İLK TEMAS)</div>
+            <div class="text-[9px] text-[#c9a86a] font-mono">Rezonans: %{(holisticProfile.bridge.resonance_score * 100).toFixed(0)}</div>
+          </div>
+          <div class="text-[9px] text-[#c9a86a] mb-2"><b>Konu:</b> {holisticProfile.bridge.authentic_opening_topic}</div>
+          <div class="bg-[#111] p-2 rounded border border-[#333] text-[#f5f1e8] text-[11px] font-mono leading-relaxed select-all">
+            "{holisticProfile.bridge.suggested_opening_message}"
+          </div>
+          <div class="flex justify-between items-center mt-2">
+            <div class="text-[7px] text-gray-400 italic flex-1 mr-2">{holisticProfile.bridge.conversation_starter_rationale}</div>
+            <button class="bg-[#10b981] hover:brightness-110 text-black font-bold text-[9px] px-3 py-1 rounded font-cinzel cursor-pointer" on:click={() => copyMessage(holisticProfile.bridge.suggested_opening_message)}>
+              {copyFeedback ? '✓ KOPYALANDI' : '📋 METNİ KOPYALA'}
+            </button>
+          </div>
+        </div>
+      {/if}
+    </div>
+    {/if}
   </div>
 
   <!-- ==================== RIGHT: AGENT CHAIN ==================== -->

@@ -163,6 +163,7 @@ async def broadcast_snapshot(client_id: str, snapshot: Any):
         "completed_agents": snapshot.completed_agents,
         "halted_reason": getattr(snapshot, "halted_reason", None),
         "resonance_score": getattr(snapshot, "resonance_score", None),
+        "holistic_profile": snapshot.holistic_profile.model_dump(mode="json") if getattr(snapshot, "holistic_profile", None) else None,
         "runs": {
             name: {
                 "status": getattr(r, "status", None),
