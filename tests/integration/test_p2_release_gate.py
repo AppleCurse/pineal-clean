@@ -1,20 +1,14 @@
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 from agent_core.task_executor import PinealExecutor
 from agent_core.agents.pattern_interrupt import PatternInterrupt
-from agent_core.agents.autonomous_verifier import AutonomousVerifier
-from agent_core.agents.mirror_truth import MirrorOfTruth
-from agent_core.agents.human_behavior import HumanBehaviorAnalyzer
-from agent_core.agents.resonance_calculator import ResonanceCalculator
 
 # Import Pydantic models for mocking
 from agent_core.agents.mirror_truth import MirrorReflection
 from agent_core.agents.autonomous_verifier import VerifierReport, VerificationResult
 from agent_core.agents.human_behavior import DigitalColdReading, MicroSignal
 from agent_core.agents.pattern_interrupt import GeneratedMessage, ScenarioResponse
-from agent_core.agents.resonance_calculator import ResonanceProfile
 
 async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
     model = schema or response_model

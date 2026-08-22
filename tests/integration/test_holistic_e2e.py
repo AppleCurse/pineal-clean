@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from agent_core.task_executor import PinealExecutor
 from agent_core.domain.memory_models import (
-    PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge, TaskSnapshot
+    PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
 )
 from agent_core.services.llm_gateway import LLMGateway
 
@@ -78,7 +78,7 @@ async def test_holistic_360_e2e_pipeline():
                 resonance_potential=0.9
             )
         elif name == "GeneratedMessage":
-            from agent_core.agents.pattern_interrupt import GeneratedMessage, ScenarioResponse
+            from agent_core.agents.pattern_interrupt import GeneratedMessage
             return GeneratedMessage(
                 message="O sessiz sinyal, tesadüf değil.",
                 strategy="void_resonance",

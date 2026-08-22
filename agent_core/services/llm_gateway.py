@@ -1,18 +1,15 @@
 import os
 import json
-import re
-import os
-import json
-import re
 from openai import AsyncOpenAI
 from pydantic import BaseModel
-from typing import Type, TypeVar, Any
+from typing import Type, TypeVar, Any, Optional, List
 
 T = TypeVar('T', bound=BaseModel)
 
 class LLMGateway:
     TIER_1_MODEL = "meta-llama/llama-3.3-70b-instruct" # Yüksek IQ (Karanlık Triad, Karşı-hamle)
     TIER_2_MODEL = "meta-llama/llama-3.1-8b-instruct" # Hızlı/Ucuz (Basit veri işleme)
+    DEFAULT_VISION_MODEL = "meta-llama/llama-3.2-90b-vision-instruct" # FAZ 3: görsel destekli varsayılan (env: OPENROUTER_VISION_MODEL)
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
@@ -51,7 +48,12 @@ class LLMGateway:
         except Exception:
             self.local_client = None
 
-    async def query(self, prompt: str, temperature: float = 0.7, tier: int = 1, model: str = None, system_prompt: str = None) -> str:
+    async def query(self, prompt: str, temperature: float = 0.7, tier: int = 1, model: str = None, system_prompt: str = None, images: Optional[List[str]] = None) -> str:
+        """Metin (ve opsiyonel data-URL görseller) sorgusu.
+
+        images verilirse (ve model açıkça belirtilmemişse) vision destekli
+        varsayılan modele geçilir; içerik multimodal content dizisi olarak gönderilir.
+        """
         if self.circuit_open:
             raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu")
         
@@ -69,12 +71,22 @@ class LLMGateway:
             if not self.client:
                 raise RuntimeError("LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç.")
             target_client = self.client
-            selected_model = model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
+            if images and not model:
+                # FAZ 3: görsel varsa vision modeline geç (env ile ezilebilir)
+                selected_model = os.getenv("OPENROUTER_VISION_MODEL", self.DEFAULT_VISION_MODEL)
+            else:
+                selected_model = model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
         
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        if images:
+            # OpenAI-uyumlu multimodal content
+            content = [{"type": "text", "text": prompt}]
+            content += [{"type": "image_url", "image_url": {"url": u}} for u in images]
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": prompt})
 
         import asyncio
         import logging

@@ -1,7 +1,6 @@
-import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, List, Any, Union
+from typing import Optional, List, Union
 from pydantic import BaseModel, Field
 
 class Severity(str, Enum):

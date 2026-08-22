@@ -1,0 +1,11 @@
+# Ruff — yalnızca gerçek hataları kapıla (stil ihlalleri PR'ı bloklamaz).
+# Bilinçli dar kapsam: E9 (syntax) + F (pyflakes: kullanılmayan import, tanımsız ad vb.)
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E9", "F"]
+
+[lint.per-file-ignores]
+# Testlerde fixture amaçlı iç erişimler ve uzun sahte veriler normaldir.
+"tests/*" = ["F841"]

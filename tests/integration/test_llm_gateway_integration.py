@@ -1,6 +1,4 @@
 import pytest
-import os
-import asyncio
 from agent_core.services.llm_gateway import LLMGateway
 
 @pytest.mark.asyncio

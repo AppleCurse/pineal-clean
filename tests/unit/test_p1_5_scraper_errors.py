@@ -14,7 +14,6 @@ Kanıtlanacak garantiler:
   J. run_scraper.py: executor, scraper failure'ını başarılı gibi raporlamıyor
 """
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_core.scraper.instagram_ghost import (

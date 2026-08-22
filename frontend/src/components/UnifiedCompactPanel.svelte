@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
-  import { clientId, API_BASE, WS_BASE, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
+  import { clientId, apiFetch, wsUrl, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
   
   // ==========================================
   // TARGET & ENGINE TELEMETRY (TargetPanel)
@@ -17,7 +17,7 @@
     isSettingModel = true;
     localModelActive = !localModelActive;
     try {
-      const res = await fetch(`${API_BASE}/api/vault`, {
+      const res = await apiFetch(`/api/vault`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: $clientId, use_local: localModelActive, local_model: selectedLocalModel })
@@ -34,7 +34,7 @@
 
   async function updateLocalModelOnly() {
     try {
-      await fetch(`${API_BASE}/api/vault`, {
+      await apiFetch(`/api/vault`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: $clientId, use_local: localModelActive, local_model: selectedLocalModel })
@@ -49,7 +49,7 @@
     if (!targetUrl) return;
     isProcessing.set(true);
     try {
-      const res = await fetch(`${API_BASE}/api/initiate`, {
+      const res = await apiFetch(`/api/initiate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -86,7 +86,7 @@
       const payload: any = { client_id: $clientId };
       if (apiKey) payload.api_key = apiKey;
       if (cookie) payload.x_cookie = cookie;
-      const res = await fetch(`${API_BASE}/api/vault`, {
+      const res = await apiFetch(`/api/vault`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -164,7 +164,7 @@
       // Aspasia is an observer, no direct commands. Only executor commands handled on backend (if any)
       if (activeAgentId !== 'ASPASIA') payload.action_type = `DIRECT_CMD_${activeAgentId}`;
 
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await apiFetch(`${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -177,7 +177,7 @@
       // MÜDAHALE (INTERVENTION) KONTROLÜ
       if (data.action && data.action.action_type) {
           try {
-              await fetch(`${API_BASE}/api/executor/intervene`, {
+              await apiFetch(`/api/executor/intervene`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({

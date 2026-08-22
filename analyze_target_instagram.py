@@ -9,7 +9,6 @@ sys.stdout.reconfigure(encoding='utf-8')
 from playwright.async_api import async_playwright
 from agent_core.task_executor import PinealExecutor
 from agent_core.domain.memory_models import TaskSnapshot
-from agent_core.scraper.instagram_ghost import InstagramGhostScraper
 
 async def main():
     target_url = "https://www.instagram.com/cemiyettesimyaci/"
@@ -38,13 +37,12 @@ async def main():
                 print("[KASA] Arama Motoru Anahtarları yüklendi.")
 
     # 2. Hayalet Tarayıcı ile Canlı Kazıma
-    print(f"\n[1/3] Hayalet Tarayıcı Başlatılıyor (System Chrome)...")
+    print("\n[1/3] Hayalet Tarayıcı Başlatılıyor (System Chrome)...")
     scraped_bio = ""
     scraped_posts = []
     scraped_followers = None
     scraped_following = None
     full_name = ""
-    is_private = False
 
     chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     launch_kwargs = {"headless": True, "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]}

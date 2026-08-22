@@ -1,0 +1,18 @@
+services:
+  pineal:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env    # yoksa sorun değil: cp .env.example .env ile oluşturun
+        required: false
+    environment:
+      - PINEAL_PORT=8000
+    volumes:
+      - pineal_memory:/app/memory      # kalıcı kanıt/öğrenme belleği
+      - pineal_vault:/app/vault-data   # (isteğe bağlı) vault dışa aktarımı
+    restart: unless-stopped
+
+volumes:
+  pineal_memory:
+  pineal_vault:

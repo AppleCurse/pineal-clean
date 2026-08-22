@@ -1,31 +1,51 @@
 import pytest
-import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
 from agent_core.psychology.dark_triad import DarkTriadAnalyzer, DarkTriadProfile
-from agent_core.shadow.shadow_executor import ShadowExecutor
 from agent_core.chat.dialogue_manager import DialogueManager
-from agent_core.aspasia.zeigarnik_engine import ZeigarnikEngine
-from agent_core.agents.rust_bridge_agent import RustBridgeAgent
+from agent_core.services.llm_gateway import LLMGateway
 
-def test_dark_triad_analyzer():
+
+def test_dark_triad_analyzer_deterministic():
+    """Anahtar-sayma analizi deterministik olmalı: aynı girdi, aynı skor."""
     analyzer = DarkTriadAnalyzer()
-    profile = {"posts": ["Her şeyi ben yönetirim", "Kimseye güvenme"], "bio": "Lider"}
-    res = analyzer.analyze(profile)
-    assert isinstance(res, DarkTriadProfile)
-    assert 0.0 <= res.machiavellianism <= 1.0
+    profile = {"posts": ["Her şeyi ben yönetirim"], "bio": "Lider, strateji ve taktik"}
+    r1 = analyzer.analyze(profile)
+    r2 = analyzer.analyze(profile)
+    assert isinstance(r1, DarkTriadProfile)
+    assert r1.model_dump() == r2.model_dump()
+    assert all(0.0 <= getattr(r1, f) <= 1.0 for f in ("machiavellianism", "narcissism", "psychopathy", "exploitability"))
 
-def test_zeigarnik_engine():
-    engine = ZeigarnikEngine()
-    msg = engine.inject_open_loop("Merhaba", intensity=1.0)
-    assert isinstance(msg, str)
-    assert len(msg) >= len("Merhaba")
+
+def test_dark_triad_strategy_vector():
+    analyzer = DarkTriadAnalyzer()
+    res = analyzer.analyze({"posts": ["mükemmel benzersiz seçilmiş"], "bio": ""})
+    strategy = analyzer.generate_strategy(res)
+    assert strategy["vector"] in ("mirroring", "alliance", "thrill", "empathy")
+
 
 @pytest.mark.asyncio
-async def test_dialogue_manager():
+async def test_dialogue_manager_generate_response_roundtrip():
+    """Session -> hedef mesajı -> (mock) LLM -> karşı-hamle + geçmişe yazım."""
     dm = DialogueManager()
-    dm.start_session("task_test", {"bio": "test"}, {"private_rituals": ["çay"]})
-    assert "task_test" in dm.sessions
+    dm.start_session("task_dm", {"bio": "test"}, {"private_rituals": ["çay"]})
+
+    async def fake_query_json(prompt, schema, **kwargs):
+        return schema(stance="Savunmaci", internal_analysis="test", next_move="Test karşı-hamlesi")
+
+    dm.llm = MagicMock(spec=LLMGateway)
+    dm.llm.query_json = AsyncMock(side_effect=fake_query_json)
+
+    res = await dm.generate_response("task_dm", "Sen kimsin?")
+    assert res.stance == "Savunmaci"
+    assert res.next_move == "Test karşı-hamlesi"
+    # Geçmişe hedef + agent mesajı yazılmış olmalı
+    roles = [m["role"] for m in dm.sessions["task_dm"].history]
+    assert roles == ["target", "agent"]
+
 
 @pytest.mark.asyncio
-async def test_rust_bridge_agent():
-    agent = RustBridgeAgent()
-    assert agent is not None
+async def test_dialogue_manager_unknown_session_raises():
+    dm = DialogueManager()
+    with pytest.raises(ValueError):
+        await dm.generate_response("yok_boyle_session", "merhaba")

@@ -1,12 +1,16 @@
 from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
+from contextlib import asynccontextmanager
+from collections import defaultdict, deque
 import asyncio
 import json
 import os
 import hashlib
+import time
 from datetime import datetime
 
 try:
@@ -42,15 +46,80 @@ try:
 except Exception:
     aspasia_chief = None
 
-app = FastAPI(title="PINEAL-HERETIC v2.0 API")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    yield
+    # Kapanista oda gonderici task'lerini iptal et (temiz kapanis)
+    for room in application.state.rooms.values():
+        task = room.get("sender_task")
+        if task and not task.done():
+            task.cancel()
+    application.state.rooms.clear()
+
+app = FastAPI(title="PINEAL-HERETIC v2.0 API", lifespan=lifespan)
+
+# --- CORS (FAZ 3): ayni-origin serviste CORS gereksizdir; disaridan erisim
+# istenirse PINEAL_ALLOWED_ORIGINS ile acilir. Varsayilan yalnizca localhost. ---
+_default_origins = [
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+]
+_allowed = os.getenv("PINEAL_ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip()] or _default_origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa tum /api/* X-API-Key ister;
+# tanimli degilse sistem acik calisir (yerel tek kullanicili arac, geriye uyumluluk). ---
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    token = os.getenv("PINEAL_TOKEN")
+    if token and request.url.path.startswith("/api/") and request.method != "OPTIONS":
+        if request.headers.get("x-api-key") != token:
+            return JSONResponse(
+                {"error": {"code": "UNAUTHORIZED", "message": "X-API-Key gerekli veya hatalı"}},
+                status_code=401,
+            )
+    return await call_next(request)
+
+# --- Tutarli hata modeli (FAZ 3) ---
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        {"error": {"code": str(exc.status_code), "message": str(exc.detail)}},
+        status_code=exc.status_code,
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        {"error": {"code": "INTERNAL", "message": type(exc).__name__}},
+        status_code=500,
+    )
+
+# --- Basit kayan-pencere rate limit (FAZ 3; ek bagimlilik yok) ---
+RATE_LIMITS = {"initiate": (5, 60), "aspasia": (20, 60)}  # (istek, pencere_sn)
+_rate_buckets: Dict[str, deque] = defaultdict(deque)
+
+def rate_limit(key: str, bucket: str) -> bool:
+    """True = izin ver; False = limit asildi (429)."""
+    limit, window = RATE_LIMITS.get(bucket, (999, 1))
+    now = time.monotonic()
+    q = _rate_buckets[key]
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        return False
+    q.append(now)
+    return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
 
@@ -95,8 +164,18 @@ def get_room(client_id: str) -> dict:
             "vault": vault,
             "websockets": set(),
             "logs": [],
-            "aspasia": AspasiaChief(llm_gateway=executor.llm_gateway) if AspasiaChief else None
+            "aspasia": AspasiaChief(llm_gateway=executor.llm_gateway) if AspasiaChief else None,
+            "queue": asyncio.Queue(maxsize=2000),
+            "sender_task": None,
         }
+        # FIFO gonderici: tum log/event/snapshot/result mesajlari sirayla iletilir.
+        try:
+            loop = asyncio.get_running_loop()
+            app.state.rooms[client_id]["sender_task"] = loop.create_task(
+                _room_sender(app.state.rooms[client_id])
+            )
+        except RuntimeError:
+            pass
     return app.state.rooms[client_id]
 
 def get_executor(client_id: str) -> PinealExecutor:
@@ -106,54 +185,87 @@ def get_vault(client_id: str) -> dict:
     return get_room(client_id)["vault"]
 
 
-async def broadcast_log(client_id: str, level: str, msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    payload = json.dumps({"type": "log", "ts": ts, "level": level, "msg": msg})
+# ---------------------------------------------------------------
+# TELEMETRI BUS — oda basina FIFO kuyruk (ADIM 3)
+# Oncesi: sync_* -> loop.create_task(...) deseninde eventler 'result'
+# mesajiyla yarisiyor, ilk canli testte hic event ulasmiyordu.
+# Simdi: her mesaj kuyruga girer, tek gonderici SIRAYLA iletir.
+# ---------------------------------------------------------------
+
+async def _room_sender(room: dict):
+    queue: asyncio.Queue = room["queue"]
+    while True:
+        kind, payload = await queue.get()
+        try:
+            if kind == "log":
+                await _send_log(room, payload)
+            elif kind == "event":
+                await _send_event(room, payload)
+            elif kind == "snapshot":
+                await _send_snapshot(room, payload)
+            elif kind == "result":
+                await _send_result(room, payload)
+            elif kind == "result_error":
+                await _send_result_error(room, payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # gonderici task asla olmemeli
+            print(f"[room_sender] hata: {type(e).__name__}: {e}")
+
+def _enqueue(client_id: str, item: tuple):
+    """Sirali ekleme; tasma durumunda en eski mesaj atilir (sessiz kayip yok, tasma yok)."""
     room = app.state.rooms.get(client_id)
-    if not room: return
-    if "logs" not in room: room["logs"] = []
-    room["logs"].append(f"[{ts}] [{level}] {msg}")
-    if len(room["logs"]) > 50: room["logs"].pop(0)
+    if not room:
+        return
+    q: asyncio.Queue = room["queue"]
+    try:
+        q.put_nowait(item)
+    except asyncio.QueueFull:
+        try:
+            q.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            q.put_nowait(item)
+        except asyncio.QueueFull:
+            pass
+
+async def _send_ws(room: dict, payload: str):
     ws_set = room["websockets"]
     for ws in list(ws_set):
         try:
             await ws.send_text(payload)
-        except:
+        except Exception:
             ws_set.discard(ws)
 
-def sync_log(client_id: str, level: str, msg: str):
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(broadcast_log(client_id, level, msg))
-    except RuntimeError:
-        pass 
+async def _send_log(room: dict, payload: tuple):
+    level, msg = payload
+    ts = datetime.now().strftime("%H:%M:%S")
+    if "logs" not in room: room["logs"] = []
+    room["logs"].append(f"[{ts}] [{level}] {msg}")
+    if len(room["logs"]) > 50: room["logs"].pop(0)
+    await _send_ws(room, json.dumps({"type": "log", "ts": ts, "level": level, "msg": msg}))
 
-async def broadcast_event(client_id: str, event: Any):
-    try:
-        from agent_core.schemas.telemetry import TelemetryEvent
-        telemetry = TelemetryEvent(event=event)
-        payload = telemetry.model_dump_json()
-        room = app.state.rooms.get(client_id)
-        if not room: return
-        if "events" not in room: room["events"] = []
-        room["events"].append(telemetry)
-        ws_set = room["websockets"]
-        for ws in list(ws_set):
-            try:
-                await ws.send_text(payload)
-            except:
-                ws_set.discard(ws)
-    except Exception as e:
-        print(f"Error broadcasting event: {e}")
+def broadcast_log(client_id: str, level: str, msg: str):
+    _enqueue(client_id, ("log", (level, msg)))
+
+def sync_log(client_id: str, level: str, msg: str):
+    broadcast_log(client_id, level, msg)
+
+async def _send_event(room: dict, event: Any):
+    from agent_core.schemas.telemetry import TelemetryEvent
+    telemetry = TelemetryEvent(event=event)
+    if "events" not in room: room["events"] = []
+    room["events"].append(telemetry)
+    await _send_ws(room, telemetry.model_dump_json())
+
+def broadcast_event(client_id: str, event: Any):
+    _enqueue(client_id, ("event", event))
 
 def sync_event(client_id: str, event: Any):
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(broadcast_event(client_id, event))
-    except RuntimeError:
-        pass
+    broadcast_event(client_id, event)
 
-async def broadcast_snapshot(client_id: str, snapshot: Any):
+async def _send_snapshot(room: dict, snapshot: Any):
     payload = json.dumps({
         "type": "snapshot_update",
         "task_id": snapshot.task_id,
@@ -175,30 +287,24 @@ async def broadcast_snapshot(client_id: str, snapshot: Any):
             for name, r in snapshot.agent_runs.items()
         }
     })
-    room = app.state.rooms.get(client_id)
-    if not room: return
-    
-    # Active_tasks'a yaz
     if "active_tasks" not in room:
         room["active_tasks"] = {}
     room["active_tasks"][snapshot.task_id] = snapshot
-    
-    ws_set = room["websockets"]
-    for ws in list(ws_set):
-        try:
-            await ws.send_text(payload)
-        except:
-            ws_set.discard(ws)
+    await _send_ws(room, payload)
+
+def broadcast_snapshot(client_id: str, snapshot: Any):
+    _enqueue(client_id, ("snapshot", snapshot))
 
 def sync_snapshot(client_id: str, snapshot: Any):
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(broadcast_snapshot(client_id, snapshot))
-    except RuntimeError:
-        pass
+    broadcast_snapshot(client_id, snapshot)
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    # FAZ 3: token kipinde WS de korunur (?token=... query parametresi)
+    token = os.getenv("PINEAL_TOKEN")
+    if token and websocket.query_params.get("token") != token:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     room = get_room(client_id)
     room["websockets"].add(websocket)
@@ -241,10 +347,10 @@ async def run_mission(req: InitiatePayload):
             if cookie_list:
                 import random
                 cookie = random.choice(cookie_list)
-                await broadcast_log(client_id, "INFO", f"DAEMON: Rotasyondan rastgele cookie seçildi.")
+                broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
         if req.url:
-            await broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{req.scraper_type.upper()}]")
+            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{req.scraper_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
                 try:
@@ -336,68 +442,63 @@ async def run_mission(req: InitiatePayload):
                             try: await browser.close()
                             except: pass
                         
-                await broadcast_log(client_id, "INFO", f"TELEMETRİ: Veri ele geçirildi.")
+                broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:
-                await broadcast_log(client_id, "ERROR", f"UPLINK KOPTU: {str(e)[:100]}")
+                broadcast_log(client_id, "ERROR", f"UPLINK KOPTU: {str(e)[:100]}")
                 if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
                     raise e
         
         task_id = f"op_{datetime.now().strftime('%H%M%S')}"
         for attempt in range(1, 4):
             try:
-                await broadcast_log(client_id, "INFO", f"OPERASYON BAŞLATILIYOR (Deneme {attempt}/3)...")
+                broadcast_log(client_id, "INFO", f"OPERASYON BAŞLATILIYOR (Deneme {attempt}/3)...")
                 res = await executor.execute_task(payload, task_id)
-                await broadcast_result(client_id, res)
+                broadcast_result(client_id, res)
                 return
             except InsufficientEvidenceError:
                 raise
             except Exception as e:
-                await broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
+                broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
                 if attempt == 3:
-                    await broadcast_log(client_id, "ERROR", "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI.")
+                    broadcast_log(client_id, "ERROR", "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI.")
     except InsufficientEvidenceError:
-        await broadcast_result_error(client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT")
+        broadcast_result_error(client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT")
     except Exception as e:
-        await broadcast_result_error(client_id, "failed", f"SİSTEM PANİĞİ: {str(e)}")
+        broadcast_result_error(client_id, "failed", f"SİSTEM PANİĞİ: {str(e)}")
 
-async def broadcast_result_error(client_id, status, msg):
-    await broadcast_log(client_id, "ERROR", msg)
-    data = {"type": "result", "status": status}
-    room = app.state.rooms.get(client_id)
-    if not room: return
-    ws_set = room["websockets"]
-    for ws in list(ws_set):
-        try:
-            await ws.send_text(json.dumps(data))
-        except:
-            pass
+def broadcast_result_error(client_id, status, msg):
+    broadcast_log(client_id, "ERROR", msg)
+    _enqueue(client_id, ("result_error", {"type": "result", "status": status}))
 
-async def broadcast_result(client_id, res):
+async def _send_result_error(room: dict, data: dict):
+    await _send_ws(room, json.dumps(data))
+
+def broadcast_result(client_id, res):
     def find(chain, name):
         for e in chain:
             if e["agent"] == name:
                 return e["result"]
         return None
-        
-    data = {
+
+    _enqueue(client_id, ("result", {
         "type": "result",
         "status": res.status,
         "mirror": find(res.evidence_chain, "mirror_truth"),
         "reading": find(res.evidence_chain, "human_behavior"),
         "reso": find(res.evidence_chain, "resonance_calc"),
         "hook": find(res.evidence_chain, "pattern_interrupt")
-    }
-    room = app.state.rooms.get(client_id)
-    if not room: return
-    ws_set = room["websockets"]
-    for ws in list(ws_set):
-        try:
-            await ws.send_text(json.dumps(data))
-        except:
-            pass
+    }))
+
+async def _send_result(room: dict, data: dict):
+    await _send_ws(room, json.dumps(data))
 
 @app.post("/api/initiate")
 async def api_initiate(req: InitiatePayload, background_tasks: BackgroundTasks):
+    if not rate_limit(f"initiate:{req.client_id}", "initiate"):
+        return JSONResponse(
+            {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
+            status_code=429,
+        )
     background_tasks.add_task(run_mission, req)
     return {"status": "started"}
 
@@ -418,7 +519,7 @@ async def api_vault(req: VaultPayload):
     executor = get_executor(req.client_id)
     if req.x_cookie:
         vault["x_cookie"] = req.x_cookie
-        await broadcast_log(req.client_id, "INFO", f"KASA: Cookie belleğe mühürlendi.")
+        broadcast_log(req.client_id, "INFO", "KASA: Cookie belleğe mühürlendi.")
     if req.api_key:
         executor.llm_gateway.set_key(req.api_key)
         if shadow_executor is not None:
@@ -426,7 +527,7 @@ async def api_vault(req: VaultPayload):
         if dialogue_manager is not None:
             dialogue_manager.llm.set_key(req.api_key)
         vault["or_key"] = True
-        await broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif.")
+        broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif.")
         
     if req.local_url or req.local_model or req.use_local:
         executor.llm_gateway.set_local_config(
@@ -435,12 +536,12 @@ async def api_vault(req: VaultPayload):
             active=req.use_local
         )
         vault["use_local"] = req.use_local
-        await broadcast_log(req.client_id, "INFO", f"KASA: Yerel Kısıtlamasız LLM Yapılandırıldı ({req.local_model or 'Ollama/LM Studio'}).")
+        broadcast_log(req.client_id, "INFO", f"KASA: Yerel Kısıtlamasız LLM Yapılandırıldı ({req.local_model or 'Ollama/LM Studio'}).")
 
     if req.tavily_key or req.serpapi_key or req.exa_key:
         executor.search_engine.set_keys(tavily=req.tavily_key, serpapi=req.serpapi_key, exa=req.exa_key)
         vault["search_keys"] = True
-        await broadcast_log(req.client_id, "INFO", "KASA: Arama Motoru anahtarları mühürlendi.")
+        broadcast_log(req.client_id, "INFO", "KASA: Arama Motoru anahtarları mühürlendi.")
         
     return {"status": "secured"}
 
@@ -459,7 +560,7 @@ async def api_override(req: OverridePayload):
         learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
         with open(lp, "w", encoding="utf-8") as f:
             json.dump(learn, f, ensure_ascii=False, indent=2)
-        await broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
+        broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
     return {"status": "sealed"}
 
 @app.get("/api/telemetry")
@@ -474,7 +575,7 @@ async def api_telemetry(client_id: str):
         "search_engine": vault.get("search_keys", False)
     }
 
-@app.post("/api/shadow/analyze")
+@app.post("/api/experimental/shadow/analyze")
 async def shadow_analyze(profile: dict):
     """Dark Triad analizi"""
     if shadow_executor is None:
@@ -484,7 +585,7 @@ async def shadow_analyze(profile: dict):
     result = analyzer.analyze(profile)
     return result.model_dump()
 
-@app.post("/api/shadow/generate")
+@app.post("/api/experimental/shadow/generate")
 async def shadow_generate(task: dict):
     """Shadow mesaj üretimi"""
     if shadow_executor is None:
@@ -498,7 +599,7 @@ class ChatPayload(BaseModel):
     user_profile: dict
     target_message: str
 
-@app.post("/api/chat/respond")
+@app.post("/api/experimental/chat/respond")
 async def chat_respond(payload: ChatPayload):
     """Hedefin mesajına otonom karşı hamle üretir"""
     if dialogue_manager is None:
@@ -524,10 +625,15 @@ class AspasiaChatPayload(BaseModel):
 @app.post("/api/aspasia/chat")
 async def aspasia_chat(payload: AspasiaChatPayload):
     """Aspasia Kokpit Şefi ile canlı Sokratik diyalog"""
+    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+        return JSONResponse(
+            {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
+            status_code=429,
+        )
     room = get_room(payload.client_id)
     aspasia = room.get("aspasia") or aspasia_chief
     if not aspasia:
-        return {"error": "Aspasia Kokpit Şefi yüklenemedi"}
+        return {"error": {"code": "ASPASIA_UNAVAILABLE", "message": "Aspasia Kokpit Şefi yüklenemedi"}}
     
     resp = await aspasia.chat(payload.user_message, room, payload.model_override, payload.image_data)
     return resp.model_dump()
@@ -546,17 +652,17 @@ async def executor_intervene(req: IntervenePayload):
     
     if req.action_type == "OVERRIDE_CONFIDENCE":
         executor.uncertainty.evaluate = lambda result, agent_name: type('UncertaintyResult', (), {'confidence': 1.0, 'is_suspicious': False, 'reason': 'Mösyö müdahalesi ile esnetildi'})()
-        await broadcast_log(req.client_id, "WARNING", "MÜDAHALE: Güven kısıtlaması kaldırıldı (Override).")
+        broadcast_log(req.client_id, "WARNING", "MÜDAHALE: Güven kısıtlaması kaldırıldı (Override).")
         return {"status": "overridden", "message": "Güven eşiği Mösyö emriyle 1.0'e sabitlendi."}
         
     elif req.action_type == "SKIP_AGENT" and req.target_agent:
         if req.target_agent in executor.agents:
             del executor.agents[req.target_agent]
-            await broadcast_log(req.client_id, "WARNING", f"MÜDAHALE: Ajan devre dışı bırakıldı [{req.target_agent}].")
+            broadcast_log(req.client_id, "WARNING", f"MÜDAHALE: Ajan devre dışı bırakıldı [{req.target_agent}].")
             return {"status": "skipped", "message": f"{req.target_agent} ajan devre dışı."}
 
     elif req.action_type == "HALT":
-        await broadcast_log(req.client_id, "ERROR", "MÜDAHALE: Operasyon Mösyö emriyle DURDURULDU.")
+        broadcast_log(req.client_id, "ERROR", "MÜDAHALE: Operasyon Mösyö emriyle DURDURULDU.")
         return {"status": "halted", "message": "Operasyon durduruldu."}
 
     return {"status": "acknowledged", "message": "Müdahale emri alındı."}
@@ -566,7 +672,7 @@ class InterpreterPayload(BaseModel):
     prompt: str
     auto_run: bool = False
 
-@app.post("/api/interpreter/execute")
+@app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
     room = get_room(req.client_id)
@@ -576,7 +682,7 @@ async def interpreter_execute(req: InterpreterPayload):
     if not interpreter_agent:
         return {"error": "Interpreter Agent aktif değil"}
         
-    await broadcast_log(req.client_id, "INFO", f"INTERPRETER: Görev icra ediliyor -> {req.prompt[:60]}...")
+    broadcast_log(req.client_id, "INFO", f"INTERPRETER: Görev icra ediliyor -> {req.prompt[:60]}...")
     res = await interpreter_agent.execute_task(
         prompt=req.prompt,
         api_key=executor.llm_gateway.api_key,
@@ -584,11 +690,72 @@ async def interpreter_execute(req: InterpreterPayload):
     )
     
     if res.status == "success":
-        await broadcast_log(req.client_id, "INFO", "INTERPRETER: İcra başarıyla tamamlandı.")
+        broadcast_log(req.client_id, "INFO", "INTERPRETER: İcra başarıyla tamamlandı.")
     else:
-        await broadcast_log(req.client_id, "ERROR", f"INTERPRETER HATA: {res.error_message}")
+        broadcast_log(req.client_id, "ERROR", f"INTERPRETER HATA: {res.error_message}")
         
     return res.model_dump()
+
+# --- Görev geçmişi ve veri silme (FAZ 3 / etik çerçeve: kişisel veri hedefli sistemde
+#     retention hakkı): bellekteki kanıt dosyaları listelenir ve KALICI olarak silinir. ---
+
+@app.get("/api/tasks")
+async def api_list_tasks(client_id: str):
+    room = get_room(client_id)
+    storage = room["executor"].memory.storage_path
+    tasks = []
+    if os.path.isdir(storage):
+        for fn in sorted(os.listdir(storage)):
+            if not fn.endswith(".json"):
+                continue
+            path = os.path.join(storage, fn)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                tasks.append({
+                    "task_id": data.get("task_id", fn[:-5]),
+                    "last_updated": data.get("last_updated"),
+                    "evidence_count": len(data.get("evidence", [])),
+                    "confidence": data.get("confidence"),
+                })
+            except Exception:
+                continue
+    active = list(room.get("active_tasks", {}).keys())
+    return {"tasks": tasks, "active_tasks": active}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def api_delete_task(task_id: str, client_id: str):
+    """Bir görevin tüm izlerini kalıcı siler (bellek dosyası + aktif snapshot)."""
+    room = get_room(client_id)
+    removed_snapshot = room.get("active_tasks", {}).pop(task_id, None)
+
+    mem_path = os.path.join(room["executor"].memory.storage_path, f"{task_id}.json")
+    file_deleted = False
+    if os.path.exists(mem_path):
+        try:
+            os.remove(mem_path)
+            file_deleted = True
+        except OSError as e:
+            return JSONResponse(
+                {"error": {"code": "DELETE_FAILED", "message": str(e)[:120]}},
+                status_code=500,
+            )
+
+    if not removed_snapshot and not file_deleted:
+        return JSONResponse(
+            {"error": {"code": "NOT_FOUND", "message": f"Görev bulunamadı: {task_id}"}},
+            status_code=404,
+        )
+
+    broadcast_log(client_id, "INFO", f"VERİ SİLME: '{task_id}' görev izleri kalıcı olarak silindi (retention).")
+    return {
+        "status": "deleted",
+        "task_id": task_id,
+        "snapshot_removed": removed_snapshot is not None,
+        "memory_file_deleted": file_deleted,
+    }
+
 
 static_dir = "frontend/dist" if os.path.exists("frontend/dist") else "frontend"
 os.makedirs(static_dir, exist_ok=True)

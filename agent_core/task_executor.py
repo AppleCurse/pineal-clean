@@ -1,5 +1,5 @@
-import asyncio, os, tempfile
-from typing import Dict, Any, Optional, List
+import tempfile
+from typing import Dict, Any, List
 from pydantic import BaseModel
 from datetime import datetime, timezone
 
@@ -57,9 +57,9 @@ class TaskStatus(TaskSnapshot):
     pass
 
 try:
-    from agent_core.services.vision_analyzer import VisionAnalyzer, VisualEvidence
+    from agent_core.services.vision_analyzer import VisionAnalyzer
 except Exception:
-    from services.vision_analyzer import VisionAnalyzer, VisualEvidence
+    from services.vision_analyzer import VisionAnalyzer
 
 class PinealExecutor:
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):
@@ -126,7 +126,7 @@ class PinealExecutor:
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
         from agent_core.schemas.telemetry import (
-            TaskStartedEvent, StepCompletedEvent, ErrorHaltEvent, TaskCompletedEvent, GenericLogEvent, Severity
+            TaskStartedEvent, StepCompletedEvent, ErrorHaltEvent, TaskCompletedEvent, Severity
         )
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         input_data["sacred_rules"] = self.injector.fetch_active_rules()

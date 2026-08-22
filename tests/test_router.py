@@ -1,6 +1,5 @@
 import pytest
-import asyncio
-from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
+from agent_core.task_executor import PinealExecutor
 
 @pytest.mark.asyncio
 async def test_cognitive_router_halt():

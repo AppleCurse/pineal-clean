@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { clientId, WS_BASE, logs, taskStatus, isProcessing, telemetryEvents } from './store';
+  import { clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents } from './store';
 
   import UnifiedCompactPanel from './components/UnifiedCompactPanel.svelte';
   let ws: WebSocket;
 
   onMount(() => {
-    ws = new WebSocket(`${WS_BASE}/ws/${$clientId}`);
+    ws = new WebSocket(wsUrl($clientId));
 
     ws.onopen = () => {
       logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "UPLINK KURULDU (FastAPI WebSocket)"}]);

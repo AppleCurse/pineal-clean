@@ -1,8 +1,6 @@
 import pytest
 import os
-import json
 import tempfile
-import asyncio
 from agent_core.services.canonical_memory import CanonicalMemory
 
 @pytest.fixture

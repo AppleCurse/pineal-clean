@@ -2,7 +2,6 @@ import sys
 import os
 import json
 import asyncio
-from pydantic import ValidationError
 
 # Ensure agent_core is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))

@@ -1,123 +1,128 @@
-# PINEAL 3.0: 360° Bütüncül İnsan Tanıma ve Sahici Rezonans Mimarisi
+# PINEAL-HERETIC v2.0 · PINEAL 3.0 — 360° Bütüncül İnsan Tanıma
 
-**PINEAL 3.0**, hedef sosyal medya profillerini (Instagram / X) anonim ve otonom olarak tarayan, fotoğrafları çoklu modlu görsel zeka (Multimodal Vision) ile inceleyen ve hedef kişiyi basmakalıp astroloji genellemelerine kaçmadan **360 derece bütüncül bir yaklaşımla (Tutkular, Neşe, Hassasiyetler, Sınırlar ve Bilişsel Üslup)** çözümleyen yeni nesil bir analiz platformudur.
+Sosyal medya profillerini (Instagram / X) anonim tarayan; fotoğrafları **çoklu modlu
+görsel zeka (VisionAnalyzer)** ile inceleyen; kişiyi tutkular, neşe, hassasiyetler,
+sınırlar ve bilişsel üslup boyutlarında **360° kanıta dayalı** çözümleyen, LLM
+destekli tek kullanıcılı yerel bir analiz istasyonudur.
 
----
+Kararları `PinealExecutor` + `CognitiveRouter` verir; **Aspasia** karar verici değil,
+sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 
-## 1. Temel Mühendislik Felsefesi
-
-1. **Açık Aramak Değil, İnsanı Bir Bütün Olarak Tanımak:**  
-   İletişim yalnızca insanların yaraları veya zaafları üzerine kurulmaz. Sistem; kişinin hem neşelendiği, tutku duyduğu alanları hem de mesafeli durduğu sınır ve hassasiyetleri eş zamanlı haritalandırır.
-2. **Klişe ve Astroloji Yasağı (Sıfır Halüsinasyon):**  
-   Genel geçer kalıplar, Barnum etkisi veya temelsiz psikolojik tahminler üretilmez. Her çıkarım, profil metinlerindeki veya fotoğraflardaki **somut nesne, mekan ve alıntılara** dayanmak zorundadır.
-3. **Multimodal Görsel Zeka (Vision):**  
-   Instagram gibi görsel platformlarda fotoğraflar kör geçilmez; kadrajdaki nesneler (kitaplar, analog kameralar, seramikler, mekanlar, estetik dil) yapay zeka ile taranıp kanıt zincirine eklenir.
-4. **Hibrit Akıl Modeli (Yerel + Küresel Güç):**  
-   Hızlı durum takibi ve telemetri yerel modellerle (Ollama / Dolphin-Llama3, Gemma2) çalışırken; görsel kavrayış ve yüksek muhakeme küresel çok modlu modellerle (Gemini-2.0, Claude-3.5, GPT-4o) icra edilir.
+> Bu depo 2026-08-22'de adli röntgenden geçti: sahte demo arayüz kaldırıldı, canlı
+> 500 veren Aspasia endpoint'i onarıldı, ölü manipülasyon motorları silindi, olmayan
+> Rust/Tauri katmanı kapatıldı (4C). Ardından 360° vision hattı main'den birleştirildi.
 
 ---
 
-## 2. Sistem Mimarisi ve Ajan Boru Hattı
+## 1. Mühendislik Felsefesi
+
+1. **İnsanı bir bütün olarak tanımak:** yalnızca yaralar/zafiyetler değil; neşe ve
+   tutku alanları ile sınırlar ve hassasiyetler eş zamanlı haritalanır.
+2. **Sıfır halüsinasyon:** genel geçer kalıp üretilmez; her çıkarım somut nesne,
+   mekân ve alıntıya dayanır. Kanıt yoksa sistem **durmaya** programlıdır.
+3. **Multimodal görsel zeka:** fotoğraflar kör geçilmez; kadraktaki nesneler
+   (kitaplar, analog kameralar, mekânlar, estetik dil) taranıp kanıt zincirine girer.
+4. **Hibrit akıl:** hızlı durum/telemetri yerel modelle (Ollama) veya OpenRouter
+   (Llama 3.x; vision: llama-3.2-90b-vision) ile yürür — anahtar sizdedir.
+
+## 2. Sistem Mimarisi (koddan doğrulanmış)
 
 ```
-                                  [ HEDEF PROFİL (URL / Veri) ]
-                                                │
-                                                ▼
-                                    [ Hayalet Tarayıcı ]
-                              (Playwright System Chrome + Stealth)
-                                                │
-                                                ▼
-                                     [ VisionAnalyzer ]
-                          (Multimodal Görsel Zeka: Nesne/Mekan)
-                                                │
-                                                ▼
-                                        PinealExecutor
-                                       (Merkezi Beyin)
-                                                │
-    ┌───────────────────────────────────────────┴───────────────────────────────────────────┐
-    ▼                                           ▼                                           ▼
-[ MirrorOfTruth ]                     [ AutonomousVerifier ]                     [ HumanBehaviorAnalyzer ]
-(Kullanıcı Öz Frekansı)                 (Web İddia Teyidi)                         (Mikro Davranış İzleri)
-    │                                           │                                           │
-    └───────────────────────────────────────────┬───────────────────────────────────────────┘
-                                                │
-    ┌───────────────────────────────────────────┴───────────────────────────────────────────┐
-    ▼                                           ▼                                           ▼
-[ PassionMapper ]                      [ FrictionDetector ]                      [ CognitiveProfiler ]
-(Tutkular & Neşe)                      (Hassasiyet & Sınırlar)                   (Dil Tonu & Düşünce)
-    │                                           │                                           │
-    └───────────────────────────────────────────┬───────────────────────────────────────────┘
-                                                │
-                                                ▼
-                                      [ ResonanceCalculator ]
-                                     (Objektif Değer Uyumu)
-                                                │
-                                                ▼
-                                    [ ResonanceSynthesizer ]
-                                  (Sahici İlk Temas Köprüsü)
-                                                │
-                                                ▼
-                                       [ HolisticProfile ]
-                                   (360° Mühürlenmiş Rapor)
-                                                │
-                                                ▼
-                             [ Svelte UI & Aspasia Raporlaması ]
+[ HEDEF PROFİL (URL / Veri) ]
+        │
+        ▼
+[ Hayalet Tarayıcı ]  (Playwright + stealth; X: scraper.py, IG: instagram_ghost)
+        │
+        ▼
+[ VisionAnalyzer ]    (görseller → somut nesne/mekân kanıtı; LLM multimodal)
+        │
+        ▼
+PinealExecutor        (durum makinesi: processing → completed | failed | halted_*)
+ ├─ MirrorOfTruth (kullanıcı öz frekansı)
+ ├─ AutonomousVerifier (web iddia teyidi; Tavily)
+ ├─ HumanBehaviorAnalyzer (OpenCV + dilbilimsel mikro izler)
+ ├─ PassionMapper · FrictionDetector · CognitiveProfiler
+ ├─ ResonanceCalculator (saf numpy; <0.70 → halted_frequency)
+ └─ ResonanceSynthesizer (sahici ilk temas köprüsü)
+        │
+        ▼
+HolisticProfile (360°) + CanonicalMemory (memory/*.json kanıt zinciri)
+        │
+        ├─ Telemetry events → FIFO kuyruk → WebSocket (sıralı, kayıpsız)
+        └─ Svelte UI + Aspasia (gözlemci sohbet; görsel de yüklenebilir)
 ```
 
----
+**Durum makinesi:** `initialized → processing → completed | failed | halted_evidence | halted_frequency` (güven eşiği 0.6; rezonans eşiği 0.70).
 
 ## 3. 360° Veri Modelleri (`agent_core/domain/memory_models.py`)
 
-Sistem tüm analiz çıktılarını Pydantic V2 tip güvenliği ile doğrular:
+- **`PassionProfile`** — neşe/yaratıcılık/merak: `core_passions`, `energizing_topics`, `flow_triggers`, `evidence_quotes`
+- **`FrictionProfile`** — sınırlar/hassasiyetler: `sensitivities`, `stress_triggers`, `boundary_signals`
+- **`CognitiveStyle`** — dil ve düşünce kalıbı: `communication_tone`, `complexity_level`, `humor_style`
+- **`AuthenticBridge`** — sahici ortak payda + saygılı açılış mesajı: `shared_passions`, `resonance_score`, `suggested_opening_message`
+- **`HolisticProfile`** — dört boyutun mühürlendiği tam insan haritası
 
-- **`PassionProfile`**: Kişinin neşe, yaratıcılık, entelektüel merak ve coşku duyduğu somut alanlar (`core_passions`, `energizing_topics`, `flow_triggers`, `sentiment_polarity`, `evidence_quotes`).
-- **`FrictionProfile`**: Kişinin sınırları, hassasiyetleri, yorulma/şikayet noktaları (`sensitivities`, `stress_triggers`, `boundary_signals`, `evidence_quotes`).
-- **`CognitiveStyle`**: Dilbilimsel ton, düşünce kalıbı ve sosyal yaklaşım (`communication_tone`, `complexity_level`, `humor_style`, `social_orientation`).
-- **`AuthenticBridge`**: Kullanıcı ile hedef arasındaki sahici ortak paydalar ve manipülasyondan uzak saygılı açılış mesajı (`shared_passions`, `resonance_score`, `authentic_opening_topic`, `suggested_opening_message`).
-- **`HolisticProfile`**: Yukarıdaki 4 boyutun tek bir çatı altında birleştiği tam insan haritası.
+## 4. Kurulum
 
----
+### A) Windows (tek komut)
+```bat
+baslat.bat
+```
+venv kurar, bağımlılıkları indirir, frontend'i derler (dist yoksa) ve
+`http://localhost:8000` üzerinde ayağa kaldırır.
 
-## 4. Kurulum ve Çalıştırma
+### B) Docker
+```bash
+cp .env.example .env      # anahtarları doldurun (opsiyonel)
+docker compose up --build
+```
 
-### Gereksinimler
-- Python 3.10+
-- Node.js & npm (Frontend için)
-- Google Chrome (Playwright hayalet tarayıcı için)
-
-### Bağımlılıkların Yüklenmesi
+### C) Manuel
 ```bash
 pip install -r requirements.txt
-playwright install chromium
+python -m playwright install chromium
+cd frontend && npm ci && npm run build && cd ..
+uvicorn backend.api:app --host 0.0.0.0 --port 8000
 ```
 
-### Test Paketinin Koşturulması (123 Test)
-Tüm birim, entegrasyon ve uçtan uca testleri çalıştırmak için:
+Canlı profil çözümleme demosu: `python analyze_target_instagram.py` (Chrome gerektirir).
+
+## 5. Yapılandırma (`.env`)
+
+| Değişken | Anlamı |
+|---|---|
+| `OPENROUTER_API_KEY` | LLM anahtarı. Yoksa pipeline ilk LLM'li ajanda durur (halüsinasyon önleme, tasarımdır). |
+| `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
+| `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
+| `TAVILY_API_KEY` | AutonomousVerifier web araması (yoksa `UNVERIFIED`). |
+| `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan llama-3.2-90b-vision). |
+| `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. |
+| `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
+
+Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
+
+## 6. Testler
 ```bash
-python -m pytest tests/ -v
+pytest                          # 118 test: unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+cd frontend && npm run check && npm run build
 ```
 
-### Canlı Profil Çözümleme Testi
-```bash
-python analyze_target_instagram.py
-```
+## 7. Sık Görülen Sorunlar
+| Belirti | Çözüm |
+|---|---|
+| "Görev durumu: failed" | LLM yok → anahtar + `LIVE_LLM_E2E=1` veya yerel model |
+| Aspasia "bağlantıda kırılma" | Aynı — zarif fallback; anahtarla gerçek yanıt |
+| Tarayıcı boş sayfa | `frontend/dist` yok → build edin |
+| 429 | Bilinçli hız limiti (initiate 5/dk, aspasia 20/dk) — 1 dk bekleyin |
+| 401 | `PINEAL_TOKEN` tanımlı ama istemci göndermiyor |
+| Scrape 429/403 | Platform limit/cookie — Kasaya güncel cookie |
 
-### Web Arayüzü ve API Sunucusunun Başlatılması
-```bash
-# Backend (FastAPI - Port 8000)
-python main.py
+## 8. Güvenlik ve Veri
+- Sır koruması: anahtar/cookie yalnızca bellekte; loglara/telemetriye sızmaz (test kilitli).
+- **Veri silme (retention):** `GET /api/tasks` ile geçmişi görün, `DELETE /api/tasks/{id}` ile kalıcı silin.
+- Tutarlı hata modeli: `{error:{code,message}}`.
 
-# Frontend (Svelte - Port 5173)
-cd frontend
-npm run dev
-```
-
----
-
-## 5. Doğrulama ve Test Kapsamı
-
-Projedeki tüm fonksiyonlar ve rotalar otomatik testlerle mühürlenmiştir:
-- **Toplam Test Sayısı:** 123
-- **Birim Testler:** 360° Ajanlar (`passion_mapper`, `friction_detector`, `cognitive_profiler`, `resonance_synthesizer`), `uncertainty_engine`, `memory_models`.
-- **Entegrasyon Testleri:** Uçtan uca `test_holistic_e2e.py`, `test_p2_release_gate.py`, `test_rust_bridge_e2e.py`.
-- **Başarı Oranı:** %100 (123/123 Geçti).
+## 9. Kullanım Sınırları
+Araştırma/analitik amaçlıdır; kişisel veri işler — yasalara ve platform şartlarına
+uymak kullanıcının sorumluluğundadır. Ürün kimliği "sahici iletişim köprüsü"dür;
+manipülasyon motorları kaldırılmıştır. Deneysel API'ler: `/api/experimental/*`.
