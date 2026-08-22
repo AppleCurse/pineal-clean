@@ -23,10 +23,13 @@ class LLMGateway:
         self.local_client = None
         self.failure_count = 0
         self.circuit_open = False
+        self.live_unlocked = False
         self._rebuild()
 
-    def set_key(self, key: str):
+    def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
+        if unlock_live:
+            self.live_unlocked = True
         self.failure_count = 0
         self.circuit_open = False
         self._rebuild()
@@ -65,8 +68,12 @@ class LLMGateway:
             selected_model = self.local_model if (not model or model == "local") else model
         else:
             import os
-            if os.getenv("LIVE_LLM_E2E") != "1":
-                raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: LIVE_LLM_E2E=1 flag is missing. External API calls are blocked.")
+            if os.getenv("LIVE_LLM_E2E") != "1" and not getattr(self, "live_unlocked", False):
+                raise RuntimeError(
+                    "REAL_LLM_CALL_NOT_EXECUTED: Canlı LLM çağrıları kapalı. "
+                    "Açmak için: (1) Kasa'ya API anahtarı girin (oturum boyunca açılır), veya "
+                    "(2) .env dosyasına OPENROUTER_API_KEY yazıp LIVE_LLM_E2E=1 yapıp sunucuyu yeniden başlatın."
+                )
             
             if not self.client:
                 raise RuntimeError("LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç.")

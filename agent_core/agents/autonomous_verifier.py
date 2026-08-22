@@ -32,7 +32,7 @@ class AutonomousVerifier:
         if not bio or not self.search_engine.tavily_key:
             return VerifierReport(
                 verifications=[],
-                overall_authenticity_score=0.5,
+                overall_authenticity_score=0.0,
                 status="UNVERIFIED",
                 confidence=0.85,
             )

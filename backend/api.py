@@ -533,13 +533,13 @@ async def api_vault(req: VaultPayload):
         vault["x_cookie"] = req.x_cookie
         broadcast_log(req.client_id, "INFO", "KASA: Cookie belleğe mühürlendi.")
     if req.api_key:
-        executor.llm_gateway.set_key(req.api_key)
+        executor.llm_gateway.set_key(req.api_key, unlock_live=True)
         if shadow_executor is not None:
-            shadow_executor.llm_gateway.set_key(req.api_key)
+            shadow_executor.llm_gateway.set_key(req.api_key, unlock_live=True)
         if dialogue_manager is not None:
-            dialogue_manager.llm.set_key(req.api_key)
+            dialogue_manager.llm.set_key(req.api_key, unlock_live=True)
         vault["or_key"] = True
-        broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif.")
+        broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif — canlı LLM kilidi açıldı.")
         
     if req.local_url or req.local_model or req.use_local:
         executor.llm_gateway.set_local_config(
