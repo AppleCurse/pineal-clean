@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
-  import { clientId, apiFetch, wsUrl, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
+  import { clientId, apiFetch, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
+  import { currentLang, t } from '../i18n';
   
   // ==========================================
-  // TARGET & ENGINE TELEMETRY (TargetPanel)
+  // TARGET & ENGINE TELEMETRY
   // ==========================================
   export let targetUrl = "";
   export let userRituals = "";
@@ -39,7 +40,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: $clientId, use_local: localModelActive, local_model: selectedLocalModel })
       });
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ASPASIA YEREL MODELİ: ${selectedLocalModel}`}]);
+      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `YEREL MODEL: ${selectedLocalModel}`}]);
     } catch(err: any) {
       console.error("Model güncellenemedi", err);
     }
@@ -72,16 +73,16 @@
   }
 
   // ==========================================
-  // VAULT (VaultPanel)
+  // VAULT (KEYSTORE)
   // ==========================================
   let apiKey = "";
   let cookie = "";
-  let vaultStatusText = "KEYSTORE • READY";
   let isSealing = false;
+  let vaultStatusKey = "vaultReady";
 
   async function sealCredentials() {
     isSealing = true;
-    vaultStatusText = "SAVING...";
+    vaultStatusKey = "vaultSaving";
     try {
       const payload: any = { client_id: $clientId };
       if (apiKey) payload.api_key = apiKey;
@@ -92,21 +93,21 @@
         body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error("Connection error");
-      vaultStatusText = "KEYSTORE • ACTIVE";
+      vaultStatusKey = "vaultActive";
       apiKey = "";
       cookie = "";
     } catch(err: any) {
-      vaultStatusText = "ERROR";
+      vaultStatusKey = "vaultError";
     } finally {
       isSealing = false;
     }
   }
 
   // ==========================================
-  // ASPASIA CHAT & COMMAND (AspasiaPanel)
+  // ASPASIA CHAT & DIALOGUE
   // ==========================================
   let messages: {sender: string, text: string}[] = [
-    { sender: 'ASPASIA', text: 'Sistem çevrimiçi. Emirlerinizi bekliyorum şefim.' }
+    { sender: 'ASPASIA', text: 'Sistem çevrimiçi. Hedef verilerini ve telemetriyi incelemeye hazırım şefim.' }
   ];
   let inputMessage = "";
   let chatContainer: HTMLElement;
@@ -115,29 +116,6 @@
   let attachedImage: string | null = null;
   let fileInput: HTMLInputElement;
   let activeAgentId = 'ASPASIA';
-
-  function speak(text: string) {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'tr-TR';
-    utterance.rate = 1.1;
-    const femaleVoice = window.speechSynthesis.getVoices().find(v => v.lang.includes('tr') && v.name.includes('Female'));
-    if (femaleVoice) utterance.voice = femaleVoice;
-    window.speechSynthesis.speak(utterance);
-  }
-
-  function toggleListen() {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) return alert("Ses tanıma desteklenmiyor.");
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'tr-TR';
-    recognition.onstart = () => { isListening = true; };
-    recognition.onresult = (e: any) => { inputMessage = e.results[0][0].transcript; sendMessage(); };
-    recognition.onerror = () => { isListening = false; };
-    recognition.onend = () => { isListening = false; };
-    recognition.start();
-  }
 
   function handleImageUpload(e: Event) {
     const target = e.target as HTMLInputElement;
@@ -155,13 +133,14 @@
     
     let currentInput = inputMessage;
     let currentImage = attachedImage;
-    inputMessage = ""; attachedImage = null; isSending = true;
+    inputMessage = ""; 
+    attachedImage = null; 
+    isSending = true;
     
     try {
       const payload: any = { client_id: $clientId, user_message: currentInput };
       if (currentImage) payload.image_data = currentImage;
       const endpoint = activeAgentId === 'ASPASIA' ? '/api/aspasia/chat' : '/api/executor/intervene';
-      // Aspasia is an observer, no direct commands. Only executor commands handled on backend (if any)
       if (activeAgentId !== 'ASPASIA') payload.action_type = `DIRECT_CMD_${activeAgentId}`;
 
       const res = await apiFetch(`${endpoint}`, {
@@ -169,33 +148,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error("Ağ geçidi kapalı");
+      if (!res.ok) throw new Error("Ağ geçidi yanıt vermedi");
       const data = await res.json();
-      messages = [...messages, { sender: activeAgentId, text: data.message }];
-      speak(data.message);
-      
-      // MÜDAHALE (INTERVENTION) KONTROLÜ
-      if (data.action && data.action.action_type) {
-          try {
-              await apiFetch(`/api/executor/intervene`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                      client_id: $clientId,
-                      action_type: data.action.action_type,
-                      target_agent: data.action.target_agent || null,
-                      parameters: data.action.parameters || {}
-                  })
-              });
-              messages = [...messages, {
-                  sender: 'SİSTEM',
-                  text: `KOMUT İCRA EDİLDİ: ${data.action.action_type}${data.action.target_agent ? ' → ' + data.action.target_agent : ''}`
-              }];
-          } catch (e) {
-              console.error("Müdahale komutu gönderilemedi:", e);
-          }
-      }
-      
+      messages = [...messages, { sender: activeAgentId, text: data.message || data.error?.message || "Yanıt alındı." }];
     } catch (error: any) {
       messages = [...messages, { sender: 'SİSTEM', text: `HATA: ${error.message}` }];
     } finally {
@@ -203,44 +158,38 @@
     }
   }
 
-  async function sendCommand(actionType: string) {
-    // Disabled in Observer mode.
-  }
-
   function explainState() {
     activeAgentId = 'ASPASIA';
-    inputMessage = 'Şu anki durumu bana özetler misin? Telemetri ne söylüyor? Neden bu aşamadayız?';
+    inputMessage = $currentLang === 'tr' 
+      ? 'Şu anki telemetri ve analiz durumunu özetler misin? Hangi aşamadayız?' 
+      : 'Can you summarize the current telemetry and analysis state? Where are we?';
     sendMessage();
   }
 
   function handleKeydown(e: KeyboardEvent) { if (e.key === 'Enter') sendMessage(); }
 
   // ==========================================
-  // FREQUENCY (FrequencyPanel)
+  // TELEMETRY METRICS & AGENT CHAIN
   // ==========================================
   let ritualMatchScore = 0;
   let playlistResonance = 0;
   let envyIntensity = 0;
 
-  // ==========================================
-  // AGENT FLOW (AgentFlowPanel)
-  // ==========================================
   const agentList = [
-    { id: "mirror_truth", name: "MIRROR TRUTH", colorHex: "#16a34a" },
-    { id: "autonomous_verifier", name: "VERIFIER", colorHex: "#9333ea" },
-    { id: "human_behavior", name: "BEHAVIOR", colorHex: "#d97706" },
-    { id: "passion_mapper", name: "PASSION MAPPER", colorHex: "#f59e0b" },
-    { id: "friction_detector", name: "FRICTION & BOUNDS", colorHex: "#ef4444" },
-    { id: "cognitive_profiler", name: "COGNITIVE TONE", colorHex: "#06b6d4" },
-    { id: "resonance_calc", name: "RESONANCE CALC", colorHex: "#2563eb" },
-    { id: "pattern_interrupt", name: "PATTERN INTERRUPT", colorHex: "#dc2626" },
-    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE", colorHex: "#10b981" }
+    { id: "mirror_truth", name: "MIRROR TRUTH", color: "#10b981" },
+    { id: "autonomous_verifier", name: "AUTONOMOUS VERIFIER", color: "#a855f7" },
+    { id: "human_behavior", name: "HUMAN BEHAVIOR", color: "#f59e0b" },
+    { id: "passion_mapper", name: "PASSION MAPPER", color: "#f59e0b" },
+    { id: "friction_detector", name: "FRICTION & BOUNDS", color: "#ef4444" },
+    { id: "cognitive_profiler", name: "COGNITIVE PROFILER", color: "#06b6d4" },
+    { id: "resonance_calc", name: "RESONANCE CALCULATOR", color: "#3b82f6" },
+    { id: "pattern_interrupt", name: "PATTERN INTERRUPT", color: "#dc2626" },
+    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE", color: "#10b981" }
   ];
+
   let runs: Record<string, any> = {};
   let currentAgent = "";
   let overallConfidence = 0;
-  let plannedAgents: string[] = [];
-  let completedAgents: string[] = [];
   let haltedReason: string | null = null;
   let taskState = "IDLE";
   let taskId = "";
@@ -258,8 +207,6 @@
     if ($taskStatus) {
       if ($taskStatus.task_id) taskId = $taskStatus.task_id;
       if ($taskStatus.status) taskState = $taskStatus.status;
-      if ($taskStatus.planned_agents) plannedAgents = $taskStatus.planned_agents;
-      if ($taskStatus.completed_agents) completedAgents = $taskStatus.completed_agents;
       if ($taskStatus.halted_reason !== undefined) haltedReason = $taskStatus.halted_reason;
       if ($taskStatus.holistic_profile) holisticProfile = $taskStatus.holistic_profile;
 
@@ -278,353 +225,414 @@
     }
   }
 
-  // ==========================================
-  // RADAR (RadarPanel)
-  // ==========================================
-  let recCounter = 217;
   let logContainer: HTMLElement;
-  $: displayLogs = $logs.slice(-20);
+  $: displayLogs = $logs.slice(-25);
 
-  onMount(() => {
-    const interval = setInterval(() => { recCounter++; }, 1000);
-    return () => clearInterval(interval);
-  });
-  
   afterUpdate(() => {
     if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
     if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
   });
-
-  function getRotation(percent: number) { return (percent / 100) * 180 - 90; }
 </script>
 
-<div class="grid grid-cols-12 gap-4">
-  <!-- ==================== LEFT: TELEMETRY & VAULT ==================== -->
-  <div class="col-span-12 lg:col-span-3 space-y-3 flex-col flex gap-3">
-    <!-- Telemetry Gauges -->
-    <div class="brass rounded p-3">
-      <div class="font-cinzel text-xs font-bold text-dark mb-2">ENGINE TELEMETRY</div>
-      <div class="space-y-3">
+<div class="cockpit-grid">
+  <!-- ==================== SOL PANEL: TELEMETRİ VE KASA ==================== -->
+  <aside style="display: flex; flex-direction: column; gap: 14px;">
+    
+    <!-- Göstergeler (Telemetry) -->
+    <div class="brass-plate">
+      <div class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+        <span>{t[$currentLang].engineTelemetry}</span>
+        <span style="font-size: 9px; color: var(--accent-green); font-family: 'JetBrains Mono', monospace;">● {t[$currentLang].active}</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
         {#each [
-          { label: 'RITUAL MATCH', val: ritualMatchScore },
-          { label: 'PLAYLIST RES', val: playlistResonance },
-          { label: 'ENVY INTENSITY', val: envyIntensity }
-        ] as gauge}
-        <div class="bg-black rounded p-2 border border-yellow-600/30">
-          <div class="flex justify-between text-[9px] text-[#c9a86a]">
-            <span>{gauge.label}</span>
-            <span class="text-white">{gauge.val.toFixed(0)}%</span>
-          </div>
-          <div class="mt-1 h-14 gauge-glass rounded-full border-4 border-[#8c6a3a] relative">
-            <div class="absolute inset-2 rounded-full bg-[#fefefe] flex items-center justify-center">
-              <div class="w-1 h-5 bg-black origin-bottom absolute bottom-1/2 transition-all duration-500" style="transform:rotate({getRotation(gauge.val)}deg)"></div>
-              <div class="w-2 h-2 bg-black rounded-full z-10"></div>
+          { label: t[$currentLang].ritualMatch, val: ritualMatchScore, col: '#10b981' },
+          { label: t[$currentLang].playlistResonance, val: playlistResonance, col: '#06b6d4' },
+          { label: t[$currentLang].envyIntensity, val: envyIntensity, col: '#f59e0b' }
+        ] as g}
+          <div class="screen-card" style="padding: 8px 10px;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-bottom: 4px;">
+              <span>{g.label}</span>
+              <strong style="color: var(--text-main); font-size: 11px;">%{g.val.toFixed(0)}</strong>
+            </div>
+            <div style="height: 6px; background: #1f140e; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17;">
+              <div style="height: 100%; width: {Math.max(5, g.val)}%; background: {g.col}; transition: width 0.4s ease;"></div>
             </div>
           </div>
-        </div>
         {/each}
       </div>
     </div>
-    
-    <!-- Radar Feed -->
-    <div class="bg-black rounded border-2 border-[#c9a86a] p-2 flex-1 min-h-[200px] flex flex-col">
-      <div class="flex justify-between">
-        <div class="text-[9px] text-[#c9a86a] tracking-widest">SIGINT FEED REC: <span class="text-white">{String(recCounter).padStart(4,'0')}</span></div>
-        <div class="text-[9px] text-green-400 animate-pulse">● ACTIVE</div>
+
+    <!-- Canlı Log Terminali -->
+    <div class="screen-card" style="display: flex; flex-direction: column; height: 260px; padding: 10px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a1e12; padding-bottom: 6px; margin-bottom: 6px;">
+        <span class="font-cinzel" style="font-size: 10px; color: var(--gold); font-weight: 700;">{t[$currentLang].sigintFeed}</span>
+        <span style="font-size: 9px; color: var(--text-muted);">WS:8000</span>
       </div>
-      <div class="mt-2 flex-1 overflow-y-auto font-mono text-[10px] text-[#8fbc8f] leading-[1.2]" bind:this={logContainer}>
+      <div style="flex: 1; overflow-y: auto; font-size: 10px; line-height: 1.4; color: #a3e635;" bind:this={logContainer}>
         {#each displayLogs as log}
-          <div class="mb-1 {log.level === 'ERROR' ? 'text-red-500' : ''}">[{log.ts}] {log.msg}</div>
+          <div style="margin-bottom: 3px; {log.level === 'ERROR' ? 'color: #f87171;' : log.level === 'WARNING' ? 'color: #fbbf24;' : ''}">
+            <span style="color: #65a30d; font-size: 9px;">[{log.ts}]</span> {log.msg}
+          </div>
         {/each}
       </div>
     </div>
+
+    <!-- Güvenli Kasa (Vault) -->
+    <div class="brass-plate">
+      <div class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold); margin-bottom: 6px;">
+        {t[$currentLang].vaultTitle}
+      </div>
+      <p style="font-size: 10px; color: var(--text-muted); margin-bottom: 10px;">
+        {t[$currentLang].vaultDesc}
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <input 
+          type="password" 
+          bind:value={apiKey} 
+          placeholder={t[$currentLang].apiKeyPlaceholder} 
+          disabled={isSealing}
+        />
+        <input 
+          type="password" 
+          bind:value={cookie} 
+          placeholder={t[$currentLang].cookiePlaceholder} 
+          disabled={isSealing}
+        />
+        <button class="btn-brass" style="width: 100%; font-size: 11px; padding: 8px;" on:click={sealCredentials} disabled={isSealing || (!apiKey && !cookie)}>
+          🔑 {t[$currentLang].sealBtn}
+        </button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ==================== ORTA PANEL: HEDEF GİRİŞİ, ASPASIA & 360° HARİTA ==================== -->
+  <section style="display: flex; flex-direction: column; gap: 14px;">
     
-    <!-- Vault -->
-    <div class="brass rounded p-2">
-      <div class="font-cinzel text-[9px] font-bold text-dark mb-1">KEYSTORE • SESSION VAULT</div>
-      <div class="flex items-center gap-2 mt-1 mb-2">
-        <button class="w-8 h-8 rounded-full brass border-2 border-black flex items-center justify-center cursor-pointer hover:brightness-110 disabled:opacity-50 {vaultStatusText === 'ERROR' ? 'border-red-500 animate-pulse' : ''}" on:click={sealCredentials} disabled={isSealing}>
-          🔑
-        </button>
-        <div class="text-[8px] font-bold text-dark">
-          <span class:text-red-800={vaultStatusText === 'ERROR'}>{vaultStatusText}</span><br>
-          client_id tabanlı • session keystore
-        </div>
+    <!-- Hedef Giriş Kartı -->
+    <div class="brass-plate">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
+          🎯 {t[$currentLang].targetHeader}
+        </span>
+        <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
+          ● {t[$currentLang].liveStatus}
+        </span>
       </div>
-      <div class="bg-black border border-[#c9a86a]/40 p-2 rounded">
-        <input type="password" class="w-full bg-transparent text-[#c9a86a] text-[9px] outline-none border-b border-[#333] mb-2 focus:border-[#c9a86a]" bind:value={apiKey} placeholder="API KEY (sk-or-v1-...)" disabled={isSealing}>
-        <input type="password" class="w-full bg-transparent text-[#c9a86a] text-[9px] outline-none border-b border-[#333] focus:border-[#c9a86a]" bind:value={cookie} placeholder="X/TWITTER COOKIE (auth_token=...)" disabled={isSealing}>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div>
+          <label style="display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;">
+            {t[$currentLang].targetUrlLabel}
+          </label>
+          <input 
+            style="font-size: 13px; font-weight: 600; padding: 8px 12px;" 
+            bind:value={targetUrl} 
+            placeholder={t[$currentLang].targetUrlPlaceholder} 
+            disabled={$isProcessing}
+          />
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <div>
+            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].ritualsLabel}</label>
+            <input bind:value={userRituals} placeholder={t[$currentLang].ritualsPlaceholder} disabled={$isProcessing} />
+          </div>
+          <div>
+            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].playlistLabel}</label>
+            <input bind:value={userPlaylist} placeholder={t[$currentLang].playlistPlaceholder} disabled={$isProcessing} />
+          </div>
+          <div>
+            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].enviesLabel}</label>
+            <input bind:value={userEnvies} placeholder={t[$currentLang].enviesPlaceholder} disabled={$isProcessing} />
+          </div>
+        </div>
+
+        <!-- Model ve Başlat Butonu Barı -->
+        <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+          <select style="width: auto; flex: 1; min-width: 140px;" bind:value={selectedLocalModel} on:change={updateLocalModelOnly} disabled={isSettingModel || $isProcessing || localModelActive}>
+            <option value="dolphin-llama3">Dolphin Llama-3 (Abliterated)</option>
+            <option value="qwen2.5-coder:latest">Qwen 2.5 7B</option>
+            <option value="llama3.3:70b">Llama 3.3 70B</option>
+          </select>
+
+          <button 
+            class="btn-dark" 
+            style="{localModelActive ? 'background: var(--gold); color: #120b04; font-weight: 700;' : ''}" 
+            on:click={toggleLocalModel} 
+            disabled={isSettingModel || $isProcessing}
+          >
+            {t[$currentLang].localBtn}
+          </button>
+          
+          <button 
+            class="btn-dark" 
+            style="{!localModelActive ? 'background: var(--gold); color: #120b04; font-weight: 700;' : ''}" 
+            on:click={toggleLocalModel} 
+            disabled={isSettingModel || $isProcessing}
+          >
+            {t[$currentLang].apiBtn}
+          </button>
+
+          <button 
+            class="btn-brass" 
+            style="padding: 8px 24px; font-size: 12px;" 
+            on:click={triggerAnalysis} 
+            disabled={$isProcessing || !targetUrl}
+          >
+            {$isProcessing ? t[$currentLang].runningBtn : t[$currentLang].initiateBtn}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ==================== CENTER: TARGET & AGENT DECK ==================== -->
-  <div class="col-span-12 lg:col-span-6 space-y-3 flex-col flex gap-3">
-    <!-- TARGET & INITIATE -->
-    <div class="brass rounded-[6px] p-4">
-      <div class="flex justify-between">
-        <div class="font-cinzel text-[11px] font-bold text-dark">BROADCAST MIC • TARGET INPUT</div>
-        <div class="flex items-center gap-2">
-          <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-          <div class="text-[9px] font-bold">LIVE</div>
+    <!-- Aspasia Sokratik Kokpit Şefi & Sohbet -->
+    <div class="brass-plate" style="display: flex; flex-direction: column; flex: 1;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <div>
+          <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
+            🏛️ {t[$currentLang].agentDeckTitle}
+          </span>
+          <span style="font-size: 10px; color: var(--text-dim); margin-left: 6px;">({t[$currentLang].aspasiaRole})</span>
         </div>
-      </div>
-      <div class="flex gap-4 mt-3">
-        <div class="w-24 h-32 bg-gradient-to-b from-[#ddd] to-[#777] rounded-[14px] border-4 border-[#555] flex items-center justify-center">
-          <div class="w-16 h-20 bg-black rounded"></div>
-        </div>
-        <div class="flex-1">
-          <div class="bg-black rounded p-2 border-2 border-[#c9a86a]">
-            <div class="text-[9px] text-[#c9a86a]">TARGET URL + COOKIE</div>
-            <input class="w-full bg-transparent text-[#f5f1e8] text-[13px] outline-none mt-1" bind:value={targetUrl} placeholder="https://x.com/target" disabled={$isProcessing}>
-          </div>
-          <div class="grid grid-cols-3 gap-1 mt-2">
-            <div class="bg-black/80 border border-[#c9a86a]/40 p-1 rounded text-[8px] text-[#c9a86a]">RITUALS<br><input class="bg-transparent text-white w-full outline-none" bind:value={userRituals} placeholder="02:17" disabled={$isProcessing}></div>
-            <div class="bg-black/80 border border-[#c9a86a]/40 p-1 rounded text-[8px] text-[#c9a86a]">PLAYLIST<br><input class="bg-transparent text-white w-full outline-none" bind:value={userPlaylist} placeholder="dark jazz" disabled={$isProcessing}></div>
-            <div class="bg-black/80 border border-[#c9a86a]/40 p-1 rounded text-[8px] text-[#c9a86a]">ENVIES<br><input class="bg-transparent text-white w-full outline-none" bind:value={userEnvies} placeholder="derinlik" disabled={$isProcessing}></div>
-          </div>
-          <div class="mt-2 flex gap-2">
-            <select class="bg-black text-[#c9a86a] border border-[#c9a86a]/40 rounded text-[9px] outline-none px-1 focus:border-[#c9a86a]" bind:value={selectedLocalModel} on:change={updateLocalModelOnly} disabled={isSettingModel || $isProcessing || localModelActive}>
-              <option value="dolphin-llama3">Dolphin Llama3</option>
-              <option value="gemma2:2b">Gemma 2:2b</option>
-              <option value="qwen2.5-coder:latest">Qwen 2.5 Coder</option>
-            </select>
-            <button class="brass px-3 py-1 rounded font-cinzel font-bold text-[10px] {localModelActive ? 'opacity-100 shadow-[0_0_10px_rgba(0,0,0,0.8)]' : 'opacity-70'}" on:click={toggleLocalModel} disabled={isSettingModel || $isProcessing}>LOKAL</button>
-            <button class="brass px-3 py-1 rounded font-cinzel font-bold text-[10px] {!localModelActive ? 'opacity-100 shadow-[0_0_10px_rgba(0,0,0,0.8)]' : 'opacity-70'}" on:click={toggleLocalModel} disabled={isSettingModel || $isProcessing}>API</button>
-            <div class="flex-1 h-7 bg-black rounded flex items-center px-2 gap-2 border border-[#333]">
-              <span class="text-[8px] text-green-400">CONFIDENCE</span>
-              <div class="flex-1 h-1 bg-[#222] rounded overflow-hidden">
-                <div class="h-full bg-green-400 transition-all duration-300" style="width:{overallConfidence * 100}%"></div>
-              </div>
-            </div>
-            <button class="bg-[#c9a86a] hover:brightness-110 text-black px-5 py-1 rounded font-cinzel font-bold text-[11px] disabled:opacity-50" on:click={triggerAnalysis} disabled={$isProcessing || !targetUrl}>{$isProcessing ? 'RUNNING' : 'INITIATE ●'}</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- AGENT DECK -->
-    <div class="brass rounded-[8px] p-3 flex-1 flex flex-col h-full">
-      <div class="flex justify-between items-center mb-2">
-        <div class="font-cinzel font-extrabold text-[13px] tracking-widest text-dark">★ AGENT COMMAND DECK ★</div>
-        <div class="text-[9px] font-bold text-dark">MEMORY: 1 unique • hash OK</div>
-      </div>
-      
-      <div class="grid grid-cols-4 gap-2 mb-3">
-        <button class="brass rounded p-2 text-left hover:brightness-110 {activeAgentId === 'ASPASIA' ? 'ring-2 ring-black' : ''}" on:click={() => activeAgentId = 'ASPASIA'}>
-          <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-gray-500 {activeAgentId==='ASPASIA'?'animate-pulse':''}"></div><div class="font-cinzel font-bold text-[9px] text-dark leading-none">ASPASIA</div></div>
-          <div class="text-[7px] text-[#3d2817] mt-1">Sistem Yöneticisi</div>
+        <button class="btn-dark" style="font-size: 10px; padding: 4px 10px;" on:click={explainState}>
+          💡 {t[$currentLang].explainStateBtn}
         </button>
-        {#each agentList.slice(0,3) as agent}
-        <button class="brass rounded p-2 text-left hover:brightness-110 {activeAgentId === agent.id ? 'ring-2 ring-black' : ''}" on:click={() => activeAgentId = agent.id}>
-          <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full" style="background:{agent.colorHex}; {activeAgentId===agent.id?'animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;':''}"></div><div class="font-cinzel font-bold text-[9px] text-dark leading-none">{agent.name}</div></div>
-        </button>
-        {/each}
       </div>
 
-      <div class="paper rounded border-2 border-[#8c6a3a] flex-1 overflow-y-auto p-3 font-type text-[12px] leading-[1.5] h-[280px]" bind:this={chatContainer}>
+      <!-- Sohbet Akışı -->
+      <div class="screen-card" style="height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;" bind:this={chatContainer}>
         {#each messages as msg}
-          <div class="mb-2">
-            <span class="text-[10px] text-[#8c6a3a]">[{new Date().toLocaleTimeString('tr-TR').slice(0,5)}]</span>
+          <div style="font-size: 11px; line-height: 1.5;">
             {#if msg.sender === 'SİZ'}
-              <b>YOU → {activeAgentId.toUpperCase()}:</b> {msg.text}
+              <div style="text-align: right;">
+                <span style="background: #2a1e12; border: 1px solid var(--brass-border); color: var(--text-main); padding: 5px 10px; border-radius: 6px; display: inline-block; max-width: 85%;">
+                  <b>{t[$currentLang].you}:</b> {msg.text}
+                </span>
+              </div>
             {:else if msg.sender === 'SİSTEM'}
-              <span class="bg-[#c9a86a] text-black px-1 font-bold text-[10px]">{msg.text}</span>
+              <div style="text-align: center;">
+                <span style="background: rgba(212,175,55,0.15); border: 1px solid var(--gold); color: var(--gold-light); padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;">
+                  ⚙️ {msg.text}
+                </span>
+              </div>
             {:else}
-              <b>◀ {msg.sender}:</b> {msg.text}
+              <div style="text-align: left;">
+                <span style="background: #17110c; border: 1px solid #4a341e; color: var(--gold-light); padding: 6px 12px; border-radius: 6px; display: inline-block; max-width: 90%;">
+                  <b style="color: var(--gold);">{msg.sender}:</b> {msg.text}
+                </span>
+              </div>
             {/if}
           </div>
         {/each}
       </div>
-      
-      <div class="flex items-center mt-3 gap-2 bg-black rounded border border-[#c9a86a] p-1">
-        <div class="text-[10px] text-[#c9a86a] px-2 font-bold">{activeAgentId.toUpperCase()} →</div>
-        <input class="flex-1 bg-transparent text-white text-[13px] outline-none px-2" bind:value={inputMessage} on:keydown={handleKeydown} placeholder="Ajanı yönlendir..." disabled={isSending}>
-        <input type="file" accept="image/*" bind:this={fileInput} on:change={handleImageUpload} class="hidden">
-        <button class="text-[#c9a86a] px-2 disabled:opacity-50 {isListening?'text-red-500 animate-pulse':''}" on:click={toggleListen} disabled={isSending}>🎙️</button>
-        <button class="text-[#c9a86a] px-2 disabled:opacity-50" on:click={() => fileInput.click()} disabled={isSending}>👁️</button>
-        <button class="brass px-4 py-1 rounded text-[11px] font-bold text-dark disabled:opacity-50" on:click={sendMessage} disabled={isSending}>SEND</button>
-      </div>
 
-      <div class="flex items-center gap-2 mt-2">
-        <button class="bg-[#2563eb] text-white px-3 py-1 rounded text-[10px] font-bold hover:brightness-110" on:click={explainState}>EXPLAIN STATE (Neden?)</button>
-        <span class="text-[8px] text-gray-500 font-mono">ASPASIA Gözlemci Modu Aktif</span>
+      <!-- Mesaj Girişi & Araçlar -->
+      <div style="display: flex; gap: 6px; align-items: center;">
+        <input 
+          style="flex: 1; font-size: 12px; padding: 8px 12px;" 
+          bind:value={inputMessage} 
+          on:keydown={handleKeydown} 
+          placeholder={t[$currentLang].chatPlaceholder} 
+          disabled={isSending}
+        />
+        <input type="file" accept="image/*" bind:this={fileInput} on:change={handleImageUpload} style="display: none;">
+        <button class="btn-dark" title="Görsel Yükle" on:click={() => fileInput.click()} disabled={isSending}>
+          📷
+        </button>
+        <button class="btn-brass" style="font-size: 11px; padding: 8px 16px;" on:click={sendMessage} disabled={isSending || (!inputMessage.trim() && !attachedImage)}>
+          {t[$currentLang].sendBtn}
+        </button>
       </div>
     </div>
 
-    <!-- 360° HOLISTIC HUMAN RECOGNITION PANEL -->
+    <!-- 360° BÜTÜNCÜL İNSAN ÇÖZÜMLEMESİ (Holistic Profile Card) -->
     {#if holisticProfile}
-    <div class="brass rounded-[8px] p-4 mt-1 border-2 border-[#10b981]/50 shadow-lg">
-      <div class="flex justify-between items-center mb-3">
-        <div class="font-cinzel font-extrabold text-[13px] tracking-wider text-dark flex items-center gap-2">
-          <span>🧠 360° BÜTÜNCÜL İNSAN ÇÖZÜMLEMESİ</span>
-          <span class="bg-[#10b981] text-black font-mono text-[9px] px-2 py-0.5 rounded font-bold">TAM HARİTA</span>
+    <div class="brass-plate" style="border: 2px solid var(--accent-green);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #2a1e12; padding-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="font-cinzel" style="font-size: 13px; font-weight: 800; color: var(--accent-green);">
+            🧠 {t[$currentLang].holisticTitle}
+          </span>
+          <span style="font-size: 9px; font-weight: 800; background: var(--accent-green); color: #0a0502; padding: 2px 6px; border-radius: 4px;">
+            {t[$currentLang].fullMap}
+          </span>
         </div>
-        <div class="text-[9px] font-bold text-dark font-mono">@{holisticProfile.username || 'target'}</div>
+        <span style="font-size: 11px; color: var(--gold); font-weight: 700;">
+          @{holisticProfile.username || 'target'}
+        </span>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-        <!-- Tutkular & Neşe -->
-        <div class="bg-black/90 p-2.5 rounded border border-[#f59e0b]/40">
-          <div class="text-[9px] font-bold text-[#f59e0b] tracking-wider mb-1 flex items-center gap-1">
-            <span>✨ TUTKULAR & NEŞE</span>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+        <!-- Tutkular -->
+        <div class="screen-card" style="border-color: rgba(245,158,11,0.4);">
+          <div style="font-size: 10px; font-weight: 700; color: var(--accent-amber); margin-bottom: 6px;">
+            {t[$currentLang].passionsTitle}
           </div>
           {#if holisticProfile.passions?.core_passions?.length}
-            <div class="flex flex-wrap gap-1 mt-1">
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
               {#each holisticProfile.passions.core_passions as p}
-                <span class="bg-[#f59e0b]/20 text-[#fcd34d] text-[8px] px-1.5 py-0.5 rounded border border-[#f59e0b]/30">{p}</span>
+                <span style="background: rgba(245,158,11,0.2); color: #fde68a; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(245,158,11,0.3);">
+                  {p}
+                </span>
               {/each}
             </div>
           {:else}
-            <div class="text-[8px] text-gray-500 italic">Tespit edilemedi</div>
+            <p style="font-size: 9px; color: var(--text-muted); font-style: italic;">{t[$currentLang].noPassions}</p>
           {/if}
           {#if holisticProfile.passions?.energizing_topics?.length}
-            <div class="text-[7px] text-[#c9a86a] mt-2">Enerji Veren: {holisticProfile.passions.energizing_topics.join(', ')}</div>
+            <div style="font-size: 9px; color: var(--text-dim); margin-top: 4px;">
+              <b>{t[$currentLang].energizingLabel}</b> {holisticProfile.passions.energizing_topics.join(', ')}
+            </div>
           {/if}
         </div>
 
-        <!-- Hassasiyetler & Sınırlar -->
-        <div class="bg-black/90 p-2.5 rounded border border-[#ef4444]/40">
-          <div class="text-[9px] font-bold text-[#ef4444] tracking-wider mb-1 flex items-center gap-1">
-            <span>🛡️ HASSASİYETLER & SINIRLAR</span>
+        <!-- Sınırlar -->
+        <div class="screen-card" style="border-color: rgba(239,68,68,0.4);">
+          <div style="font-size: 10px; font-weight: 700; color: var(--accent-red); margin-bottom: 6px;">
+            {t[$currentLang].frictionsTitle}
           </div>
           {#if holisticProfile.frictions?.sensitivities?.length}
-            <div class="flex flex-wrap gap-1 mt-1">
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
               {#each holisticProfile.frictions.sensitivities as s}
-                <span class="bg-[#ef4444]/20 text-[#fca5a5] text-[8px] px-1.5 py-0.5 rounded border border-[#ef4444]/30">{s}</span>
+                <span style="background: rgba(239,68,68,0.2); color: #fca5a5; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(239,68,68,0.3);">
+                  {s}
+                </span>
               {/each}
             </div>
           {:else}
-            <div class="text-[8px] text-gray-500 italic">Belirgin sınır yok</div>
+            <p style="font-size: 9px; color: var(--text-muted); font-style: italic;">{t[$currentLang].noFrictions}</p>
           {/if}
           {#if holisticProfile.frictions?.boundary_signals?.length}
-            <div class="text-[7px] text-red-400 mt-2">Sınırlar: {holisticProfile.frictions.boundary_signals.join(', ')}</div>
+            <div style="font-size: 9px; color: #fca5a5; margin-top: 4px;">
+              <b>{t[$currentLang].boundariesLabel}</b> {holisticProfile.frictions.boundary_signals.join(', ')}
+            </div>
           {/if}
         </div>
 
-        <!-- İletişim Üslubu & Bilişsel Ton -->
-        <div class="bg-black/90 p-2.5 rounded border border-[#06b6d4]/40">
-          <div class="text-[9px] font-bold text-[#06b6d4] tracking-wider mb-1 flex items-center gap-1">
-            <span>💬 İLETİŞİM ÜSLUBU</span>
+        <!-- Bilişsel Ton -->
+        <div class="screen-card" style="border-color: rgba(6,182,212,0.4);">
+          <div style="font-size: 10px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 6px;">
+            {t[$currentLang].cognitiveTitle}
           </div>
-          <div class="text-[8px] text-gray-300 space-y-0.5 mt-1">
-            <div>Ton: <b class="text-[#67e8f9]">{holisticProfile.cognitive?.communication_tone || 'Dengeli'}</b></div>
-            <div>Düzey: <b class="text-[#67e8f9]">{holisticProfile.cognitive?.complexity_level || 'Orta'}</b></div>
-            <div>Sosyal Yaklaşım: <b class="text-[#67e8f9]">{holisticProfile.cognitive?.social_orientation || 'Bağımsız'}</b></div>
+          <div style="font-size: 9px; color: var(--text-main); display: flex; flex-direction: column; gap: 3px;">
+            <div>{t[$currentLang].toneLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.communication_tone || 'Dengeli'}</b></div>
+            <div>{t[$currentLang].complexityLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.complexity_level || 'Orta'}</b></div>
+            <div>{t[$currentLang].socialLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.social_orientation || 'Bağımsız'}</b></div>
           </div>
         </div>
       </div>
 
-      <!-- Sahici Köprü ve Mesaj Önerisi -->
+      <!-- Sahici Diyalog Köprüsü -->
       {#if holisticProfile.bridge}
-        <div class="bg-black p-3 rounded border-2 border-[#10b981] relative">
-          <div class="flex justify-between items-center mb-1">
-            <div class="text-[10px] font-bold text-[#10b981] tracking-wider">🌿 SAHİCİ DİYALOG KÖPRÜSÜ (ÖNERİLEN İLK TEMAS)</div>
-            <div class="text-[9px] text-[#c9a86a] font-mono">Rezonans: %{(holisticProfile.bridge.resonance_score * 100).toFixed(0)}</div>
+        <div class="screen-card" style="border: 2px solid var(--accent-green); background: #0c140d;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--accent-green);">
+              {t[$currentLang].bridgeTitle}
+            </span>
+            <span style="font-size: 10px; color: var(--gold); font-weight: 700;">
+              %{ (holisticProfile.bridge.resonance_score * 100).toFixed(0) } {t[$currentLang].resonanceScore}
+            </span>
           </div>
-          <div class="text-[9px] text-[#c9a86a] mb-2"><b>Konu:</b> {holisticProfile.bridge.authentic_opening_topic}</div>
-          <div class="bg-[#111] p-2 rounded border border-[#333] text-[#f5f1e8] text-[11px] font-mono leading-relaxed select-all">
+
+          <div style="font-size: 10px; color: var(--text-dim); margin-bottom: 6px;">
+            <b>{t[$currentLang].openingTopic}</b> {holisticProfile.bridge.authentic_opening_topic}
+          </div>
+
+          <div style="background: #060907; border: 1px solid #1f3823; border-radius: 5px; padding: 10px; font-size: 12px; color: #f5f1e8; line-height: 1.5; margin-bottom: 8px; user-select: all;">
             "{holisticProfile.bridge.suggested_opening_message}"
           </div>
-          <div class="flex justify-between items-center mt-2">
-            <div class="text-[7px] text-gray-400 italic flex-1 mr-2">{holisticProfile.bridge.conversation_starter_rationale}</div>
-            <button class="bg-[#10b981] hover:brightness-110 text-black font-bold text-[9px] px-3 py-1 rounded font-cinzel cursor-pointer" on:click={() => copyMessage(holisticProfile.bridge.suggested_opening_message)}>
-              {copyFeedback ? '✓ KOPYALANDI' : '📋 METNİ KOPYALA'}
+
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 9px; color: var(--text-muted); font-style: italic; flex: 1; margin-right: 8px;">
+              {holisticProfile.bridge.conversation_starter_rationale}
+            </span>
+            <button class="btn-brass" style="font-size: 10px; padding: 6px 14px;" on:click={() => copyMessage(holisticProfile.bridge.suggested_opening_message)}>
+              {copyFeedback ? t[$currentLang].copiedBtn : t[$currentLang].copyBtn}
             </button>
           </div>
         </div>
       {/if}
     </div>
     {/if}
-  </div>
 
-  <!-- ==================== RIGHT: AGENT CHAIN ==================== -->
-  <div class="col-span-12 lg:col-span-3 space-y-3">
-    <div class="brass rounded p-3">
-      <div class="flex justify-between items-center mb-2">
-        <div class="font-cinzel text-[11px] font-bold text-dark">AGENT CHAIN • DURUM</div>
-        <span class="text-[8px] font-mono px-1.5 py-0.5 rounded font-bold {taskState === 'completed' ? 'bg-green-800 text-white' : taskState.startsWith('halted') || taskState === 'failed' ? 'bg-red-800 text-white' : taskState === 'processing' ? 'bg-amber-700 text-white animate-pulse' : 'bg-black/40 text-dark'}">{taskState.toUpperCase()}</span>
+  </section>
+
+  <!-- ==================== SAĞ PANEL: AJAN ZİNCİRİ & KARAR AĞACI ==================== -->
+  <aside style="display: flex; flex-direction: column; gap: 14px;">
+    
+    <div class="brass-plate">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold);">
+          ⚙️ {t[$currentLang].agentChainTitle}
+        </span>
+        <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {taskState === 'completed' ? 'background: #10b981; color: #000;' : taskState.startsWith('halted') || taskState === 'failed' ? 'background: #ef4444; color: #fff;' : taskState === 'processing' ? 'background: #f59e0b; color: #000;' : 'background: #2a1e12; color: var(--text-dim);'}">
+          {taskState.toUpperCase()}
+        </span>
       </div>
 
       {#if taskId}
-        <div class="text-[8px] font-mono text-dark/70 mb-2">GÖREV: {taskId}</div>
+        <div style="font-size: 9px; color: var(--text-muted); margin-bottom: 10px;">
+          <b>{t[$currentLang].taskLabel}</b> {taskId}
+        </div>
       {/if}
 
-      <div class="space-y-2">
+      <!-- Ajan İlerleme Listesi -->
+      <div style="display: flex; flex-direction: column; gap: 6px;">
         {#each agentList as agent, i}
           {@const run = runs[agent.id]}
           {@const isCompleted = run?.status === 'completed'}
           {@const isRunning = currentAgent === agent.id && taskState === 'processing'}
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold" style="background: {agent.colorHex};">
+
+          <div class="screen-card" style="padding: 6px 8px; display: flex; align-items: center; gap: 8px;">
+            <div style="width: 20px; height: 20px; border-radius: 50%; background: {agent.color}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #000;">
               {#if isCompleted}✓{:else if isRunning}▶{:else if isHalted}✗{:else}{i + 1}{/if}
             </div>
-            <div class="flex-1">
-              <div class="flex justify-between text-[9px] font-bold text-dark">
+
+            <div style="flex: 1;">
+              <div style="display: flex; justify-content: space-between; font-size: 9px; font-weight: 700; color: var(--text-dim);">
                 <span>{agent.name}</span>
                 {#if run?.confidence !== undefined && run?.confidence !== null}
-                  <span class="font-mono text-[8px]">{run.confidence.toFixed(2)}</span>
+                  <span style="color: var(--text-main); font-size: 9px;">{run.confidence.toFixed(2)}</span>
                 {/if}
               </div>
-              <div class="h-1.5 bg-black/20 rounded mt-1 overflow-hidden">
-                <div class="h-full transition-all duration-500 {isCompleted ? 'bg-green-600' : isHalted ? 'bg-red-600' : isRunning ? 'bg-amber-500 animate-pulse' : ''}" style="width: {isCompleted ? '100%' : isRunning ? '60%' : isHalted ? '100%' : '0%'};"></div>
+              <div style="height: 4px; background: #1a120b; border-radius: 2px; overflow: hidden; margin-top: 3px;">
+                <div style="height: 100%; width: {isCompleted ? '100%' : isRunning ? '50%' : isHalted ? '100%' : '0%'}; background: {isCompleted ? '#10b981' : isHalted ? '#ef4444' : isRunning ? '#f59e0b' : 'transparent'}; transition: width 0.3s ease;"></div>
               </div>
             </div>
-            <div class="text-[8px] font-mono w-14 text-right">
-              {#if isCompleted}
-                <span class="text-green-900 font-bold">DONE</span>
-              {:else if isHalted}
-                <span class="text-red-700 font-bold">{run?.status === 'halted' ? 'HALT' : 'FAIL'}</span>
-              {:else if isRunning}
-                <span class="text-amber-900 font-bold animate-pulse">RUNNING</span>
-              {:else}
-                <span class="text-dark/40">WAIT</span>
-              {/if}
-            </div>
+
+            <span style="font-size: 8px; font-weight: 700; width: 45px; text-align: right; {isCompleted ? 'color: #10b981;' : isHalted ? 'color: #ef4444;' : isRunning ? 'color: #f59e0b;' : 'color: var(--text-muted);'}">
+              {#if isCompleted}{t[$currentLang].statusDone}
+              {:else if isHalted}{t[$currentLang].statusHalt}
+              {:else if isRunning}{t[$currentLang].statusRunning}
+              {:else}{t[$currentLang].statusWait}{/if}
+            </span>
           </div>
-          {#if i < agentList.length - 1}
-            <div class="ml-3 w-0.5 h-2 bg-[#8c6a3a]/50"></div>
-          {/if}
         {/each}
       </div>
 
       {#if haltedReason}
-        <div class="mt-3 bg-red-900/20 border border-red-800/40 rounded p-2 text-[8px] text-red-900 leading-tight">
-          <b>DURDURMA BİLGİSİ:</b> {haltedReason}
+        <div style="margin-top: 10px; background: rgba(239,68,68,0.15); border: 1px solid var(--accent-red); padding: 8px; border-radius: 5px; font-size: 9px; color: #fca5a5; line-height: 1.4;">
+          <b>{t[$currentLang].haltedReasonTitle}</b> {haltedReason}
         </div>
       {/if}
-      
-      <div class="mt-3 bg-black rounded p-2 border border-[#c9a86a]/30">
-        <div class="text-[9px] text-[#c9a86a]">OVERALL CONFIDENCE</div>
-        <div class="flex items-center gap-2 mt-1">
-          <div class="flex-1 h-2 bg-[#222] rounded overflow-hidden">
-            <div class="h-full bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 transition-all duration-300" style="width: {overallConfidence * 100}%;"></div>
-          </div>
-          <div class="text-[11px] text-white font-mono">{overallConfidence.toFixed(2)}</div>
+
+      <!-- Toplam Sistem Güveni -->
+      <div class="screen-card" style="margin-top: 12px; padding: 10px;">
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--gold); font-weight: 700; margin-bottom: 4px;">
+          <span>{t[$currentLang].overallConfidence}</span>
+          <span style="color: var(--text-main); font-size: 11px;">{overallConfidence.toFixed(2)}</span>
+        </div>
+        <div style="height: 6px; background: #1a120b; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17;">
+          <div style="height: 100%; width: {overallConfidence * 100}%; background: linear-gradient(90deg, #ef4444 0%, #f59e0b 50%, #10b981 100%); transition: width 0.3s;"></div>
         </div>
       </div>
-    </div>
-  </div>
-</div>
 
-<style>
-  .text-dark { color: #1a0f02; }
-  .brass {
-    background: linear-gradient(145deg, #e8d5a8 0%, #c9a86a 20%, #8c6a3a 50%, #c9a86a 80%, #e8d5a8 100%);
-    box-shadow: inset 0 1px 1px rgba(255,255,255,0.8), 0 2px 8px rgba(0,0,0,0.8);
-    border: 1px solid #6b4e2a;
-  }
-  .paper {
-    background: #f5f1e8;
-    background-image: repeating-linear-gradient(0deg, transparent, transparent 23px, rgba(0,0,0,0.04) 24px);
-    box-shadow: inset 0 0 30px rgba(139,106,58,0.2);
-  }
-  .gauge-glass {
-    background: radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.4) 0%, transparent 50%),
-                radial-gradient(ellipse at center, #fefefe 0%, #e8e0d0 100%);
-  }
-  .font-type {
-    font-family: 'Special Elite', cursive, monospace;
-  }
-</style>
+    </div>
+
+  </aside>
+</div>
