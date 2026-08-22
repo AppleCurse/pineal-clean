@@ -33,10 +33,21 @@ async def main():
         print(f"Kanıt zinciri: {len(result.evidence_chain)} adım")
         
         # Son adım: Mesaj
-        if result.evidence_chain:
-            final_message = result.evidence_chain[-1]['result'].get('message', '')
-            if final_message:
-                print(f"\nÜretilen mesaj:\n{final_message}")
+        # 360° zincirinde son ajan resonance_synthesizer'dir (AuthenticBridge şeması);
+        # mesaj önce oradan, yoksa pattern_interrupt kanıtından çıkar.
+        final_message = ""
+        hp = getattr(result, "holistic_profile", None)
+        if hp is not None and getattr(hp, "bridge", None) is not None:
+            final_message = (hp.bridge.suggested_opening_message or "").strip()
+        if not final_message:
+            for item in result.evidence_chain:
+                if item.get("agent") == "pattern_interrupt":
+                    final_message = (item.get("result", {}).get("message") or "").strip()
+                    break
+        if final_message:
+            print(f"\nÜretilen mesaj:\n{final_message}")
+        else:
+            print("\nÜretilen mesaj: (üretilmedi — görev tamamlanmadan durdu)")
             
     except Exception as e:
         print(f"Sistem hatası: {e}")

@@ -142,9 +142,14 @@ class AspasiaChief:
         self,
         user_message: str,
         room_state: Any,
-        model_override: Optional[str] = None
+        model_override: Optional[str] = None,
+        image_data: Optional[str] = None
     ) -> AspasiaResponse:
-        """Aspasia Sokratik yanıt mekanizmasını çalıştırır."""
+        """Aspasia Sokratik yanıt mekanizmasını çalıştırır.
+
+        image_data: kullanıcının yüklediği görselin base64 data-URL'i.
+        Görsel analizi (vision) henüz desteklenmiyor; varlığı oturuma dürüstçe kaydedilir.
+        """
         from agent_core.domain.memory_models import AspasiaSession
         
         telemetry_summary = self.build_telemetry_summary(room_state)
@@ -154,6 +159,7 @@ SİSTEM CANLI TELEMETRİ ÖZETİ (Event Bus):
 {telemetry_summary}
 
 KULLANICI MESAJI VEYA SORUSU: "{user_message}"
+{"(Not: Kullanıcı bir görsel yükledi; mevcut sürüm görsel içeriğini analiz edemiyor, bunu zarifçe belirt.)" if image_data else ""}
 
 Yukarıdaki sistem durumu ve kullanıcı mesajını dikkate alarak ASPASIA kimliğinle yanıt ver.
 Senin sisteme müdahale etme veya durdurma yetkin YOK. Eğer kullanıcı senden bir eylem yapmanı isterse, bunu arayüz butonları aracılığıyla bizzat yapması gerektiğini zarifçe belirt.
