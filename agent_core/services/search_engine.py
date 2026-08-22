@@ -1,56 +1,121 @@
+import asyncio
+import os
+import re
 import httpx
-from typing import List
+from typing import List, Optional, Dict
 from pydantic import BaseModel, ConfigDict
 
 class SearchResult(BaseModel):
     query: str
     content: str
     source_url: str
-    
+    provider: str = "unknown"
     model_config = ConfigDict(extra="forbid")
 
 class SearchEngine:
     """
-    Otonom ajanların internete çıkış kapısı.
-    Şimdilik Tavily API'sini varsayılan olarak kullanır.
+    3 Kaynaklı Eşzamanlı Arama ve Doğrulama Motoru (Tavily + SerpAPI + Exa + DuckDuckGo).
     """
-    def __init__(self):
-        import os
-        self.tavily_key = os.getenv("TAVILY_API_KEY")
-        self.serpapi_key = os.getenv("SERPAPI_API_KEY")
-        self.exa_key = os.getenv("EXA_API_KEY")
+    def __init__(self, tavily_key: Optional[str] = None, serpapi_key: Optional[str] = None, exa_key: Optional[str] = None):
+        self.tavily_key = tavily_key or os.getenv("TAVILY_API_KEY")
+        self.serpapi_key = serpapi_key or os.getenv("SERPAPI_API_KEY")
+        self.exa_key = exa_key or os.getenv("EXA_API_KEY")
 
-    def set_keys(self, tavily: str = None, serpapi: str = None, exa: str = None):
+    def set_keys(self, tavily: Optional[str] = None, serpapi: Optional[str] = None, exa: Optional[str] = None):
         if tavily: self.tavily_key = tavily
         if serpapi: self.serpapi_key = serpapi
         if exa: self.exa_key = exa
 
-    async def search(self, query: str, num_results: int = 3) -> List[SearchResult]:
-        if not self.tavily_key:
-            # Yedek plan: Anahtar yoksa boş dön
-            return []
-            
+    async def search(self, query: str, num_results: int = 5) -> List[SearchResult]:
+        tasks = []
+        if self.tavily_key:
+            tasks.append(self._search_tavily(query, num_results))
+        if self.serpapi_key:
+            tasks.append(self._search_serpapi(query, num_results))
+        if self.exa_key:
+            tasks.append(self._search_exa(query, num_results))
+        
+        # Eğer hiç anahtar yoksa ücretsiz DuckDuckGo yedeği devreye girer
+        if not tasks:
+            tasks.append(self._search_duckduckgo(query, num_results))
+
+        results_lists = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        merged: List[SearchResult] = []
+        seen_urls = set()
+        for res in results_lists:
+            if isinstance(res, list):
+                for item in res:
+                    if item.source_url not in seen_urls:
+                        seen_urls.add(item.source_url)
+                        merged.append(item)
+        return merged[:num_results * 2]
+
+    async def _search_tavily(self, query: str, num_results: int) -> List[SearchResult]:
+        url = "https://api.tavily.com/search"
+        payload = {"api_key": self.tavily_key, "query": query, "max_results": num_results}
         try:
-            async with httpx.AsyncClient() as client:
-                payload = {
-                    "api_key": self.tavily_key,
-                    "query": query,
-                    "search_depth": "basic",
-                    "include_answer": False,
-                    "max_results": num_results
-                }
-                response = await client.post("https://api.tavily.com/search", json=payload, timeout=10.0)
-                response.raise_for_status()
-                data = response.json()
-                
-                results = []
-                for item in data.get("results", []):
-                    results.append(SearchResult(
-                        query=query,
-                        content=item.get("content", ""),
-                        source_url=item.get("url", "")
-                    ))
-                return results
-        except Exception as e:
-            print(f"SearchEngine Error: {str(e)}")
-            return []
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    return [
+                        SearchResult(query=query, content=r.get("content", ""), source_url=r.get("url", ""), provider="tavily")
+                        for r in data.get("results", [])
+                    ]
+        except Exception:
+            pass
+        return []
+
+    async def _search_serpapi(self, query: str, num_results: int) -> List[SearchResult]:
+        url = "https://serpapi.com/search"
+        params = {"api_key": self.serpapi_key, "q": query, "num": num_results, "engine": "google"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(url, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    return [
+                        SearchResult(query=query, content=r.get("snippet", ""), source_url=r.get("link", ""), provider="serpapi")
+                        for r in data.get("organic_results", [])
+                    ]
+        except Exception:
+            pass
+        return []
+
+    async def _search_exa(self, query: str, num_results: int) -> List[SearchResult]:
+        url = "https://api.exa.ai/search"
+        headers = {"x-api-key": self.exa_key, "Content-Type": "application/json"}
+        payload = {"query": query, "numResults": num_results}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(url, headers=headers, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    return [
+                        SearchResult(query=query, content=r.get("text", r.get("title", "")), source_url=r.get("url", ""), provider="exa")
+                        for r in data.get("results", [])
+                    ]
+        except Exception:
+            pass
+        return []
+
+    async def _search_duckduckgo(self, query: str, num_results: int) -> List[SearchResult]:
+        url = "https://html.duckduckgo.com/html/"
+        data = {"q": query}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(url, data=data, headers=headers)
+                if res.status_code == 200:
+                    html = res.text
+                    results = []
+                    links = re.findall(r'<a class="result__url" href="([^"]+)">([^<]+)</a>', html)
+                    snippets = re.findall(r'<a class="result__snippet[^>]*>([^<]+)</a>', html)
+                    for i, (href, raw_url) in enumerate(links[:num_results]):
+                        snippet = snippets[i] if i < len(snippets) else query
+                        results.append(SearchResult(query=query, content=snippet.strip(), source_url=raw_url.strip(), provider="duckduckgo"))
+                    return results
+        except Exception:
+            pass
+        return []

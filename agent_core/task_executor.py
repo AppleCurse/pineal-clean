@@ -131,6 +131,24 @@ class PinealExecutor:
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
 
+        # Deterministik Takipçi ve Zamanlama Forensiği
+        try:
+            from agent_core.services.follower_audit import audit_followers
+            from agent_core.services.timing_forensics import analyze_timing
+            tp_info = input_data.get("target_profile", {})
+            fol_cnt = tp_info.get("followers", 0)
+            fing_cnt = tp_info.get("following", 0)
+            posts_meta = tp_info.get("posts_meta", []) or [{"like_count": None, "comment_count": None}]
+            audit_res = audit_followers(fol_cnt, fing_cnt, posts_meta)
+            input_data["follower_audit"] = audit_res.model_dump()
+            
+            p_times = tp_info.get("post_times", [])
+            t_res = analyze_timing(p_times)
+            if t_res:
+                input_data["timing_forensics"] = t_res
+        except Exception as e:
+            self._log("WARNING", f"[{task_id}] Forensik veri analizi uyarısı: {e}")
+
         raw_imgs = input_data.get("target_profile", {}).get("images", [])
         if raw_imgs and isinstance(raw_imgs, list) and len(raw_imgs) > 0 and isinstance(raw_imgs[0], str) and raw_imgs[0].startswith("http"):
             self._log("INFO", f"[{task_id}] MULTIMODAL VISION: {len(raw_imgs)} fotoğraf görsel zeka ile inceleniyor...")
@@ -334,6 +352,16 @@ class PinealExecutor:
                 overall_confidence=0.85 if bridge_obj else 0.5
             )
             self._log("INFO", "[" + task_id + "] 360 İnsan Tanıma Profili Oluşturuldu")
+
+            # --- P1 + P7 + P8 DERİNLİK VE GERÇEKLİK ANALİZİ (QuoteGuard Korumalı) ---
+            try:
+                from agent_core.agents.depth_analyst import DepthAnalyst
+                depth_agent = DepthAnalyst(self.llm_gateway)
+                depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
+                status.depth_report = depth_rep.model_dump()
+                self._log("INFO", f"[{task_id}] DERİNLİK ANALİZİ: Gerçeklik Endeksi %{int(depth_rep.reality_index * 100)}")
+            except Exception as e:
+                self._log("WARNING", f"[{task_id}] Derinlik analizi atlandı: {e}")
 
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
