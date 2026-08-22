@@ -18,10 +18,13 @@ class CognitiveProfilerAgent:
         target = payload.get("target_profile", {})
         bio = target.get("bio", "")
         posts = target.get("posts", [])
+        visual_evidence = payload.get("visual_evidence", {})
         
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
-        
-        if not bio and not posts:
+        visual_style = visual_evidence.get('aesthetic_style', '') if visual_evidence else ''
+        visual_text = f"Fotoğraflardaki Görsel ve Estetik Dil: {visual_style}" if visual_style else ""
+
+        if not bio and not posts and not visual_evidence:
             return CognitiveStyle(
                 communication_tone="dengeli",
                 complexity_level="orta",
@@ -31,7 +34,7 @@ class CognitiveProfilerAgent:
             )
 
         prompt = f"""
-Aşağıdaki metinlerin dilbilimsel üslubunu ve iletişim ritmini incele.
+Aşağıdaki metinlerin dilbilimsel üslubunu, iletişim ritmini ve fotoğrafların estetik dilini incele.
 Kişinin nasıl bir iletişim tarzı benimsediğini analiz et.
 
 Hedef Biyografi:
@@ -39,6 +42,8 @@ Hedef Biyografi:
 
 Son Paylaşımlar / Metinler:
 {posts_text}
+
+{visual_text}
 
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{

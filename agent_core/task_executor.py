@@ -56,6 +56,11 @@ class VerifiedNote(BaseModel):
 class TaskStatus(TaskSnapshot):
     pass
 
+try:
+    from agent_core.services.vision_analyzer import VisionAnalyzer, VisualEvidence
+except Exception:
+    from services.vision_analyzer import VisionAnalyzer, VisualEvidence
+
 class PinealExecutor:
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):
         self._log = log_callback or (lambda level, msg: None)
@@ -67,6 +72,7 @@ class PinealExecutor:
         self.uncertainty = UncertaintyEngine()
         self.llm_gateway = LLMGateway()
         self.search_engine = SearchEngine()
+        self.vision_analyzer = VisionAnalyzer(self.llm_gateway)
         self.agents = {
             "passion_mapper": PassionMapperAgent(self.llm_gateway),
             "friction_detector": FrictionDetectorAgent(self.llm_gateway),
@@ -124,6 +130,17 @@ class PinealExecutor:
         )
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
+
+        raw_imgs = input_data.get("target_profile", {}).get("images", [])
+        if raw_imgs and isinstance(raw_imgs, list) and len(raw_imgs) > 0 and isinstance(raw_imgs[0], str) and raw_imgs[0].startswith("http"):
+            self._log("INFO", f"[{task_id}] MULTIMODAL VISION: {len(raw_imgs)} fotoğraf görsel zeka ile inceleniyor...")
+            try:
+                target_bio = input_data.get("target_profile", {}).get("bio", "")
+                visual_ev = await self.vision_analyzer.analyze_images(raw_imgs, target_context=target_bio)
+                input_data["visual_evidence"] = visual_ev.model_dump()
+                self._log("INFO", f"[{task_id}] GÖRSEL KANIT: {visual_ev.visual_evidence_summary}")
+            except Exception as e:
+                self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
 
         imgs = input_data.get("target_profile", {}).get("images", [])
         if imgs and isinstance(imgs[0], str) and imgs[0].startswith("http"):

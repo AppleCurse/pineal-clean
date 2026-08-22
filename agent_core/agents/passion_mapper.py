@@ -18,10 +18,19 @@ class PassionMapperAgent:
         target = payload.get("target_profile", {})
         bio = target.get("bio", "")
         posts = target.get("posts", [])
+        visual_evidence = payload.get("visual_evidence", {})
         
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
-        
-        if not bio and not posts:
+        visual_text = f"""
+Görsel İnceleme Kanıtları (Multimodal Vision):
+- Tespit Edilen Somut Nesneler: {visual_evidence.get('detected_objects', [])}
+- Mekanlar ve Ortam: {visual_evidence.get('environment_and_places', [])}
+- Estetik ve Görsel Dil: {visual_evidence.get('aesthetic_style', '')}
+- Yapılan Eylemler: {visual_evidence.get('activity_signals', [])}
+- Görsel Özeti: {visual_evidence.get('visual_evidence_summary', '')}
+""" if visual_evidence else "Görsel kanıt bulunamadı."
+
+        if not bio and not posts and not visual_evidence:
             return PassionProfile(
                 core_passions=[],
                 energizing_topics=[],
@@ -32,9 +41,10 @@ class PassionMapperAgent:
             )
 
         prompt = f"""
-Aşağıdaki sosyal medya profil verilerini incele.
-Bu kişinin GERÇEKTE neye tutku duyduğunu, hangi konuların onu neşelendirdiğini ve motive ettiğini analiz et.
-Asla basmakalıp astroloji genellemeleri yapma. Yalnızca verilen metinlerdeki somut delillere dayan.
+Aşağıdaki sosyal medya profil verilerini ve fotoğraflardan çıkarılan SOMUT görsel kanıtları incele.
+Bu kişinin GERÇEKTE neye tutku duyduğunu, hangi konuların ve eylemlerin onu motive ettiğini analiz et.
+Asla genel geçer astroloji veya kişisel gelişim genellemeleri yapma. 
+Yalnızca verilen metinlerdeki ve fotoğraflarda fiilen tespit edilen somut nesne/mekan delillerine dayan.
 
 Hedef Biyografi:
 "{bio}"
@@ -42,14 +52,16 @@ Hedef Biyografi:
 Son Paylaşımlar / Metinler:
 {posts_text}
 
+{visual_text}
+
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{
-  "core_passions": ["Kişinin en çok heyecan duyduğu 1-3 ana alan"],
-  "energizing_topics": ["Konuşmaktan veya paylaşmaktan keyif aldığı spesifik konular"],
-  "flow_triggers": ["Onu üretken veya coşkulu kılan tetikleyiciler"],
-  "sentiment_polarity": 0.5, // -1.0 (karamsar) ile +1.0 (coşkulu) arası float
-  "evidence_quotes": ["Metinden doğrudan alıntılanan 1-2 somut cümle"],
-  "confidence": 0.85
+  "core_passions": ["Kişinin somut paylaşımlarından ve fotoğraflarından kanıtlanan 1-3 ana tutku alanı"],
+  "energizing_topics": ["Konuşmaktan, üretmekten veya görselleştirmekten keyif aldığı spesifik konular"],
+  "flow_triggers": ["Onu üretken veya coşkulu kılan somut tetikleyiciler"],
+  "sentiment_polarity": 0.6, // -1.0 (karamsar) ile +1.0 (coşkulu) arası float
+  "evidence_quotes": ["Metinden veya görsel kanıttan doğrudan alıntılanan somut detaylar"],
+  "confidence": 0.90
 }}
 """
         try:
