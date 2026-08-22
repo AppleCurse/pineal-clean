@@ -16,21 +16,62 @@ from agent_core.agents.human_behavior import DigitalColdReading, MicroSignal
 from agent_core.agents.pattern_interrupt import GeneratedMessage, ScenarioResponse
 from agent_core.agents.resonance_calculator import ResonanceProfile
 
-async def mock_query_json(prompt, response_model, **kwargs):
-    if response_model.__name__ == "MirrorReflection":
+async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
+    model = schema or response_model
+    name = getattr(model, "__name__", "")
+    if name == "PassionProfile":
+        from agent_core.domain.memory_models import PassionProfile
+        return PassionProfile(
+            core_passions=["Mimari", "Müzik"],
+            energizing_topics=["Sanat", "Tasarım"],
+            flow_triggers=["Yaratıcı Projeler"],
+            sentiment_polarity=0.7,
+            evidence_quotes=["Estetik her şeydir."],
+            confidence=0.9
+        )
+    elif name == "FrictionProfile":
+        from agent_core.domain.memory_models import FrictionProfile
+        return FrictionProfile(
+            sensitivities=["Yüzeysellik", "Zaman İsrafı"],
+            stress_triggers=["Gereksiz Toplantılar"],
+            boundary_signals=["Özel Alan Saygısı"],
+            evidence_quotes=["Sessizlik huzurdur."],
+            confidence=0.85
+        )
+    elif name == "CognitiveStyle":
+        from agent_core.domain.memory_models import CognitiveStyle
+        return CognitiveStyle(
+            communication_tone="analitik",
+            complexity_level="orta",
+            humor_style="kuru mizah",
+            social_orientation="gözlemci",
+            confidence=0.9
+        )
+    elif name == "AuthenticBridge":
+        from agent_core.domain.memory_models import AuthenticBridge
+        return AuthenticBridge(
+            shared_passions=["Sanat", "Mimari"],
+            complementary_perspectives=["Görsel Kompozisyon"],
+            resonance_score=0.95,
+            authentic_opening_topic="Müzik ve Sanat",
+            conversation_starter_rationale="Ortak ilgi alanları ve analitik yaklaşım.",
+            suggested_opening_message="Merhaba, sanat paylaşımlarınızdaki detaylar çok ilham verici.",
+            confidence=0.95
+        )
+    elif name == "MirrorReflection":
         return MirrorReflection(
             user_core_frequency="derin_ruh",
             surface_persona="pozitif",
             alignment_score=0.9,
             authentic_anchors=["yalnizlik"]
         )
-    elif response_model.__name__ == "VerifierReport":
+    elif name == "VerifierReport":
         return VerifierReport(
             verifications=[VerificationResult(claim_text="test", truth_status="TRUE", evidence_url="http", contradiction_detail="none")],
             overall_authenticity_score=0.85,
             status="VERIFIED"
         )
-    elif response_model.__name__ == "DigitalColdReading":
+    elif name == "DigitalColdReading":
         return DigitalColdReading(
             surface_identity="sosyal",
             detected_wound="anlasilmama",
@@ -39,7 +80,7 @@ async def mock_query_json(prompt, response_model, **kwargs):
             achilles_score=85.0,
             resonance_potential=0.9
         )
-    elif response_model.__name__ == "GeneratedMessage":
+    elif name == "GeneratedMessage":
         return GeneratedMessage(
             message="O sessiz sinyal, tesadüf değil.",
             strategy="void_resonance",
@@ -49,19 +90,18 @@ async def mock_query_json(prompt, response_model, **kwargs):
                 ScenarioResponse(scenario_type="agresif", expected_target_reaction="Ne diyorsun?", our_counter_move="Sadece bir gözlem.")
             ]
         )
-    elif response_model.__name__ == "ClaimList":
-        # It's dynamically defined in autonomous_verifier.py
+    elif name == "ClaimList":
         from agent_core.agents.autonomous_verifier import Claim
-        return response_model(claims=[Claim(claim_text="Sadece pozitif enerji", category="bio")])
-    elif response_model.__name__ == "VerificationResult":
+        return model(claims=[Claim(claim_text="Sadece pozitif enerji", category="bio")])
+    elif name == "VerificationResult":
         return VerificationResult(
             claim_text="test", truth_status="DOĞRULANDI", evidence_url="http", contradiction_detail="none"
         )
-    elif response_model.__name__ == "AuthenticVectorResult":
-        return response_model(
+    elif name == "AuthenticVectorResult":
+        return model(
             depth=0.8, energy=0.4, achilles_heel="yalnizlik", core_wound="anlasilmama", dark_detail="sessizlik"
         )
-    raise ValueError(f"Unknown model: {response_model.__name__}")
+    raise ValueError(f"Unknown model: {name}")
 
 
 @pytest.mark.asyncio
@@ -115,5 +155,6 @@ async def test_p2_release_gate_e2e_integration():
         assert "pattern_interrupt" in agent_names_in_chain
         
         # Final result check
-        final_message = result.evidence_chain[-1]['result'].get('message', '')
+        pattern_step = next(step for step in result.evidence_chain if step['agent'] == 'pattern_interrupt')
+        final_message = pattern_step['result'].get('message', '')
         assert "O sessiz sinyal" in final_message

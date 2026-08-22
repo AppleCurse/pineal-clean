@@ -25,22 +25,33 @@ class CognitiveRouter:
             agents.append('mirror_truth')
             reasoning.append("Kullanıcı frekansı tespiti zorunlu")
         
-        # Hedef varsa analiz et
+        # Hedef varsa 360 derece analiz et
         if has_target:
             agents.append('autonomous_verifier')
-            reasoning.append("Otonom Teyit (Ayna)")
-            
+            reasoning.append("Otonom Teyit (Arama & Kanıt)")
+
             agents.append('human_behavior')
-            reasoning.append("Hedef mikro-analizi")
+            reasoning.append("Hedef Davranış Analizi")
+
+            agents.append('passion_mapper')
+            reasoning.append("Tutku ve Neşe Haritalama")
             
-            # Kullanıcı da hedef de varsa rezonans hesapla
+            agents.append('friction_detector')
+            reasoning.append("Hassasiyet ve Sınır Tespiti")
+            
+            agents.append('cognitive_profiler')
+            reasoning.append("Bilişsel Ton ve Üslup")
+            
+            # Kullanıcı da hedef de varsa rezonans ve sahici köprü hesapla
             if has_user:
                 agents.append('resonance_calc')
-                reasoning.append("Frekans uyumu kontrolü")
+                reasoning.append("Sahici Değer ve Uyum Hesabı")
                 
-                # Uyum yüksekse desen kır
                 agents.append('pattern_interrupt')
-                reasoning.append("Yüksek uyum - Mesaj üretimi")
+                reasoning.append("İletişim Deseni")
+
+                agents.append('resonance_synthesizer')
+                reasoning.append("Sahici İletişim Köprüsü")
         
         return RoutePlan(
             agents=agents,

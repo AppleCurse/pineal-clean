@@ -107,6 +107,34 @@ class AspasiaChief:
                 err = getattr(run, "error_message", None)
                 if err:
                     lines.append(f"    HATA: {err}")
+
+        # 360° İnsan Tanıma Çözümleme Özeti
+        holistic = getattr(snapshot, "holistic_profile", None) if not isinstance(snapshot, dict) else snapshot.get("holistic_profile")
+        if holistic:
+            lines.append("\n--- 360° İNSAN TANIMA ÇÖZÜMLEMESİ ---")
+            passions = getattr(holistic, "passions", None) or (holistic.get("passions") if isinstance(holistic, dict) else None)
+            if passions:
+                cp = getattr(passions, "core_passions", []) if not isinstance(passions, dict) else passions.get("core_passions", [])
+                lines.append(f"  [TUTKULAR & NEŞE]: {', '.join(cp) if cp else 'Belirgin tutku tespiti yok'}")
+                
+            frictions = getattr(holistic, "frictions", None) or (holistic.get("frictions") if isinstance(holistic, dict) else None)
+            if frictions:
+                sens = getattr(frictions, "sensitivities", []) if not isinstance(frictions, dict) else frictions.get("sensitivities", [])
+                lines.append(f"  [HASSASİYETLER & SINIRLAR]: {', '.join(sens) if sens else 'Belirgin sınır tespiti yok'}")
+
+            cognitive = getattr(holistic, "cognitive", None) or (holistic.get("cognitive") if isinstance(holistic, dict) else None)
+            if cognitive:
+                tone = getattr(cognitive, "communication_tone", "") if not isinstance(cognitive, dict) else cognitive.get("communication_tone", "")
+                lvl = getattr(cognitive, "complexity_level", "") if not isinstance(cognitive, dict) else cognitive.get("complexity_level", "")
+                lines.append(f"  [İLETİŞİM ÜSLUBU]: Ton: {tone} | Düzey: {lvl}")
+
+            bridge = getattr(holistic, "bridge", None) or (holistic.get("bridge") if isinstance(holistic, dict) else None)
+            if bridge:
+                topic = getattr(bridge, "authentic_opening_topic", "") if not isinstance(bridge, dict) else bridge.get("authentic_opening_topic", "")
+                msg = getattr(bridge, "suggested_opening_message", "") if not isinstance(bridge, dict) else bridge.get("suggested_opening_message", "")
+                lines.append(f"  [ÖNERİLEN İLK DİYALOG KONUSU]: {topic}")
+                lines.append(f"  [SAHİCİ İLETİŞİM KÖPRÜSÜ]: \"{msg}\"")
+            lines.append("--------------------------------------")
                     
         return "\n".join(lines)
 

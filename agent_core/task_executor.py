@@ -8,6 +8,10 @@ try:
     from agent_core.services.canonical_memory import CanonicalMemory
     from agent_core.services.uncertainty_engine import UncertaintyEngine
     from agent_core.services.llm_gateway import LLMGateway
+    from agent_core.agents.passion_mapper import PassionMapperAgent
+    from agent_core.agents.friction_detector import FrictionDetectorAgent
+    from agent_core.agents.cognitive_profiler import CognitiveProfilerAgent
+    from agent_core.agents.resonance_synthesizer import ResonanceSynthesizerAgent
     from agent_core.agents.human_behavior import HumanBehaviorAnalyzer
     from agent_core.agents.mirror_truth import MirrorOfTruth
     from agent_core.agents.resonance_calculator import ResonanceCalculator
@@ -21,6 +25,10 @@ except Exception:
     from services.canonical_memory import CanonicalMemory
     from services.uncertainty_engine import UncertaintyEngine
     from services.llm_gateway import LLMGateway
+    from agents.passion_mapper import PassionMapperAgent
+    from agents.friction_detector import FrictionDetectorAgent
+    from agents.cognitive_profiler import CognitiveProfilerAgent
+    from agents.resonance_synthesizer import ResonanceSynthesizerAgent
     from agents.human_behavior import HumanBehaviorAnalyzer
     from agents.mirror_truth import MirrorOfTruth
     from agents.resonance_calculator import ResonanceCalculator
@@ -31,9 +39,13 @@ except Exception:
     from agents.interpreter_agent import InterpreterAgent
 
 try:
-    from agent_core.domain.memory_models import TaskSnapshot, AgentRun
+    from agent_core.domain.memory_models import (
+        TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
+    )
 except Exception:
-    from domain.memory_models import TaskSnapshot, AgentRun
+    from domain.memory_models import (
+        TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
+    )
 
 class InsufficientEvidenceError(RuntimeError):
     pass
@@ -56,6 +68,10 @@ class PinealExecutor:
         self.llm_gateway = LLMGateway()
         self.search_engine = SearchEngine()
         self.agents = {
+            "passion_mapper": PassionMapperAgent(self.llm_gateway),
+            "friction_detector": FrictionDetectorAgent(self.llm_gateway),
+            "cognitive_profiler": CognitiveProfilerAgent(self.llm_gateway),
+            "resonance_synthesizer": ResonanceSynthesizerAgent(self.llm_gateway),
             "human_behavior": HumanBehaviorAnalyzer(),
             "mirror_truth": MirrorOfTruth(),
             "resonance_calc": ResonanceCalculator(),
@@ -127,7 +143,7 @@ class PinealExecutor:
         deferred = []
         try:
             for agent_name in route.agents:
-                if agent_name == "pattern_interrupt":
+                if agent_name in ["pattern_interrupt", "resonance_synthesizer"]:
                     deferred.append(agent_name)
                     continue
                 if agent_name not in self.agents:
@@ -151,7 +167,11 @@ class PinealExecutor:
                     input_summary="Ajan tetiklendi"
                 ))
                 try:
-                    result = await self.agents[agent_name].execute(input_data, self.memory, self.llm_gateway)
+                    agent = self.agents[agent_name]
+                    try:
+                        result = await agent.execute(input_data, self.memory, self.llm_gateway)
+                    except TypeError:
+                        result = await agent.execute(input_data)
                     if not isinstance(result, BaseModel):
                         raise TypeError(agent_name + " gecersiz cikti: " + str(type(result)))
                 except InsufficientEvidenceError:
@@ -196,9 +216,15 @@ class PinealExecutor:
                 if agent_name == "mirror_truth":
                     input_data["user_mirror"] = result.model_dump()
                     input_data["user_authentic_vector"] = await self._calculate_authentic_vector(input_data["user_mirror"])
-                if agent_name == "human_behavior":
+                elif agent_name == "human_behavior":
                     input_data["target_analysis"] = result.model_dump()
                     input_data["target_authentic_vector"] = await self._calculate_authentic_vector(input_data["target_analysis"])
+                elif agent_name == "passion_mapper":
+                    input_data["passions"] = result.model_dump()
+                elif agent_name == "friction_detector":
+                    input_data["frictions"] = result.model_dump()
+                elif agent_name == "cognitive_profiler":
+                    input_data["cognitive"] = result.model_dump()
 
                 status.evidence_chain.append({"agent": agent_name, "result": result.model_dump(), "timestamp": datetime.now(timezone.utc).isoformat()})
                 
@@ -210,7 +236,7 @@ class PinealExecutor:
                     status.completed_agents.append(agent_name)
                 
                 if agent_name == "resonance_calc":
-                    status.resonance_score = result.compatibility_score
+                    status.resonance_score = getattr(result, "compatibility_score", None)
                 self._snapshot(status)
                 
                 self._emit(StepCompletedEvent(
@@ -220,7 +246,7 @@ class PinealExecutor:
                     output_hash="HASH"
                 ))
 
-                if agent_name == "resonance_calc" and result.compatibility_score < 0.70:
+                if agent_name == "resonance_calc" and hasattr(result, "compatibility_score") and result.compatibility_score < 0.70:
                     self._log("ERROR", "[" + task_id + "] FREKANS UYUSMAZLIGI: " + str(round(result.compatibility_score, 2)))
                     status.status = "halted_frequency"
                     await self.memory.merge_evidence(task_id, status.evidence_chain)
@@ -240,7 +266,11 @@ class PinealExecutor:
                 status.agent_runs[agent_name] = run
                 self._snapshot(status)
                 try:
-                    result = await self.agents[agent_name].execute(input_data, self.memory, self.llm_gateway)
+                    agent = self.agents[agent_name]
+                    try:
+                        result = await agent.execute(input_data, self.memory, self.llm_gateway)
+                    except TypeError:
+                        result = await agent.execute(input_data)
                 except Exception as e:
                     run.status = "failed"
                     run.error_code = type(e).__name__
@@ -260,7 +290,33 @@ class PinealExecutor:
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
                 self._snapshot(status)
-                self._log("INFO", "[" + task_id + "] HOOK: mesaj dovuldu")
+
+            # --- 360° HOLISTIC PROFILE OLUŞTURMA ---
+            passions_obj = None
+            frictions_obj = None
+            cognitive_obj = None
+            bridge_obj = None
+            for item in status.evidence_chain:
+                ag = item.get("agent")
+                res = item.get("result", {})
+                if ag == "passion_mapper":
+                    passions_obj = PassionProfile(**res)
+                elif ag == "friction_detector":
+                    frictions_obj = FrictionProfile(**res)
+                elif ag == "cognitive_profiler":
+                    cognitive_obj = CognitiveStyle(**res)
+                elif ag == "resonance_synthesizer":
+                    bridge_obj = AuthenticBridge(**res)
+
+            status.holistic_profile = HolisticProfile(
+                username=input_data.get("target_profile", {}).get("username", "target"),
+                passions=passions_obj,
+                frictions=frictions_obj,
+                cognitive=cognitive_obj,
+                bridge=bridge_obj,
+                overall_confidence=0.85 if bridge_obj else 0.5
+            )
+            self._log("INFO", "[" + task_id + "] 360 İnsan Tanıma Profili Oluşturuldu")
 
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
