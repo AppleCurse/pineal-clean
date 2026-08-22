@@ -178,7 +178,23 @@ class LLMGateway:
         if root_key and root_key in parsed_data and isinstance(parsed_data[root_key], dict):
             parsed_data = parsed_data[root_key]
 
-        return schema(**parsed_data)
+        # Alan seviyesinde unwrap (LLM {field: {title: ..., default: ...}} dönerse)
+        cleaned = dict(parsed_data)
+        if hasattr(schema, "model_fields"):
+            for field_name, field_info in schema.model_fields.items():
+                if field_name in cleaned and isinstance(cleaned[field_name], dict):
+                    inner = cleaned[field_name]
+                    if "default" in inner:
+                        cleaned[field_name] = inner["default"]
+                    elif "value" in inner:
+                        cleaned[field_name] = inner["value"]
+                    elif "const" in inner:
+                        cleaned[field_name] = inner["const"]
+                    elif "description" in inner and len(inner) == 1:
+                        cleaned[field_name] = inner["description"]
+        parsed_data = cleaned
+
+        return schema.model_validate(parsed_data)
 
     async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None) -> T:
         """LLM'den sorgu atar, beklenen JSON formatını (Pydantic schema) tamir mekanizmasıyla garanti eder."""
