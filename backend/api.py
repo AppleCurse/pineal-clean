@@ -346,11 +346,20 @@ async def run_mission(req: InitiatePayload):
     vault = get_vault(client_id)
     
     try:
+        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else ["Gece stüdyo kayıtları", "Analog ses tasarımı"]
+        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else ["Dark Jazz", "Ambient"]
+        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else ["Sahici ve derin diyalog"]
+
         payload = {
             "user_profile": {
-                "private_rituals": [r.strip() for r in req.rituals.split(",")],
-                "late_night_playlist": [req.playlist],
-                "secret_envies": [e.strip() for e in req.envies.split(",")],
+                "private_rituals": user_rituals,
+                "late_night_playlist": user_playlist,
+                "secret_envies": user_envies,
+            },
+            "user_context": {
+                "rituals": ", ".join(user_rituals),
+                "playlist": ", ".join(user_playlist),
+                "envies": ", ".join(user_envies),
             },
             "target_profile": {"bio": "", "posts": [], "post_times": [], "images": []}
         }
