@@ -9,6 +9,20 @@ const origin = typeof window !== 'undefined' ? window.location.origin : 'http://
 export const API_BASE = (envBase && envBase.trim()) || origin;
 export const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
+// FAZ 3: PINEAL_TOKEN kipinde UI da kimligini tasir (VITE_PINEAL_TOKEN).
+export const API_TOKEN = (((import.meta.env && (import.meta.env as any).VITE_PINEAL_TOKEN) as string | undefined) || '').trim();
+
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers || {});
+  if (API_TOKEN) headers.set('X-API-Key', API_TOKEN);
+  return fetch(`${API_BASE}${path}`, { ...init, headers });
+}
+
+export function wsUrl(clientId: string): string {
+  const q = API_TOKEN ? `?token=${encodeURIComponent(API_TOKEN)}` : '';
+  return `${WS_BASE}/ws/${clientId}${q}`;
+}
+
 // Benzersiz bir istemci kimliği (session boyunca sabit)
 export const clientId = writable(`client_${Math.random().toString(36).substring(2, 9)}`);
 
