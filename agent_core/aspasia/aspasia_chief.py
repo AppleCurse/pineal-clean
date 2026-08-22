@@ -1,6 +1,4 @@
-import json
-import os
-from typing import Dict, Any, Optional, List
+from typing import Any, Optional
 from pydantic import BaseModel
 
 try:
@@ -159,7 +157,7 @@ SİSTEM CANLI TELEMETRİ ÖZETİ (Event Bus):
 {telemetry_summary}
 
 KULLANICI MESAJI VEYA SORUSU: "{user_message}"
-{"(Not: Kullanıcı bir görsel yükledi; mevcut sürüm görsel içeriğini analiz edemiyor, bunu zarifçe belirt.)" if image_data else ""}
+{"(Not: Kullanıcı bir görsel yükledi; görsel de isteğe eklenmiştir — varsa içeriğini yorumla.)" if image_data else ""}
 
 Yukarıdaki sistem durumu ve kullanıcı mesajını dikkate alarak ASPASIA kimliğinle yanıt ver.
 Senin sisteme müdahale etme veya durdurma yetkin YOK. Eğer kullanıcı senden bir eylem yapmanı isterse, bunu arayüz butonları aracılığıyla bizzat yapması gerektiğini zarifçe belirt.
@@ -180,7 +178,8 @@ Cümlelerin kısa, soğukkanlı ve "Mösyö" hitaplı olsun.
                 system_prompt=ASPASIA_SYSTEM_PROMPT,
                 temperature=0.4,
                 tier=1,
-                model=selected_model
+                model=selected_model,
+                images=[image_data] if image_data else None,
             )
             final_msg = raw_response.strip()
             assessment = "high"
