@@ -1,13 +1,16 @@
 from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
+from collections import defaultdict, deque
 import asyncio
 import json
 import os
 import hashlib
+import time
 from datetime import datetime
 
 try:
@@ -55,13 +58,69 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="PINEAL-HERETIC v2.0 API", lifespan=lifespan)
 
+# --- CORS (FAZ 3): ayni-origin serviste CORS gereksizdir; disaridan erisim
+# istenirse PINEAL_ALLOWED_ORIGINS ile acilir. Varsayilan yalnizca localhost. ---
+_default_origins = [
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+]
+_allowed = os.getenv("PINEAL_ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip()] or _default_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa tum /api/* X-API-Key ister;
+# tanimli degilse sistem acik calisir (yerel tek kullanicili arac, geriye uyumluluk). ---
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    token = os.getenv("PINEAL_TOKEN")
+    if token and request.url.path.startswith("/api/") and request.method != "OPTIONS":
+        if request.headers.get("x-api-key") != token:
+            return JSONResponse(
+                {"error": {"code": "UNAUTHORIZED", "message": "X-API-Key gerekli veya hatalı"}},
+                status_code=401,
+            )
+    return await call_next(request)
+
+# --- Tutarli hata modeli (FAZ 3) ---
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        {"error": {"code": str(exc.status_code), "message": str(exc.detail)}},
+        status_code=exc.status_code,
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        {"error": {"code": "INTERNAL", "message": type(exc).__name__}},
+        status_code=500,
+    )
+
+# --- Basit kayan-pencere rate limit (FAZ 3; ek bagimlilik yok) ---
+RATE_LIMITS = {"initiate": (5, 60), "aspasia": (20, 60)}  # (istek, pencere_sn)
+_rate_buckets: Dict[str, deque] = defaultdict(deque)
+
+def rate_limit(key: str, bucket: str) -> bool:
+    """True = izin ver; False = limit asildi (429)."""
+    limit, window = RATE_LIMITS.get(bucket, (999, 1))
+    now = time.monotonic()
+    q = _rate_buckets[key]
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        return False
+    q.append(now)
+    return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
 
@@ -242,6 +301,11 @@ def sync_snapshot(client_id: str, snapshot: Any):
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    # FAZ 3: token kipinde WS de korunur (?token=... query parametresi)
+    token = os.getenv("PINEAL_TOKEN")
+    if token and websocket.query_params.get("token") != token:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     room = get_room(client_id)
     room["websockets"].add(websocket)
@@ -431,6 +495,11 @@ async def _send_result(room: dict, data: dict):
 
 @app.post("/api/initiate")
 async def api_initiate(req: InitiatePayload, background_tasks: BackgroundTasks):
+    if not rate_limit(f"initiate:{req.client_id}", "initiate"):
+        return JSONResponse(
+            {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
+            status_code=429,
+        )
     background_tasks.add_task(run_mission, req)
     return {"status": "started"}
 
@@ -507,7 +576,7 @@ async def api_telemetry(client_id: str):
         "search_engine": vault.get("search_keys", False)
     }
 
-@app.post("/api/shadow/analyze")
+@app.post("/api/experimental/shadow/analyze")
 async def shadow_analyze(profile: dict):
     """Dark Triad analizi"""
     if shadow_executor is None:
@@ -517,7 +586,7 @@ async def shadow_analyze(profile: dict):
     result = analyzer.analyze(profile)
     return result.model_dump()
 
-@app.post("/api/shadow/generate")
+@app.post("/api/experimental/shadow/generate")
 async def shadow_generate(task: dict):
     """Shadow mesaj üretimi"""
     if shadow_executor is None:
@@ -531,7 +600,7 @@ class ChatPayload(BaseModel):
     user_profile: dict
     target_message: str
 
-@app.post("/api/chat/respond")
+@app.post("/api/experimental/chat/respond")
 async def chat_respond(payload: ChatPayload):
     """Hedefin mesajına otonom karşı hamle üretir"""
     if dialogue_manager is None:
@@ -557,10 +626,15 @@ class AspasiaChatPayload(BaseModel):
 @app.post("/api/aspasia/chat")
 async def aspasia_chat(payload: AspasiaChatPayload):
     """Aspasia Kokpit Şefi ile canlı Sokratik diyalog"""
+    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+        return JSONResponse(
+            {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
+            status_code=429,
+        )
     room = get_room(payload.client_id)
     aspasia = room.get("aspasia") or aspasia_chief
     if not aspasia:
-        return {"error": "Aspasia Kokpit Şefi yüklenemedi"}
+        return {"error": {"code": "ASPASIA_UNAVAILABLE", "message": "Aspasia Kokpit Şefi yüklenemedi"}}
     
     resp = await aspasia.chat(payload.user_message, room, payload.model_override, payload.image_data)
     return resp.model_dump()
@@ -599,7 +673,7 @@ class InterpreterPayload(BaseModel):
     prompt: str
     auto_run: bool = False
 
-@app.post("/api/interpreter/execute")
+@app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
     room = get_room(req.client_id)
