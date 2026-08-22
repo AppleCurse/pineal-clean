@@ -19,10 +19,18 @@ class FrictionDetectorAgent:
         target = payload.get("target_profile", {})
         bio = target.get("bio", "")
         posts = target.get("posts", [])
+        visual_evidence = payload.get("visual_evidence", {})
         
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
-        
-        if not bio and not posts:
+        visual_text = f"""
+Görsel İnceleme Kanıtları (Multimodal Vision):
+- Tespit Edilen Nesneler: {visual_evidence.get('detected_objects', [])}
+- Mekanlar ve Ortam: {visual_evidence.get('environment_and_places', [])}
+- Estetik Tarz: {visual_evidence.get('aesthetic_style', '')}
+- Görsel Özeti: {visual_evidence.get('visual_evidence_summary', '')}
+""" if visual_evidence else "Görsel kanıt bulunamadı."
+
+        if not bio and not posts and not visual_evidence:
             return FrictionProfile(
                 sensitivities=[],
                 stress_triggers=[],
@@ -32,10 +40,10 @@ class FrictionDetectorAgent:
             )
 
         prompt = f"""
-Aşağıdaki profil verilerini incele.
+Aşağıdaki profil verilerini ve fotoğraflardan tespit edilen görsel kanıtları incele.
 Bu kişinin iletişimde nelere mesafe koyduğunu, nelere karşı hassas veya eleştirel olduğunu,
 nelerin onu yorup rahatsız edebileceğini tespit et.
-Asla sahte derin travmalar uydurma. Sadece metinlerdeki gerçek sınırları ve hassasiyetleri bul.
+Asla sahte derin travmalar veya klişe uydurma. Sadece metinlerdeki ve fotoğraflardaki gerçek sınırları ve hassasiyetleri bul.
 
 Hedef Biyografi:
 "{bio}"
@@ -43,13 +51,15 @@ Hedef Biyografi:
 Son Paylaşımlar / Metinler:
 {posts_text}
 
+{visual_text}
+
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{
-  "sensitivities": ["Kişinin hoşlanmadığı, mesafeli durduğu veya hassas olduğu konular"],
+  "sensitivities": ["Kişinin hoşlanmadığı, mesafeli durduğu veya hassas olduğu somut konular"],
   "stress_triggers": ["Onu yoran, tepkisini çeken durumlar"],
   "boundary_signals": ["İletişimde aşılmaması gereken kişisel sınırlar"],
-  "evidence_quotes": ["Metinden doğrudan alıntılanan 1-2 kanıt cümlesi"],
-  "confidence": 0.80
+  "evidence_quotes": ["Metinden veya fotoğraflardan doğrudan alıntılanan kanıtlar"],
+  "confidence": 0.85
 }}
 """
         try:
