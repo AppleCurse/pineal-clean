@@ -217,6 +217,12 @@ def _enqueue(client_id: str, item: tuple):
     room = app.state.rooms.get(client_id)
     if not room:
         return
+    if room.get("sender_task") is None or room["sender_task"].done():
+        try:
+            loop = asyncio.get_running_loop()
+            room["sender_task"] = loop.create_task(_room_sender(room))
+        except RuntimeError:
+            pass
     q: asyncio.Queue = room["queue"]
     try:
         q.put_nowait(item)
