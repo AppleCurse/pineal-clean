@@ -15,6 +15,7 @@ class VerifierReport(BaseModel):
     verifications: List[VerificationResult] = []
     overall_authenticity_score: float = 0.0
     status: str = "VERIFIED"
+    confidence: float = 0.85
 
     model_config = ConfigDict(extra="forbid")
 
@@ -31,8 +32,9 @@ class AutonomousVerifier:
         if not bio or not self.search_engine.tavily_key:
             return VerifierReport(
                 verifications=[],
-                overall_authenticity_score=0.0,
+                overall_authenticity_score=0.5,
                 status="UNVERIFIED",
+                confidence=0.85,
             )
 
         claim_prompt = (
@@ -56,6 +58,7 @@ class AutonomousVerifier:
                 verifications=[],
                 overall_authenticity_score=1.0,
                 status="UNVERIFIED",
+                confidence=0.85,
             )
 
         verifications = []

@@ -6,6 +6,7 @@ class MirrorReflection(BaseModel):
     surface_persona: str      # Dışarıya yansıttığı
     alignment_score: float      # Uyum skoru (0-1)
     authentic_anchors: list   # Gerçekliğin sabit noktaları
+    confidence: float = 0.9
     
     model_config = ConfigDict(extra="forbid")
 
@@ -17,22 +18,30 @@ class MirrorOfTruth:
     
     async def execute(self, input_data: Dict, memory, llm_gateway) -> MirrorReflection:
         user_data = input_data.get('user_profile', {})
+        user_ctx = input_data.get('user_context', {})
         sacred_rules = input_data.get('sacred_rules', "")
         
-        core_freq = self._extract_core_frequency(user_data)
-        anchors = self._find_anchors(user_data)
+        # Ritüeller, müzik ve arzuları her iki kaynaktan da derle
+        merged_user = {
+            'private_rituals': user_data.get('private_rituals') or ([user_ctx.get('rituals')] if isinstance(user_ctx.get('rituals'), str) else user_ctx.get('rituals', [])),
+            'late_night_playlist': user_data.get('late_night_playlist') or ([user_ctx.get('playlist')] if isinstance(user_ctx.get('playlist'), str) else user_ctx.get('playlist', [])),
+            'secret_envies': user_data.get('secret_envies') or ([user_ctx.get('envies')] if isinstance(user_ctx.get('envies'), str) else user_ctx.get('envies', []))
+        }
+        
+        core_freq = self._extract_core_frequency(merged_user)
+        anchors = self._find_anchors(merged_user)
         
         prompt = (
             f"Sen 'Mirror of Truth' ajanısın. Görevin, verilen kullanıcı verisinden yüzey kimliğini ve gerçek (core) frekansı bulmak.\n"
             f"Kullanıcı Verisi:\n"
-            f"Ritüeller: {user_data.get('private_rituals', [])}\n"
-            f"Müzik: {user_data.get('late_night_playlist', [])}\n"
-            f"Kıskançlık/Arzu: {user_data.get('secret_envies', [])}\n\n"
+            f"Ritüeller: {merged_user.get('private_rituals')}\n"
+            f"Müzik: {merged_user.get('late_night_playlist')}\n"
+            f"Kıskançlık/Arzu: {merged_user.get('secret_envies')}\n\n"
             f"GERÇEK METRİKLER (NLP ile Çıkarılmış Frekans ve Çapalar):\n"
             f"- Algoritmik Kök Frekans Sinyali: {core_freq}\n"
             f"- NLP Tabanlı Sabit Noktalar (Anchors): {anchors}\n\n"
             f"{sacred_rules}\n"
-            f"Şimdi bu ham algoritmik verileri ve profil detaylarını derinlemesine analiz et ve beklenen JSON formatında çıktı üret."
+            f"Şimdi bu verileri analiz et ve beklenen JSON formatında çıktı üret."
         )
         
         # Pydantic şemasıyla katı sorgu

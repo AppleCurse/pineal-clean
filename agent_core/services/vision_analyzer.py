@@ -121,7 +121,7 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
                 })
 
             body = {
-                "model": "google/gemini-2.0-flash-001",
+                "model": "google/gemini-3.7-flash",
                 "messages": [
                     {
                         "role": "user",
