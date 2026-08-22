@@ -329,6 +329,16 @@ class InitiatePayload(BaseModel):
     evidence_th: int
     scraper_type: str = "x"
 
+def _effective_scraper_type(url: str, requested: str) -> str:
+    """URL'nin platformuna göre tarayıcı seç (FIX: instagram adresi X tarayıcısına
+    gitmesin). Tanınmayan adreslerde kullanıcının seçimine saygı duyar."""
+    u = (url or "").lower()
+    if "instagram.com" in u:
+        return "instagram"
+    if "x.com" in u or "twitter.com" in u:
+        return "x"
+    return requested
+
 async def run_mission(req: InitiatePayload):
     client_id = req.client_id
     executor = get_executor(client_id)
@@ -354,8 +364,9 @@ async def run_mission(req: InitiatePayload):
                 cookie = random.choice(cookie_list)
                 broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
+        effective_type = _effective_scraper_type(req.url, req.scraper_type)
         if req.url:
-            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{req.scraper_type.upper()}]")
+            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
                 try:

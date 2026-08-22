@@ -6,7 +6,14 @@ from fastapi.testclient import TestClient
 from openai import AsyncOpenAI
 
 from agent_core.services.llm_gateway import LLMGateway
-from backend.api import app
+from backend.api import app, _effective_scraper_type
+
+def test_effective_scraper_type_url_aware():
+    assert _effective_scraper_type("https://www.instagram.com/gokayte/", "cross") == "instagram"
+    assert _effective_scraper_type("https://x.com/gokayte", "cross") == "x"
+    assert _effective_scraper_type("https://twitter.com/gokayte", "instagram") == "x"
+    assert _effective_scraper_type("https://ornek.com/profil", "cross") == "cross"
+    assert _effective_scraper_type("", "cross") == "cross"
 
 def test_vault_key_unlocks_live_llm_gate():
     """Kasa'ya anahtar -> gateway.live_unlocked True -> flag'siz canlı çağrıya izin."""
