@@ -1,0 +1,37 @@
+# Dependencies
+Cargo.lock
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Local secrets / vault
+.pineal_vault.json
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Junk / Memory artifacts
+check_runs.py
+memory/*.json
+cov_out.txt
+

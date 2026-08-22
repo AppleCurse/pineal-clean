@@ -1,0 +1,11 @@
+pydantic
+httpx
+litellm
+open-interpreter
+fastapi
+uvicorn
+playwright
+playwright-stealth
+openai
+opencv-python-headless
+numpy
