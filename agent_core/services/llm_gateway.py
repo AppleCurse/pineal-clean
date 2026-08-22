@@ -7,7 +7,7 @@ from typing import Type, TypeVar, Any, Optional, List
 T = TypeVar('T', bound=BaseModel)
 
 class LLMGateway:
-    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", "meta-llama/llama-3.3-70b-instruct") # SOTA Bilişsel Zeka & Rezonans
+    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", "anthropic/claude-sonnet-4.5") # SOTA Bilişsel Zeka, Psikolojik Derinlik & Rezonans (Claude)
     TIER_2_MODEL = "deepseek/deepseek-chat" # Hızlı & Yüksek IQ
     DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-3.7-flash") # SOTA Çoklu Modlu Görsel Zeka
 
