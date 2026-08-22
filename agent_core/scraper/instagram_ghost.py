@@ -173,6 +173,7 @@ class InstagramGhostScraper:
 
             profile = InstagramProfile(
                 username=username,
+                full_name=full_name,
                 biography=biography,
                 is_private=is_private,
                 follower_count=follower_count,
