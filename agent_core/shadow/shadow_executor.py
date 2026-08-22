@@ -1,5 +1,4 @@
-import asyncio
-from typing import Dict, Any, List
+from typing import Dict
 from pydantic import BaseModel, ConfigDict
 
 # Import yeni modüller

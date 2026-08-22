@@ -1,11 +1,8 @@
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from pydantic import BaseModel
-from datetime import datetime, timezone
 from agent_core.task_executor import PinealExecutor
 from agent_core.domain.memory_models import TaskSnapshot
-from agent_core.task_executor import InsufficientEvidenceError
 
 class DummyResult(BaseModel):
     compatibility_score: float = 0.9

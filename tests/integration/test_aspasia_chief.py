@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from agent_core.aspasia.aspasia_chief import AspasiaChief, AspasiaResponse
+from agent_core.aspasia.aspasia_chief import AspasiaChief
 from agent_core.services.llm_gateway import LLMGateway
-from agent_core.domain.memory_models import TaskSnapshot, AspasiaSession
+from agent_core.domain.memory_models import TaskSnapshot
 
 @pytest.fixture
 def mock_llm_gateway():

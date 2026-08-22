@@ -3,10 +3,8 @@ P1.7 — Pydantic V2 Migration
 Kullanımdan kalkan (deprecated) .dict() ve .json() metodlarının
 üretim kodunda kullanılmadığını kanıtlayan test.
 """
-import ast
 import inspect
 import pytest
-from pathlib import Path
 
 from agent_core.agents import resonance_calculator
 from agent_core.shadow import shadow_executor

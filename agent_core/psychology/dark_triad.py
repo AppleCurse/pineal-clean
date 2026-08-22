@@ -1,6 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Dict, List
-import re
+from typing import Dict
 
 class DarkTriadProfile(BaseModel):
     machiavellianism: float = 0.0

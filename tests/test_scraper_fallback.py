@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch
-from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
+from agent_core.task_executor import PinealExecutor
 
 @pytest.mark.asyncio
 async def test_scraper_fallback_private_account():

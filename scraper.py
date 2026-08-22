@@ -1,7 +1,6 @@
 import json
 import logging
 import sys
-import time
 from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)

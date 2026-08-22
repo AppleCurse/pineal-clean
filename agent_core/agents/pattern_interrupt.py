@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Dict, Any, Optional, List
+from typing import Dict, List
 import random
 
 class ScenarioResponse(BaseModel):
@@ -64,7 +64,6 @@ class PatternInterrupt:
         detail = self._extract_specific_detail(t_dict)
         micro = self._extract_micro_signal(t_dict)
         
-        import random
         template = random.choice(self.TEMPLATES['mirror_truth']).format(detail=detail, micro_signal=micro)
         
         target_json = target_analysis.model_dump_json(indent=2) if hasattr(target_analysis, 'model_dump_json') else str(target_analysis)

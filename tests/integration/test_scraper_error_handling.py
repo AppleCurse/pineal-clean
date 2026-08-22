@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InsufficientEvidenceError
 
 class MockPageFail:

@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-import cv2
 import numpy as np
 from agent_core.agents.human_behavior import HumanBehaviorAnalyzer, MicroSignal
 

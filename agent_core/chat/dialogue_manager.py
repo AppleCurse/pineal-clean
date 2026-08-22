@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict
 from pydantic import BaseModel
 from agent_core.services.llm_gateway import LLMGateway
 

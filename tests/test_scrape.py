@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from playwright.async_api import async_playwright
 from agent_core.scraper.instagram_ghost import InstagramGhostScraper
 

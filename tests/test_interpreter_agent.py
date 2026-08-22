@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from agent_core.agents.interpreter_agent import InterpreterAgent, InterpreterResult
 
 @pytest.mark.asyncio

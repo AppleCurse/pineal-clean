@@ -6,7 +6,6 @@ Bu testler compileall değil, gerçek hata enjeksiyonu.
 """
 import pytest
 import sys
-import os
 sys.path.insert(0, '/mnt/data')
 
 from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InstagramProfile, InstagramPost, InsufficientEvidenceError

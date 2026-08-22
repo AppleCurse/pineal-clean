@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from agent_core.task_executor import PinealExecutor
 from agent_core.aspasia.aspasia_chief import AspasiaChief
 from agent_core.domain.memory_models import TaskSnapshot

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Dict, Any
+from typing import Dict
 
 class MirrorReflection(BaseModel):
     user_core_frequency: str  # Kullanıcının gerçek frekansı

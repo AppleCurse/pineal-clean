@@ -1,5 +1,4 @@
 import pytest
-import os
 from agent_core.task_executor import PinealExecutor
 from agent_core.services.canonical_memory import CanonicalMemory
 

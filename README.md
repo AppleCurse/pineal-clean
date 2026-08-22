@@ -96,3 +96,18 @@ Bu yazılım araştırma ve analitik amaçlıdır; kişisel veri işler — bulu
 yargı alanındaki yasalara ve platform şartlarına uymak kullanıcının sorumluluğundadır.
 Ürün kimliği "sahici iletişim köprüsü"dür; manipülasyon motorları 4C/ADIM-2
 temizliğiyle kaldırılmıştır.
+
+## Güvenlik (FAZ 3)
+
+| Özellik | Nasıl |
+|---|---|
+| **Token kipi** | `.env`'de `PINEAL_TOKEN` tanımlayın → tüm `/api/*` uçları `X-API-Key` başlığı ister (401), WebSocket `?token=...` ister. Boş bırakılırsa sistem açık kipte çalışır (yerel araç). UI tarafı için `frontend/.env`'de `VITE_PINEAL_TOKEN` aynı değeri alır. |
+| **CORS** | Varsayılan yalnızca localhost; `PINEAL_ALLOWED_ORIGINS` ile genişletilir. |
+| **Rate limit** | `POST /api/initiate` 5/dk, `POST /api/aspasia/chat` 20/dk → `429 {"error":{...}}`. |
+| **Hata modeli** | Tüm hatalar tutarlı biçimde `{"error": {"code", "message"}}` döner. |
+| **Sır koruması** | API anahtarı yalnızca gateway belleğinde yaşar; loglara/telemetriye sızmaz (`test_no_secret_leak.py` kilidi). |
+| **Vision** | Aspasia'ya görsel yüklenirse `OPENROUTER_VISION_MODEL` (varsayılan: llama-3.2-90b-vision) ile multimodal istek atılır. |
+
+**Deneysel API'ler:** `/api/experimental/shadow/*`, `/api/experimental/chat/respond`, `/api/experimental/interpreter/execute` — ürün yüzeyi değildir, UI'dan çağrılmaz.
+
+**CI:** `ruff` (gerçek hata kapısı) + `pytest` + `svelte-check` + `vite build` (sahte artifact regresyon kilidi) + uvicorn smoke testi.

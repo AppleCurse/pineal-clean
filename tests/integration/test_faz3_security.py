@@ -3,7 +3,6 @@ FAZ 3 / G3.1+G3.2 — güvenlik sözleşmeleri (auth, rate limit, deneysel yolla
 """
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import app, RATE_LIMITS

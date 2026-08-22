@@ -3,7 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 import asyncio
@@ -89,7 +89,6 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 # --- Tutarli hata modeli (FAZ 3) ---
-from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 @app.exception_handler(StarletteHTTPException)
@@ -348,7 +347,7 @@ async def run_mission(req: InitiatePayload):
             if cookie_list:
                 import random
                 cookie = random.choice(cookie_list)
-                broadcast_log(client_id, "INFO", f"DAEMON: Rotasyondan rastgele cookie seçildi.")
+                broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
         if req.url:
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{req.scraper_type.upper()}]")
@@ -443,7 +442,7 @@ async def run_mission(req: InitiatePayload):
                             try: await browser.close()
                             except: pass
                         
-                broadcast_log(client_id, "INFO", f"TELEMETRİ: Veri ele geçirildi.")
+                broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"UPLINK KOPTU: {str(e)[:100]}")
                 if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
@@ -520,7 +519,7 @@ async def api_vault(req: VaultPayload):
     executor = get_executor(req.client_id)
     if req.x_cookie:
         vault["x_cookie"] = req.x_cookie
-        broadcast_log(req.client_id, "INFO", f"KASA: Cookie belleğe mühürlendi.")
+        broadcast_log(req.client_id, "INFO", "KASA: Cookie belleğe mühürlendi.")
     if req.api_key:
         executor.llm_gateway.set_key(req.api_key)
         if shadow_executor is not None:

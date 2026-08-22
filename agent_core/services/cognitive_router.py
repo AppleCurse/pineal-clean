@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import List, Dict, Any
+from typing import List, Dict
 
 class RoutePlan(BaseModel):
     agents: List[str]

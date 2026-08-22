@@ -1,6 +1,5 @@
-import pytest
 from pydantic import BaseModel
-from agent_core.services.uncertainty_engine import UncertaintyEngine, UncertaintyReport
+from agent_core.services.uncertainty_engine import UncertaintyEngine
 
 class DummyResultBaseModel(BaseModel):
     name: str = ""

@@ -6,7 +6,7 @@ PinealExecutor'ın agent registry'sini test eder:
 2. Bilinmeyen bir agent çağrıldığında KeyError fırlatılıyor mu?
 """
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from agent_core.task_executor import PinealExecutor
 from agent_core.agents.interpreter_agent import InterpreterAgent
