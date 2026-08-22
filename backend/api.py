@@ -155,6 +155,7 @@ def get_room(client_id: str) -> dict:
         exa = vault.get("exa_key") or os.getenv("EXA_API_KEY")
         if tavily or serpapi or exa:
             executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
+            vault["search_keys"] = True
         use_local = vault.get("use_local", False)
         executor.llm_gateway.use_local = use_local
 
@@ -594,8 +595,8 @@ async def api_telemetry(client_id: str):
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
         "scraper": scrape_readonly is not None,
-        "vault": "x_cookie" in vault,
-        "search_engine": vault.get("search_keys", False)
+        "vault": "x_cookie" in vault or bool(vault.get("or_key")),
+        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None))
     }
 
 @app.post("/api/experimental/shadow/analyze")
