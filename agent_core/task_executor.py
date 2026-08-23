@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 try:
     from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
-    from agent_core.services.canonical_memory import CanonicalMemory
+    from agent_core.services.hindsight_memory import build_memory_from_env
     from agent_core.services.uncertainty_engine import UncertaintyEngine
     from agent_core.services.decision_engine import DecisionEngine
     from agent_core.domain.pipeline_status import PipelineStatus
@@ -28,7 +28,7 @@ try:
     from agent_core.config_loader import DecisionConfig
 except Exception:
     from services.cognitive_router import CognitiveRouter, RoutePlan
-    from services.canonical_memory import CanonicalMemory
+    from services.hindsight_memory import build_memory_from_env
     from services.uncertainty_engine import UncertaintyEngine
     from services.decision_engine import DecisionEngine
     from domain.pipeline_status import PipelineStatus
@@ -78,7 +78,7 @@ class PinealExecutor:
         self._emit = emit_event_callback or (lambda evt: None)
         self._snapshot_cb = snapshot_callback
         self.router = CognitiveRouter()
-        self.memory = CanonicalMemory()
+        self.memory = build_memory_from_env()
         self.injector = MemoryInjector()
         self.config = DecisionConfig.load()
         self.decision_engine = DecisionEngine(self.config)
