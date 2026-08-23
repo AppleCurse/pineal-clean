@@ -61,3 +61,13 @@ def test_ws_initiate_produces_result():
                     assert m["status"] in ("completed", "failed", "halted_evidence", "halted_frequency")
                     break
             assert saw_result, "initiate sonrası WS'te result mesajı gelmeli"
+
+# --- HERMETIC TEST GUARD: blocks live LLM calls ---
+import pytest as _pytest
+from agent_core.services.llm_gateway import LLMGateway as _LLMGateway
+
+@_pytest.fixture(autouse=True)
+def _no_llm(monkeypatch):
+    async def _blocked(self, *a, **k):
+        raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: test kipi")
+    monkeypatch.setattr(_LLMGateway, "query", _blocked)

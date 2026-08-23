@@ -48,7 +48,7 @@ class AutonomousVerifier:
             claims: List[Claim] = []
 
         try:
-            claim_data = await llm_gateway.query_json(claim_prompt, ClaimList, tier=2)
+            claim_data = await llm_gateway.query_json_chain(claim_prompt, ClaimList, task="fast")
             claims_list = claim_data.claims if hasattr(claim_data, "claims") else []
         except Exception:
             claims_list = []

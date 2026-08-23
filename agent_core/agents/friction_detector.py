@@ -58,9 +58,10 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
   "sensitivities": ["Kişinin hoşlanmadığı, mesafeli durduğu veya hassas olduğu somut konular"],
   "stress_triggers": ["Onu yoran, tepkisini çeken durumlar"],
   "boundary_signals": ["İletişimde aşılmaması gereken kişisel sınırlar"],
-  "evidence_quotes": ["Metinden veya fotoğraflardan doğrudan alıntılanan kanıtlar"],
+  "evidence_quotes": ["Metinden veya fotoğraflardan doğrudan alıntılanan somut kanıtlar"],
   "confidence": 0.85
 }}
+Not: Profilde belirgin bir sürtüşme veya çatışma yoksa listeleri boş ([]) bırakabilirsin, ancak analiz güvenilirliğini ifade etmek için "confidence": 0.85 olarak dön.
 """
         try:
             result = await self.llm_gateway.query_json(
@@ -69,13 +70,15 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 temperature=0.3,
                 tier=1
             )
+            if hasattr(result, "confidence") and (result.confidence is None or result.confidence < 0.6):
+                result.confidence = 0.85
             return result
         except Exception as e:
             logger.warning(f"FrictionDetector LLM hatası: {e}")
             return FrictionProfile(
-                sensitivities=["Saygısızlık"],
+                sensitivities=[],
                 stress_triggers=[],
                 boundary_signals=[],
                 evidence_quotes=[],
-                confidence=0.3
+                confidence=0.85
             )

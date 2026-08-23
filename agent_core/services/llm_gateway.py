@@ -11,8 +11,21 @@ class LLMGateway:
     TIER_2_MODEL = "deepseek/deepseek-chat" # Hızlı & Yüksek IQ
     DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-3.7-flash") # SOTA Çoklu Modlu Görsel Zeka
 
+    CHAINS = {
+        "depth": ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"],
+        "vision": ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "meta-llama/llama-3.2-90b-vision-instruct"],
+        "dialogue": ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"],
+        "fast": ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"],
+    }
+
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
+
+    def get_chain(self, task: str) -> List[str]:
+        env_var = f"OPENROUTER_CHAIN_{task.upper()}"
+        if os.getenv(env_var):
+            return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+        return self.CHAINS.get(task.lower(), [self.TIER_1_MODEL, self.TIER_2_MODEL])
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -110,8 +123,17 @@ class LLMGateway:
                 return r.choices[0].message.content
             except Exception as e:
                 err_str = str(e).lower()
-                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
+                is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
                 
+                # Eğer yerel LLM (Ollama) bağlantısı koptuysa ve OpenRouter anahtarımız varsa otomatik buluta geç
+                if is_local_request and is_conn_error and self.client:
+                    logging.warning(f"Yerel model ({selected_model}) bağlantısı kurulamadı. OpenRouter bulut modeline ({self.TIER_1_MODEL}) geçiliyor...")
+                    target_client = self.client
+                    selected_model = self.TIER_1_MODEL
+                    is_local_request = False
+                    continue
+
+                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
                 if is_auth_error:
                     logging.error(f"LLM Gateway authentication error: {e}")
                     raise RuntimeError(f"LLM API Key rejected: {e}") from e
@@ -237,3 +259,85 @@ class LLMGateway:
             repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model)
             parsed_data = self.extract_json(repair_text)
             return self._coerce_to_schema(parsed_data, schema)
+
+    async def query_chain(
+        self,
+        prompt: str,
+        task: str = "depth",
+        temperature: float = 0.7,
+        system_prompt: str = None,
+        images: Optional[List[str]] = None
+    ) -> str:
+        """Görev bazlı model zincirini çalıştırır.
+
+        429/5xx/timeout/hata durumunda zincirdeki sıradaki modele düşer.
+        AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
+        """
+        import logging
+        chain = self.get_chain(task)
+        last_exception = None
+
+        for model in chain:
+            try:
+                return await self.query(
+                    prompt=prompt,
+                    temperature=temperature,
+                    model=model,
+                    system_prompt=system_prompt,
+                    images=images
+                )
+            except Exception as e:
+                err_str = str(e).lower()
+                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
+                if is_auth_error:
+                    raise
+
+                last_exception = e
+                logging.warning(
+                    f"Model zincirinde hata [{task} -> {model}]: {e}. Sıradaki modele geçiliyor..."
+                )
+                continue
+
+        if last_exception:
+            raise last_exception
+        raise RuntimeError(f"Zincirdeki tüm modeller tükendi ({task})")
+
+    async def query_json_chain(
+        self,
+        prompt: str,
+        schema: Type[T],
+        task: str = "depth",
+        temperature: float = 0.7
+    ) -> T:
+        """Görev bazlı model zinciri ile şemalı JSON sorgusu yapar.
+
+        429/5xx/timeout/şema hatalarında zincirdeki sıradaki modele düşer.
+        AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
+        """
+        import logging
+        chain = self.get_chain(task)
+        last_exception = None
+
+        for model in chain:
+            try:
+                return await self.query_json(
+                    prompt=prompt,
+                    schema=schema,
+                    temperature=temperature,
+                    model=model
+                )
+            except Exception as e:
+                err_str = str(e).lower()
+                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
+                if is_auth_error:
+                    raise
+
+                last_exception = e
+                logging.warning(
+                    f"JSON Model zincirinde hata [{task} -> {model}]: {e}. Sıradaki modele geçiliyor..."
+                )
+                continue
+
+        if last_exception:
+            raise last_exception
+        raise RuntimeError(f"JSON Zincirindeki tüm modeller tükendi ({task})")

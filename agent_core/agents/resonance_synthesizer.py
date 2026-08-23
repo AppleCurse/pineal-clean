@@ -57,11 +57,11 @@ Aşağıdaki JSON formatında yanıt ver:
 }}
 """
         try:
-            result = await self.llm_gateway.query_json(
+            result = await self.llm_gateway.query_json_chain(
                 prompt=prompt,
                 schema=AuthenticBridge,
-                temperature=0.4,
-                tier=1
+                task="dialogue",
+                temperature=0.3
             )
             return result
         except Exception as e:

@@ -7,7 +7,7 @@ from agent_core.services.llm_gateway import LLMGateway
 @pytest.mark.asyncio
 async def test_resonance_synthesizer_fallback():
     mock_gateway = MagicMock(spec=LLMGateway)
-    mock_gateway.query_json = AsyncMock(side_effect=RuntimeError("LLM Hatası"))
+    mock_gateway.query_json_chain = AsyncMock(side_effect=RuntimeError("LLM Hatası"))
     
     agent = ResonanceSynthesizerAgent(llm_gateway=mock_gateway)
     res = await agent.execute({})
@@ -18,7 +18,7 @@ async def test_resonance_synthesizer_fallback():
 @pytest.mark.asyncio
 async def test_resonance_synthesizer_success():
     mock_gateway = MagicMock(spec=LLMGateway)
-    mock_gateway.query_json = AsyncMock(return_value=AuthenticBridge(
+    mock_gateway.query_json_chain = AsyncMock(return_value=AuthenticBridge(
         shared_passions=["Sokak Fotoğrafçılığı", "Mimari Estetik"],
         complementary_perspectives=["Işık ve Gölge Yorumları"],
         resonance_score=0.92,

@@ -78,3 +78,13 @@ def test_error_model_consistent(monkeypatch):
     assert r.status_code == 429
     body = r.json()
     assert set(body.keys()) == {"error"} and {"code", "message"} <= set(body["error"].keys())
+
+# --- HERMETIC TEST GUARD: blocks live LLM calls ---
+import pytest as _pytest
+from agent_core.services.llm_gateway import LLMGateway as _LLMGateway
+
+@_pytest.fixture(autouse=True)
+def _no_llm(monkeypatch):
+    async def _blocked(self, *a, **k):
+        raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: test kipi")
+    monkeypatch.setattr(_LLMGateway, "query", _blocked)

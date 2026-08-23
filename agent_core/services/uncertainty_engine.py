@@ -23,23 +23,27 @@ class UncertaintyEngine:
             result_dict = result.model_dump()
             total_fields = len(result_dict)
             if total_fields > 0:
-                empty_fields = sum(1 for v in result_dict.values() if not v or (isinstance(v, str) and 'bulunamadı' in v.lower()))
+                empty_fields = sum(
+                    1 for v in result_dict.values()
+                    if v is None or v == [] or v == {} or (isinstance(v, str) and (v == '' or 'bulunamadı' in v.lower()))
+                )
                 data_score = 1.0 - (empty_fields / total_fields)
                 if confidence is None:
                     confidence = data_score
                 else:
                     confidence = min(confidence, data_score)
 
-                if empty_fields == total_fields:
+                # Check data fields excluding confidence
+                data_fields = [v for k, v in result_dict.items() if k != "confidence"]
+                if data_fields and all(v is None or v == [] or v == {} or (isinstance(v, str) and (v == '' or 'bulunamadı' in v.lower())) for v in data_fields):
                     is_empty = True
                     confidence = 0.1
-
-        if 'evidence' in result_text and 'bulunamadı' in result_text:
+        elif 'evidence' in result_text and 'bulunamadı' in result_text:
             is_empty = True
             confidence = 0.1
 
         if is_empty:
-            return UncertaintyReport(is_suspicious=True, confidence=confidence, reason="Eksik kanıt (Boş liste veya 'bulunamadı'). Router kesilmeli.")
-        if confidence > 0.95 and has_absolutes:
+            return UncertaintyReport(is_suspicious=True, confidence=confidence or 0.1, reason="Eksik kanıt (Tüm alanlar boş veya veri yetersiz). Router kesilmeli.")
+        if confidence is not None and confidence > 0.95 and has_absolutes:
             return UncertaintyReport(is_suspicious=True, confidence=0.9, reason="Aşırı kesinlik + yüksek confidence = Halüsinasyon şüphesi")
-        return UncertaintyReport(is_suspicious=False, confidence=confidence, reason="Güvenli")
+        return UncertaintyReport(is_suspicious=False, confidence=confidence if confidence is not None else 1.0, reason="Güvenli")

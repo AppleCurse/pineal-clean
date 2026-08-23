@@ -59,3 +59,23 @@ def test_events_arrive_deterministically_across_runs():
             types = _collect_for_client(client, f"wsdet_{i}_{uuid.uuid4().hex[:8]}")
             assert types[-1] == "result"
             assert "TaskStarted" in types and "ErrorHalt" in types
+
+# --- HERMETIC TEST GUARD: blocks live LLM calls (money + consistency) ---
+import pytest as _pytest
+from agent_core.services.llm_gateway import LLMGateway as _LLMGateway
+
+@_pytest.fixture(autouse=True)
+def _no_llm(monkeypatch):
+    async def _blocked(self, *a, **k):
+        raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: test kipi")
+    monkeypatch.setattr(_LLMGateway, "query", _blocked)
+
+# --- HERMETIC TEST GUARD: blocks live LLM calls (money + consistency) ---
+import pytest as _pytest
+from agent_core.services.llm_gateway import LLMGateway as _LLMGateway
+
+@_pytest.fixture(autouse=True)
+def _no_llm(monkeypatch):
+    async def _blocked(self, *a, **k):
+        raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: test kipi")
+    monkeypatch.setattr(_LLMGateway, "query", _blocked)

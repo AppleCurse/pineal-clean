@@ -57,3 +57,13 @@ async def test_aspasia_chat_mocked_llm_high(monkeypatch):
     data = r.json()
     assert data["confidence_assessment"] == "high"
     assert "Mösyö" in data["message"]
+
+# --- HERMETIC TEST GUARD: blocks live LLM calls ---
+import pytest as _pytest
+from agent_core.services.llm_gateway import LLMGateway as _LLMGateway
+
+@_pytest.fixture(autouse=True)
+def _no_llm(monkeypatch):
+    async def _blocked(self, *a, **k):
+        raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: test kipi")
+    monkeypatch.setattr(_LLMGateway, "query", _blocked)
