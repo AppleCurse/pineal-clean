@@ -418,7 +418,7 @@ async def run_mission(req: InitiatePayload):
                         is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
                         clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
-                        if (is_ig_url or req.scraper_type == "instagram") and InstagramGhostScraper:
+                        if effective_type == "instagram" and InstagramGhostScraper:
                             ctx = await browser.new_context(**ctx_kwargs)
                             if cookie and "sessionid" in cookie:
                                 parsed = []
@@ -444,11 +444,11 @@ async def run_mission(req: InitiatePayload):
                                 "is_private": ig_data.is_private
                             })
                             
-                        elif is_x_url and scrape_readonly:
+                        elif effective_type == "x" and scrape_readonly:
                             data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
                             payload["target_profile"].update({k: v for k, v in data.items() if v})
 
-                        elif req.scraper_type == "cross" and InstagramGhostScraper:
+                        elif effective_type == "cross" and InstagramGhostScraper:
                             # Try Instagram first
                             ctx = await browser.new_context(**ctx_kwargs)
                             page = await ctx.new_page()
@@ -614,10 +614,15 @@ async def api_override(req: OverridePayload):
         mem_dir = executor.memory.storage_path
         lp = os.path.join(mem_dir, "learnings.json")
         async with _override_lock:
-            learn = json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
+            def _read_learnings():
+                return json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
+            def _write_learnings(data):
+                with open(lp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+
+            learn = await asyncio.to_thread(_read_learnings)
             learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
-            with open(lp, "w", encoding="utf-8") as f:
-                json.dump(learn, f, ensure_ascii=False, indent=2)
+            await asyncio.to_thread(_write_learnings, learn)
         broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
     return {"status": "sealed"}
 
