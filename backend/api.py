@@ -614,10 +614,15 @@ async def api_override(req: OverridePayload):
         mem_dir = executor.memory.storage_path
         lp = os.path.join(mem_dir, "learnings.json")
         async with _override_lock:
-            learn = json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
+            def _read_learnings():
+                return json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
+            def _write_learnings(data):
+                with open(lp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+
+            learn = await asyncio.to_thread(_read_learnings)
             learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
-            with open(lp, "w", encoding="utf-8") as f:
-                json.dump(learn, f, ensure_ascii=False, indent=2)
+            await asyncio.to_thread(_write_learnings, learn)
         broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
     return {"status": "sealed"}
 

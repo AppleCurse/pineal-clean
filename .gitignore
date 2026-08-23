@@ -38,3 +38,6 @@ check_runs.py
 memory/*.json
 cov_out.txt
 
+test_mem_dir/
+benchmark.py
+benchmark2.py
