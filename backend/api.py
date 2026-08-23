@@ -415,8 +415,8 @@ async def run_mission(req: InitiatePayload):
                         ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                         
                         is_ig_url = "instagram.com" in req.url.lower()
+                        _ = is_ig_url
                         is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
-                        _ = is_x_url  # Appease ruff unused variable
                         clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
                         if (is_ig_url or req.scraper_type == "instagram") and InstagramGhostScraper:
