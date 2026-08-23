@@ -425,18 +425,44 @@ class PinealExecutor:
                 self._log("WARNING", f"[{task_id}] Derinlik analizi atlandı: {e}")
 
             # --- 5. ve 6. DAMGA: SHADOW & OSINT FORENSİKLERİ ---
+            # Bu iki ajan ana döngünün dışında çalıştığı için, başarılı/başarısız
+            # durumlarını da status.agent_runs'a kaydediyoruz ki DecisionEngine
+            # onları görsün ve sessizce "COMPLETED" damgalanmasınlar.
             try:
                 shadow_result = await self.agents["shadow_executor"].execute(input_data)
                 status.shadow_profile = shadow_result.model_dump()
+                status.agent_runs["shadow_executor"] = AgentRun(
+                    task_id=task_id, agent_name="shadow_executor", status="completed",
+                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    confidence=0.7,
+                )
                 self._log("INFO", f"[{task_id}] GÖLGE FORENSİĞİ: Manipülasyon ve NLP dizisi eklendi")
             except Exception as e:
+                status.agent_runs["shadow_executor"] = AgentRun(
+                    task_id=task_id, agent_name="shadow_executor", status="failed",
+                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    error_message=str(e)[:200],
+                )
                 self._log("WARNING", f"[{task_id}] Gölge forensiği atlandı: {e}")
 
             try:
                 osint_result = await self.agents["osint_investigator"].execute(input_data)
-                status.osint_footprint = osint_result.model_dump()
+                status.osint_footprint = osint_result.model_dump() if hasattr(osint_result, "model_dump") else osint_result
+                data_conf = getattr(osint_result, "data_confidence", True)
+                fallback = getattr(osint_result, "fallback_reason", None)
+                status.agent_runs["osint_investigator"] = AgentRun(
+                    task_id=task_id, agent_name="osint_investigator", status="completed",
+                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    confidence=0.5 if not data_conf else 0.9,
+                    warnings=[] if data_conf else [fallback or "simulation"],
+                )
                 self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı")
             except Exception as e:
+                status.agent_runs["osint_investigator"] = AgentRun(
+                    task_id=task_id, agent_name="osint_investigator", status="failed",
+                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    error_message=str(e)[:200],
+                )
                 self._log("WARNING", f"[{task_id}] OSINT taraması atlandı: {e}")
 
             # Determine final status via DecisionEngine

@@ -42,7 +42,7 @@ agents:
       authentic_anchors: 0.2
     empty_list_penalty: 0.08
 
-  shadow_profile:
+  shadow_executor:
     min_data_score: 0.52
     min_llm_confidence: 0.60
     graceful_degradation: true
