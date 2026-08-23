@@ -27,56 +27,63 @@ class ShadowExecutor:
         self.llm_gateway = LLMGateway()
     
     async def execute(self, task_input: Dict) -> ShadowResult:
-        # 1. Dark Triad Analizi
-        dark = self.dark_triad.analyze(task_input['target_profile'])
+        import logging
+        log = logging.getLogger(__name__)
+
+        # 1. Dark Triad Analizi (LLM gerektirmez — deterministik)
+        dark = self.dark_triad.analyze(task_input.get('target_profile', {}))
         strategy = self.dark_triad.generate_strategy(dark)
-        
-        # 2. Mirror (Kullanıcı analizi)
-        # MirrorOfTruth expects `execute(input_data: Dict, memory)`
-        # But wait! MirrorOfTruth needs LLMGateway in its newer signature. Actually MirrorOfTruth only needed LLMGateway in some versions, or maybe it instantiates its own.
-        # Wait, in PinealExecutor `self.agents["mirror_truth"].execute` is called without LLM? No, wait, PinealExecutor calls:
-        # await self.agents["mirror_truth"].execute({"target_behavior": human_result, ...}, memory, self.llm_gateway)
-        
-        mirror_result = await self.mirror.execute(
-            {
-                "user_rituals": task_input.get('user_profile', {}).get('rituals', []),
-                "user_music": task_input.get('user_profile', {}).get('music', ''),
-                "user_envies": task_input.get('user_profile', {}).get('envies', '')
-            }, 
-            None, # No memory used for now
-            self.llm_gateway
-        )
-        
-        # 3. NLP Sequence
+
+        # 2. Mirror (LLM gerektirir — fallback ile korumalı)
+        mirror_result = None
+        try:
+            mirror_result = await self.mirror.execute(
+                {
+                    "user_rituals": task_input.get('user_profile', {}).get('rituals', []),
+                    "user_music": task_input.get('user_profile', {}).get('music', ''),
+                    "user_envies": task_input.get('user_profile', {}).get('envies', '')
+                },
+                None,
+                self.llm_gateway
+            )
+        except Exception as e:
+            log.warning("ShadowExecutor: Mirror LLM atlandı: %s", e)
+
+        # 3. NLP Sequence (LLM gerektirmez — deterministik)
         nlp_seq = self.dark_nlp.generate_sequence(
-            task_input['target_profile'],
+            task_input.get('target_profile', {}),
             task_input.get('desired_action', 'cevap ver')
         )
-        
-        # 4. Presupposition Chain
+
+        # 4. Presupposition Chain (LLM gerektirmez — deterministik)
         beliefs = task_input.get('target_beliefs', ['anlaşılmak', 'özel hissetmek'])
         presup_chain = self.presupposition.generate_chain(beliefs)
-        
-        # 5. Pattern Interrupt
-        pattern_input = {
-            'target_analysis': {
-                'surface_identity': task_input['target_profile'].get('bio', '')[:50],
-                'detected_wound': strategy['vector'],
-                'resonance_potential': dark.exploitability
-            },
-            'user_mirror': mirror_result.model_dump() if hasattr(mirror_result, 'model_dump') else mirror_result,
-            'sacred_rules': ""
-        }
-        pattern_result = await self.pattern.execute(pattern_input, None, self.llm_gateway)
-        
+
+        # 5. Pattern Interrupt (LLM gerektirir — fallback ile korumalı)
+        pattern_message = strategy.get('vector', 'Analiz tamamlandı')
+        try:
+            pattern_input = {
+                'target_analysis': {
+                    'surface_identity': task_input.get('target_profile', {}).get('bio', '')[:50],
+                    'detected_wound': strategy['vector'],
+                    'resonance_potential': dark.exploitability
+                },
+                'user_mirror': mirror_result.model_dump() if mirror_result and hasattr(mirror_result, 'model_dump') else {},
+                'sacred_rules': ""
+            }
+            pattern_result = await self.pattern.execute(pattern_input, None, self.llm_gateway)
+            pattern_message = pattern_result.message
+        except Exception as e:
+            log.warning("ShadowExecutor: Pattern LLM atlandı: %s", e)
+
         # 6. Birleştir
         final_message = self._synthesize(
-            pattern_result.message, 
-            nlp_seq, 
+            pattern_message,
+            nlp_seq,
             presup_chain,
             strategy
         )
-        
+
         return ShadowResult(
             message=final_message,
             dark_profile=dark.model_dump(),
