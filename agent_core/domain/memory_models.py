@@ -97,6 +97,8 @@ class TaskSnapshot(BaseModel):
     timing_forensics: Optional[Dict[str, Any]] = None
     depth_report: Optional[Dict[str, Any]] = None
     visual_evidence: Optional[Dict[str, Any]] = None
+    shadow_profile: Optional[Dict[str, Any]] = None
+    osint_footprint: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(extra="allow")
 

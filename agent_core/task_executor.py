@@ -22,6 +22,7 @@ try:
     from agent_core.agents.interpreter_agent import InterpreterAgent
     from agent_core.agents.authenticity_auditor import AuthenticityAuditorAgent
     from agent_core.agents.osint_investigator import OsintInvestigatorAgent
+    from agent_core.shadow.shadow_executor import ShadowExecutor
 except Exception:
     from services.cognitive_router import CognitiveRouter, RoutePlan
     from services.canonical_memory import CanonicalMemory
@@ -90,6 +91,7 @@ class PinealExecutor:
             "interpreter": InterpreterAgent(self.llm_gateway),
             "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
             "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
+            "shadow_executor": ShadowExecutor(),
         }
 
     def _snapshot(self, status: TaskStatus):
@@ -381,6 +383,21 @@ class PinealExecutor:
                 self._log("INFO", f"[{task_id}] KALKAN: {kept}/{checked} bulgu kanıtla ayakta")
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Derinlik analizi atlandı: {e}")
+
+            # --- 5. ve 6. DAMGA: SHADOW & OSINT FORENSİKLERİ ---
+            try:
+                shadow_result = await self.agents["shadow_executor"].execute(input_data)
+                status.shadow_profile = shadow_result.model_dump()
+                self._log("INFO", f"[{task_id}] GÖLGE FORENSİĞİ: Manipülasyon ve NLP dizisi eklendi")
+            except Exception as e:
+                self._log("WARNING", f"[{task_id}] Gölge forensiği atlandı: {e}")
+
+            try:
+                osint_result = await self.agents["osint_investigator"].execute(input_data)
+                status.osint_footprint = osint_result.model_dump()
+                self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı")
+            except Exception as e:
+                self._log("WARNING", f"[{task_id}] OSINT taraması atlandı: {e}")
 
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
