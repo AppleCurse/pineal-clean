@@ -1,0 +1,88 @@
+import logging
+from typing import Dict, Any, Optional
+from pydantic import BaseModel, ConfigDict
+from agent_core.services.llm_gateway import LLMGateway
+
+logger = logging.getLogger(__name__)
+
+class AuthenticityProfile(BaseModel):
+    authenticity_score: float = 1.0  # 0.0 (tamamen kurgu/çelişkili) - 1.0 (tamamen sahici)
+    visual_text_gaps: list[str] = []
+    supported_claims: list[str] = []
+    confidence: float = 1.0
+
+    model_config = ConfigDict(extra="allow")
+
+class AuthenticityAuditorAgent:
+    """
+    Kullanıcının beyanları (bio/post) ile görsel kanıtlar (fotoğraflardaki nesneler,
+    mekanlar, estetik) arasındaki tutarlılığı ve "Özgünlük Boşluğunu" ölçer.
+    """
+
+    def __init__(self, llm_gateway: Optional[LLMGateway] = None):
+        self.llm_gateway = llm_gateway or LLMGateway()
+
+    async def execute(self, payload: Dict[str, Any]) -> AuthenticityProfile:
+        target = payload.get("target_profile", {})
+        bio = target.get("bio", "")
+        posts = target.get("posts", [])
+        visual_evidence = payload.get("visual_evidence", {})
+
+        if not visual_evidence or not (bio or posts):
+            return AuthenticityProfile(
+                authenticity_score=1.0,
+                visual_text_gaps=[],
+                supported_claims=[],
+                confidence=0.1
+            )
+
+        posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
+        visual_text = f"""
+- Nesneler: {visual_evidence.get('detected_objects', [])}
+- Mekanlar: {visual_evidence.get('environment_and_places', [])}
+- Eylemler: {visual_evidence.get('activity_signals', [])}
+- Estetik: {visual_evidence.get('aesthetic_style', '')}
+"""
+
+        prompt = f"""
+Aşağıda bir kişinin beyanları (biyografi ve gönderi metinleri) ile onun paylaştığı 
+fotoğraflardan çıkarılmış SOMUT görsel kanıtlar yer almaktadır.
+
+Görev: Metinsel iddialar ile görsel gerçeklik arasındaki tutarlılığı hesaplamak.
+- Kişi "minimalist" olduğunu iddia edip lüks/kaotik ortamlar mı paylaşıyor? (Çelişki)
+- Doğayı sevdiğini söyleyip sadece kapalı mekan veya stüdyo fotoğrafı mı var? (Çelişki)
+- İddia ettiği mesleği veya hobileri görsellerde somut olarak yer alıyor mu? (Destekleyici)
+
+Hedef Biyografi:
+"{bio}"
+
+Son Paylaşımlar / Metinler:
+{posts_text}
+
+Görsel Kanıtlar (Fotoğraflarda Görülenler):
+{visual_text}
+
+JSON formatında yanıt ver:
+{{
+    "authenticity_score": 0.85, 
+    "visual_text_gaps": ["Çelişen noktaların kısa açıklaması", "varsa"],
+    "supported_claims": ["Görselle kanıtlanan beyanlar"],
+    "confidence": 0.90
+}}
+"""
+        try:
+            result = await self.llm_gateway.query_json_chain(
+                prompt=prompt,
+                schema=AuthenticityProfile,
+                task="depth",
+                temperature=0.2
+            )
+            return result
+        except Exception as e:
+            logger.warning(f"AuthenticityAuditor LLM hatası: {{e}}")
+            return AuthenticityProfile(
+                authenticity_score=0.5,
+                visual_text_gaps=["Analiz sırasında hata oluştu."],
+                supported_claims=[],
+                confidence=0.2
+            )

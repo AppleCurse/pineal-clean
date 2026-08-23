@@ -27,6 +27,9 @@ class CognitiveRouter:
         
         # Hedef varsa 360 derece analiz et
         if has_target:
+            agents.append('osint_investigator')
+            reasoning.append("Derin Web ve OSINT Taraması")
+
             agents.append('autonomous_verifier')
             reasoning.append("Otonom Teyit (Arama & Kanıt)")
 
@@ -41,6 +44,10 @@ class CognitiveRouter:
             
             agents.append('cognitive_profiler')
             reasoning.append("Bilişsel Ton ve Üslup")
+
+            if 'visual_evidence' in input_data:
+                agents.append('authenticity_auditor')
+                reasoning.append("Özgünlük ve Tutarlılık Denetimi")
             
             # Kullanıcı da hedef de varsa rezonans ve sahici köprü hesapla
             if has_user:

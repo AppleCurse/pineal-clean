@@ -24,7 +24,7 @@ except Exception:
     scrape_readonly = None
 
 try:
-    from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InsufficientEvidenceError
+    from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InsufficientEvidenceError as IGInsufficientEvidenceError
 except Exception:
     InstagramGhostScraper = None
 
@@ -272,6 +272,13 @@ def sync_event(client_id: str, event: Any):
     broadcast_event(client_id, event)
 
 async def _send_snapshot(room: dict, snapshot: Any):
+    def _dump_field(val):
+        if val is None:
+            return None
+        if hasattr(val, "model_dump"):
+            return val.model_dump(mode="json")
+        return val
+
     payload = json.dumps({
         "type": "snapshot_update",
         "task_id": snapshot.task_id,
@@ -281,7 +288,11 @@ async def _send_snapshot(room: dict, snapshot: Any):
         "completed_agents": snapshot.completed_agents,
         "halted_reason": getattr(snapshot, "halted_reason", None),
         "resonance_score": getattr(snapshot, "resonance_score", None),
-        "holistic_profile": snapshot.holistic_profile.model_dump(mode="json") if getattr(snapshot, "holistic_profile", None) else None,
+        "holistic_profile": _dump_field(getattr(snapshot, "holistic_profile", None)),
+        "follower_audit": _dump_field(getattr(snapshot, "follower_audit", None)),
+        "timing_forensics": _dump_field(getattr(snapshot, "timing_forensics", None)),
+        "depth_report": _dump_field(getattr(snapshot, "depth_report", None)),
+        "visual_evidence": _dump_field(getattr(snapshot, "visual_evidence", None)),
         "runs": {
             name: {
                 "status": getattr(r, "status", None),
@@ -405,7 +416,7 @@ async def run_mission(req: InitiatePayload):
                         
                         is_ig_url = "instagram.com" in req.url.lower()
                         is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
-                        clean_username = req.url.strip("/").split("/")[-1].replace("@", "")
+                        clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
                         if (is_ig_url or req.scraper_type == "instagram") and InstagramGhostScraper:
                             ctx = await browser.new_context(**ctx_kwargs)
@@ -513,13 +524,24 @@ def broadcast_result(client_id, res):
                 return e["result"]
         return None
 
+    def _dump_field(val):
+        if val is None:
+            return None
+        if hasattr(val, "model_dump"):
+            return val.model_dump(mode="json")
+        return val
+
     _enqueue(client_id, ("result", {
         "type": "result",
         "status": res.status,
         "mirror": find(res.evidence_chain, "mirror_truth"),
         "reading": find(res.evidence_chain, "human_behavior"),
         "reso": find(res.evidence_chain, "resonance_calc"),
-        "hook": find(res.evidence_chain, "pattern_interrupt")
+        "hook": find(res.evidence_chain, "pattern_interrupt"),
+        "follower_audit": _dump_field(getattr(res, "follower_audit", None)),
+        "timing_forensics": _dump_field(getattr(res, "timing_forensics", None)),
+        "depth_report": _dump_field(getattr(res, "depth_report", None)),
+        "visual_evidence": _dump_field(getattr(res, "visual_evidence", None))
     }))
 
 async def _send_result(room: dict, data: dict):
@@ -583,16 +605,19 @@ class OverridePayload(BaseModel):
     fact: str
     tag: str
 
+_override_lock = asyncio.Lock()
+
 @app.post("/api/override")
 async def api_override(req: OverridePayload):
     if req.fact.strip():
         executor = get_executor(req.client_id)
         mem_dir = executor.memory.storage_path
         lp = os.path.join(mem_dir, "learnings.json")
-        learn = json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
-        learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
-        with open(lp, "w", encoding="utf-8") as f:
-            json.dump(learn, f, ensure_ascii=False, indent=2)
+        async with _override_lock:
+            learn = json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
+            learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
+            with open(lp, "w", encoding="utf-8") as f:
+                json.dump(learn, f, ensure_ascii=False, indent=2)
         broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
     return {"status": "sealed"}
 

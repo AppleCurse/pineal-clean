@@ -17,14 +17,17 @@ class SearchEngine:
     3 Kaynaklı Eşzamanlı Arama ve Doğrulama Motoru (Tavily + SerpAPI + Exa + DuckDuckGo).
     """
     def __init__(self, tavily_key: Optional[str] = None, serpapi_key: Optional[str] = None, exa_key: Optional[str] = None):
-        self.tavily_key = tavily_key or os.getenv("TAVILY_API_KEY")
-        self.serpapi_key = serpapi_key or os.getenv("SERPAPI_API_KEY")
-        self.exa_key = exa_key or os.getenv("EXA_API_KEY")
+        self.tavily_key = os.getenv("TAVILY_API_KEY") if tavily_key is None else (tavily_key if tavily_key != "" else None)
+        self.serpapi_key = os.getenv("SERPAPI_API_KEY") if serpapi_key is None else (serpapi_key if serpapi_key != "" else None)
+        self.exa_key = os.getenv("EXA_API_KEY") if exa_key is None else (exa_key if exa_key != "" else None)
 
     def set_keys(self, tavily: Optional[str] = None, serpapi: Optional[str] = None, exa: Optional[str] = None):
-        if tavily: self.tavily_key = tavily
-        if serpapi: self.serpapi_key = serpapi
-        if exa: self.exa_key = exa
+        if tavily is not None:
+            self.tavily_key = tavily if tavily != "" else None
+        if serpapi is not None:
+            self.serpapi_key = serpapi if serpapi != "" else None
+        if exa is not None:
+            self.exa_key = exa if exa != "" else None
 
     async def search(self, query: str, num_results: int = 5) -> List[SearchResult]:
         tasks = []

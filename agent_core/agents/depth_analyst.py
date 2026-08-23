@@ -60,6 +60,7 @@ class DepthAnalyst:
             from agent_core.services.quote_guard import guard_report
             rep_dict = report.model_dump()
             cleaned_dict, stats = guard_report(rep_dict, input_data)
+            cleaned_dict["quote_guard"] = stats
             return DepthReport(**cleaned_dict)
         except Exception as e:
             # Fallback

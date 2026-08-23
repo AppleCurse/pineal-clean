@@ -20,6 +20,8 @@ try:
     from agent_core.services.search_engine import SearchEngine
     from agent_core.agents.autonomous_verifier import AutonomousVerifier
     from agent_core.agents.interpreter_agent import InterpreterAgent
+    from agent_core.agents.authenticity_auditor import AuthenticityAuditorAgent
+    from agent_core.agents.osint_investigator import OsintInvestigatorAgent
 except Exception:
     from services.cognitive_router import CognitiveRouter, RoutePlan
     from services.canonical_memory import CanonicalMemory
@@ -37,6 +39,8 @@ except Exception:
     from services.search_engine import SearchEngine
     from agents.autonomous_verifier import AutonomousVerifier
     from agents.interpreter_agent import InterpreterAgent
+    from agents.authenticity_auditor import AuthenticityAuditorAgent
+    from agents.osint_investigator import OsintInvestigatorAgent
 
 try:
     from agent_core.domain.memory_models import (
@@ -84,6 +88,8 @@ class PinealExecutor:
             "pattern_interrupt": PatternInterrupt(),
             "autonomous_verifier": AutonomousVerifier(self.search_engine),
             "interpreter": InterpreterAgent(self.llm_gateway),
+            "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
+            "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
         }
 
     def _snapshot(self, status: TaskStatus):
@@ -141,11 +147,19 @@ class PinealExecutor:
             posts_meta = tp_info.get("posts_meta", []) or [{"like_count": None, "comment_count": None}]
             audit_res = audit_followers(fol_cnt, fing_cnt, posts_meta)
             input_data["follower_audit"] = audit_res.model_dump()
+            status.follower_audit = audit_res.model_dump()
+            self._log("INFO", f"[{task_id}] TAKİPÇİ DENETİMİ: {audit_res.verdict.upper()}")
             
             p_times = tp_info.get("post_times", [])
             t_res = analyze_timing(p_times)
             if t_res:
                 input_data["timing_forensics"] = t_res
+                status.timing_forensics = t_res
+                gece = int(t_res.get("night_owl_score", 0) * 100)
+                tepe = t_res.get("peak_utc_hour", 0)
+                kayma = t_res.get("tz_offset_hours_likely", 0)
+                kayma_str = f"+{kayma}sa" if kayma >= 0 else f"{kayma}sa"
+                self._log("INFO", f"[{task_id}] ZAMAN FORENSİĞİ: gece %{gece} | tepe {tepe:02d} | kayma {kayma_str}")
         except Exception as e:
             self._log("WARNING", f"[{task_id}] Forensik veri analizi uyarısı: {e}")
 
@@ -156,6 +170,7 @@ class PinealExecutor:
                 target_bio = input_data.get("target_profile", {}).get("bio", "")
                 visual_ev = await self.vision_analyzer.analyze_images(raw_imgs, target_context=target_bio)
                 input_data["visual_evidence"] = visual_ev.model_dump()
+                status.visual_evidence = visual_ev.model_dump()
                 self._log("INFO", f"[{task_id}] GÖRSEL KANIT: {visual_ev.visual_evidence_summary}")
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
@@ -359,7 +374,11 @@ class PinealExecutor:
                 depth_agent = DepthAnalyst(self.llm_gateway)
                 depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
                 status.depth_report = depth_rep.model_dump()
-                self._log("INFO", f"[{task_id}] DERİNLİK ANALİZİ: Gerçeklik Endeksi %{int(depth_rep.reality_index * 100)}")
+                q_stats = depth_rep.quote_guard or {}
+                kept = q_stats.get("kept", len(depth_rep.reality_findings))
+                checked = q_stats.get("checked", kept + q_stats.get("dropped_fake_quote", 0))
+                self._log("INFO", f"[{task_id}] DERİNLİK TURU: gerçeklik endeksi %{int(depth_rep.reality_index * 100)}")
+                self._log("INFO", f"[{task_id}] KALKAN: {kept}/{checked} bulgu kanıtla ayakta")
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Derinlik analizi atlandı: {e}")
 

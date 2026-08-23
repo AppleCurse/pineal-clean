@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from typing import Type, TypeVar, Any, Optional, List
@@ -36,6 +37,7 @@ class LLMGateway:
         self.local_client = None
         self.failure_count = 0
         self.circuit_open = False
+        self.circuit_opened_at = 0.0
         self.live_unlocked = False
         self._rebuild()
 
@@ -45,6 +47,7 @@ class LLMGateway:
             self.live_unlocked = True
         self.failure_count = 0
         self.circuit_open = False
+        self.circuit_opened_at = 0.0
         self._rebuild()
 
     def set_local_config(self, base_url: str = None, model_name: str = None, active: bool = True):
@@ -71,7 +74,11 @@ class LLMGateway:
         varsayılan modele geçilir; içerik multimodal content dizisi olarak gönderilir.
         """
         if self.circuit_open:
-            raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu")
+            if time.time() - getattr(self, "circuit_opened_at", 0.0) > 60.0:
+                self.circuit_open = False
+                self.failure_count = 0
+            else:
+                raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu (60s bekleme devrede)")
         
         # Eğer local model seçildiyse veya global use_local aktifse
         is_local_request = (model and ("local" in model.lower() or "ollama" in model.lower() or "127.0.0.1" in model.lower())) or self.use_local
@@ -147,6 +154,7 @@ class LLMGateway:
                 self.failure_count += 1
                 if self.failure_count > 5:
                     self.circuit_open = True
+                    self.circuit_opened_at = time.time()
                 raise
 
     def extract_json(self, text: str) -> dict:

@@ -194,6 +194,10 @@
   let taskState = "IDLE";
   let taskId = "";
   let holisticProfile: any = null;
+  let followerAudit: any = null;
+  let timingForensics: any = null;
+  let depthReport: any = null;
+  let visualEvidence: any = null;
   let copyFeedback = false;
 
   function copyMessage(text: string) {
@@ -209,6 +213,10 @@
       if ($taskStatus.status) taskState = $taskStatus.status;
       if ($taskStatus.halted_reason !== undefined) haltedReason = $taskStatus.halted_reason;
       if ($taskStatus.holistic_profile) holisticProfile = $taskStatus.holistic_profile;
+      if ($taskStatus.follower_audit) followerAudit = $taskStatus.follower_audit;
+      if ($taskStatus.timing_forensics) timingForensics = $taskStatus.timing_forensics;
+      if ($taskStatus.depth_report) depthReport = $taskStatus.depth_report;
+      if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
 
       if ($taskStatus.reso) {
         ritualMatchScore = ($taskStatus.reso.ritual_match_score || 0) * 100;
@@ -559,6 +567,135 @@
     </div>
     {/if}
 
+    <!-- ==================== 4 FORENSİK DAMGA VE DERİNLİK RAPORU ==================== -->
+    {#if followerAudit || timingForensics || depthReport}
+    <div class="brass-plate" style="border: 1px solid var(--gold); display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a1e12; padding-bottom: 6px;">
+        <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
+          🏛️ 4 DAMGA FORENSİK KONTROLÜ
+        </span>
+        <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
+          ● DOĞRULANMIŞ DAMGALAR
+        </span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <!-- 1. 🔍 TAKİPÇİ VE BOT DENETİMİ -->
+        {#if followerAudit}
+          <div class="screen-card" style="border-color: {followerAudit.verdict === 'healthy' ? 'rgba(16,185,129,0.5)' : followerAudit.verdict === 'inflated' ? 'rgba(239,68,68,0.5)' : 'rgba(245,158,11,0.5)'};">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span class="font-cinzel" style="font-size: 10px; font-weight: 700; color: var(--gold);">
+                {t[$currentLang].followerAuditTitle}
+              </span>
+              <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {followerAudit.verdict === 'healthy' ? 'background: #10b981; color: #000;' : followerAudit.verdict === 'inflated' ? 'background: #ef4444; color: #fff;' : 'background: #f59e0b; color: #000;'}">
+                {followerAudit.verdict === 'healthy' ? 'SAĞLIKLI' : followerAudit.verdict === 'inflated' ? 'ŞİŞİRME' : 'ŞÜPHELİ'}
+              </span>
+            </div>
+            <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">
+              <b>{t[$currentLang].botProbLabel}:</b> %{((followerAudit.bot_probability || 0) * 100).toFixed(0)} | 
+              <b>Takipçi:</b> {followerAudit.follower_count || 0}
+            </div>
+            {#if followerAudit.evidence?.length}
+              <div style="font-size: 8px; color: var(--text-muted); line-height: 1.3; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 4px;">
+                {#each followerAudit.evidence.slice(0, 2) as ev}
+                  <div>• {ev}</div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- 2. ⏰ ZAMAN FORENSİĞİ -->
+        {#if timingForensics}
+          <div class="screen-card" style="border-color: rgba(6,182,212,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span class="font-cinzel" style="font-size: 10px; font-weight: 700; color: var(--accent-cyan);">
+                {t[$currentLang].timingForensicsTitle}
+              </span>
+              <span style="font-size: 9px; font-weight: 700; color: #67e8f9;">
+                UTC {timingForensics.peak_utc_hour !== undefined ? timingForensics.peak_utc_hour : '--'}:00
+              </span>
+            </div>
+            <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">
+              <b>{t[$currentLang].nightOwlScoreLabel}:</b> %{((timingForensics.night_owl_score || 0) * 100).toFixed(0)} | 
+              <b>{t[$currentLang].tzShiftLabel}:</b> {timingForensics.tz_offset_hours_likely >= 0 ? '+' : ''}{timingForensics.tz_offset_hours_likely || 0}sa
+            </div>
+            {#if timingForensics.pattern_label}
+              <div style="font-size: 8px; color: var(--text-muted); line-height: 1.3; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 4px;">
+                ⏱️ {timingForensics.pattern_label}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
+      <!-- 3. 🧠 DERİNLİK VE GERÇEKLİK RAPORU + 4. 🛡️ ALINTI KALKANI -->
+      {#if depthReport}
+        <div class="screen-card" style="border-color: rgba(16,185,129,0.6); background: #0c140d;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--accent-green);">
+                {t[$currentLang].depthReportTitle}
+              </span>
+              <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
+                {t[$currentLang].realityIndexLabel}: %{((depthReport.reality_index || 0) * 100).toFixed(0)}
+              </span>
+            </div>
+
+            <!-- 4. 🛡️ KALKAN ROZETİ -->
+            {#if depthReport.quote_guard}
+              <span style="font-size: 9px; font-weight: 700; background: rgba(16,185,129,0.2); border: 1px solid var(--accent-green); color: #86efac; padding: 2px 6px; border-radius: 4px;">
+                🛡️ {depthReport.quote_guard.kept || depthReport.reality_findings?.length || 0} {t[$currentLang].kalkanAyakta} ({depthReport.quote_guard.dropped_fake_quote || 0} {t[$currentLang].kalkanElenen})
+              </span>
+            {/if}
+          </div>
+
+          <!-- Gerçeklik Endeksi Çubuğu -->
+          <div style="height: 6px; background: #1a120b; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17; margin-bottom: 6px;">
+            <div style="height: 100%; width: {Math.max(5, (depthReport.reality_index || 0) * 100)}%; background: linear-gradient(90deg, #ef4444 0%, #f59e0b 50%, #10b981 100%); transition: width 0.4s ease;"></div>
+          </div>
+
+          {#if depthReport.essence_one_liner}
+            <div style="font-size: 10px; color: var(--text-main); font-weight: 600; margin-bottom: 6px; font-style: italic;">
+              "{depthReport.essence_one_liner}"
+            </div>
+          {/if}
+
+          <!-- Bulgular ve Çelişkiler -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+            {#if depthReport.reality_findings?.length}
+              <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(16,185,129,0.3);">
+                <div style="font-size: 9px; font-weight: 700; color: var(--accent-green); margin-bottom: 3px;">
+                  ✓ {t[$currentLang].findingsTitle}
+                </div>
+                {#each depthReport.reality_findings.slice(0, 3) as f}
+                  <div style="font-size: 8px; color: var(--text-dim); margin-bottom: 2px;">
+                    <b style="color: #86efac;">{f.topic}:</b> {f.observation}
+                    {#if f.evidence_quotes?.length}
+                      <span style="color: #65a30d; font-style: italic;">("{f.evidence_quotes[0]}")</span>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            {#if depthReport.contradictions?.length}
+              <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(239,68,68,0.3);">
+                <div style="font-size: 9px; font-weight: 700; color: var(--accent-red); margin-bottom: 3px;">
+                  ⚠️ {t[$currentLang].contradictionsTitle}
+                </div>
+                {#each depthReport.contradictions.slice(0, 3) as c}
+                  <div style="font-size: 8px; color: #fca5a5; margin-bottom: 2px;">
+                    <b style="color: #f87171;">{c.topic}:</b> {c.observation}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
+    {/if}
   </section>
 
   <!-- ==================== SAĞ PANEL: AJAN ZİNCİRİ & KARAR AĞACI ==================== -->

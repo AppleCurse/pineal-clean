@@ -93,6 +93,10 @@ class TaskSnapshot(BaseModel):
     agent_runs: Dict[str, AgentRun] = {}
     evidence_chain: List[Dict[str, Any]] = []
     holistic_profile: Optional[HolisticProfile] = None
+    follower_audit: Optional[Dict[str, Any]] = None
+    timing_forensics: Optional[Dict[str, Any]] = None
+    depth_report: Optional[Dict[str, Any]] = None
+    visual_evidence: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(extra="allow")
 

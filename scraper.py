@@ -1,7 +1,5 @@
-import json
 import logging
 import sys
-from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -74,28 +72,22 @@ def scrape_readonly(profile_url: str, cookies: str = None) -> dict:
             logger.exception("Unhandled GraphQL response processing failure")
             raise
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-        ctx = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
+    try:
+        import browser_oxide
+        browser = browser_oxide.Browser(headless=True, stealth=True, engine="deno_core")
+        page = browser.new_page()
         if cookies:
-            parsed = []
-            for part in cookies.split(";"):
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    parsed.append({"name": k.strip(), "value": v.strip(), "domain": ".x.com", "path": "/"})
-            if parsed:
-                try:
-                    ctx.add_cookies(parsed)
-                except Exception:
-                    logger.exception("Cookie injection failed")
-                    raise
-
-        page = ctx.new_page()
-        page.on("response", intercept_response)
-        page.goto(profile_url, wait_until="networkidle", timeout=20000)
-        page.wait_for_timeout(3000)
+            page.set_cookies(cookies)
+        response = page.goto(profile_url, wait_until="networkidle")
+        
+        # Parse GraphQL responses intercepted by browser_oxide
+        for req in page.get_requests():
+            if "graphql" in req.url and req.response:
+                intercept_response(req.response)
+        
         browser.close()
+    except ImportError:
+        logger.error("browser_oxide not found, falling back to empty response")
 
         if "error" in scraped_data:
             raise scraped_data["error"]

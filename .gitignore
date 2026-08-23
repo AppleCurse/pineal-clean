@@ -3,6 +3,9 @@ Cargo.lock
 
 # Rust build artifacts
 target/
+target_clean/
+rust_core/target/
+rust_core/target_clean/
 **/*.rs.bk
 
 # Python artifacts
