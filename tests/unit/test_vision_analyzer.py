@@ -1,6 +1,5 @@
 import pytest
 import httpx
-from unittest.mock import AsyncMock
 from agent_core.services.vision_analyzer import VisionAnalyzer
 
 class MockClient:
@@ -11,7 +10,8 @@ class MockClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         pass
     async def get(self, url, **kwargs):
-        raise httpx.RequestError("Mock network error")
+        request = httpx.Request("GET", url)
+        raise httpx.RequestError("Mock network error", request=request)
 
 @pytest.mark.asyncio
 async def test_download_and_encode_image_exception_handling(monkeypatch):
