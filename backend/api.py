@@ -757,10 +757,7 @@ async def interpreter_execute(req: InterpreterPayload):
 # --- Görev geçmişi ve veri silme (FAZ 3 / etik çerçeve: kişisel veri hedefli sistemde
 #     retention hakkı): bellekteki kanıt dosyaları listelenir ve KALICI olarak silinir. ---
 
-@app.get("/api/tasks")
-async def api_list_tasks(client_id: str):
-    room = get_room(client_id)
-    storage = room["executor"].memory.storage_path
+def _read_tasks_sync(storage: str):
     tasks = []
     if os.path.isdir(storage):
         for fn in sorted(os.listdir(storage)):
@@ -778,6 +775,13 @@ async def api_list_tasks(client_id: str):
                 })
             except Exception:
                 continue
+    return tasks
+
+@app.get("/api/tasks")
+async def api_list_tasks(client_id: str):
+    room = get_room(client_id)
+    storage = room["executor"].memory.storage_path
+    tasks = await asyncio.to_thread(_read_tasks_sync, storage)
     active = list(room.get("active_tasks", {}).keys())
     return {"tasks": tasks, "active_tasks": active}
 
