@@ -343,29 +343,30 @@
 
       <div style="display: flex; flex-direction: column; gap: 10px;">
         <div>
-          <label style="display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;">
+          <label for="target-url" style="display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;">
             {t[$currentLang].targetUrlLabel}
           </label>
-          <input 
-            style="font-size: 13px; font-weight: 600; padding: 8px 12px;" 
-            bind:value={targetUrl} 
-            placeholder={t[$currentLang].targetUrlPlaceholder} 
+          <input
+            id="target-url"
+            style="font-size: 13px; font-weight: 600; padding: 8px 12px;"
+            bind:value={targetUrl}
+            placeholder={t[$currentLang].targetUrlPlaceholder}
             disabled={$isProcessing}
           />
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
           <div>
-            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].ritualsLabel}</label>
-            <input bind:value={userRituals} placeholder={t[$currentLang].ritualsPlaceholder} disabled={$isProcessing} />
+            <label for="rituals-input" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].ritualsLabel}</label>
+            <input id="rituals-input" bind:value={userRituals} placeholder={t[$currentLang].ritualsPlaceholder} disabled={$isProcessing} />
           </div>
           <div>
-            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].playlistLabel}</label>
-            <input bind:value={userPlaylist} placeholder={t[$currentLang].playlistPlaceholder} disabled={$isProcessing} />
+            <label for="playlist-input" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].playlistLabel}</label>
+            <input id="playlist-input" bind:value={userPlaylist} placeholder={t[$currentLang].playlistPlaceholder} disabled={$isProcessing} />
           </div>
           <div>
-            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].enviesLabel}</label>
-            <input bind:value={userEnvies} placeholder={t[$currentLang].enviesPlaceholder} disabled={$isProcessing} />
+            <label for="envies-input" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].enviesLabel}</label>
+            <input id="envies-input" bind:value={userEnvies} placeholder={t[$currentLang].enviesPlaceholder} disabled={$isProcessing} />
           </div>
         </div>
 
@@ -708,6 +709,31 @@
     {/if}
 
     <!-- ==================== 5. VE 6. DAMGALAR (YENİ) ==================== -->
+    {#if visualEvidence}
+      <div class="screen-card" style="border-color: rgba(244, 114, 182, 0.6); background: #1f1018; margin-top: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #f9a8d4;">
+            🖼️ 4. DAMGA: GÖRSEL KANIT
+          </span>
+          {#if visualEvidence.aesthetic_style}
+            <span style="font-size: 9px; font-weight: 700; color: #fbcfe8; border: 1px solid rgba(244,114,182,0.4); padding: 2px 6px; border-radius: 4px;">
+              {visualEvidence.aesthetic_style}
+            </span>
+          {/if}
+        </div>
+        <div style="font-size: 9px; color: #fce7f3; line-height: 1.4;">
+          {visualEvidence.visual_evidence_summary || 'Görsel kanıt özeti yok.'}
+          {#if visualEvidence.detected_objects?.length}
+            <div style="margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
+              {#each visualEvidence.detected_objects.slice(0, 6) as obj}
+                <span style="background: rgba(244,114,182,0.15); color: #fbcfe8; border: 1px solid rgba(244,114,182,0.3); padding: 1px 6px; border-radius: 4px; font-size: 8px;">{obj}</span>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     {#if shadowProfile}
       <div class="screen-card" style="border-color: rgba(139, 92, 246, 0.6); background: #1a1025; margin-top: 10px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
