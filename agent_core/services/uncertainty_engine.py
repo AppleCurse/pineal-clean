@@ -36,7 +36,14 @@ class UncertaintyEngine:
                     if confidence is None:
                         confidence = data_score
                     else:
-                        confidence = max(0.65, min(confidence, data_score if data_score >= 0.6 else 0.65))
+                        if data_score >= 0.6:
+                            confidence = min(confidence, data_score)
+                        elif data_score >= 0.34 and confidence >= 0.7:
+                            # Bilincli bulunamadi (model emin + makul doluluk): taban gecerli
+                            confidence = 0.65
+                        else:
+                            # Zayif veri / kararsiz model: koruma devrede
+                            confidence = min(confidence, data_score)
         elif 'evidence' in result_text and 'bulunamadı' in result_text:
             is_empty = True
             confidence = 0.1
