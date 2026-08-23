@@ -34,22 +34,28 @@ class CanonicalMemory:
         
         async with self._locks[task_id]:
             # Mevcut veriyi oku
-            existing = {}
-            if os.path.exists(profile_file):
-                with open(profile_file, 'r') as f:
-                    existing = json.load(f)
+            def _read_file():
+                if os.path.exists(profile_file):
+                    with open(profile_file, 'r') as f:
+                        return json.load(f)
+                return {}
+
+            existing = await asyncio.to_thread(_read_file)
             
             # Yeni kanıtları ekle (Çelişki kontrolü ile)
             merged = self._resolve_conflicts(existing.get('evidence', []), evidence_chain)
             
             # Kaydet
-            with open(profile_file, 'w') as f:
-                json.dump({
-                    'task_id': task_id,
-                    'last_updated': datetime.now(timezone.utc).isoformat(),
-                    'evidence': merged,
-                    'confidence': self._calculate_overall_confidence(merged)
-                }, f, indent=2)
+            def _write_file():
+                with open(profile_file, 'w') as f:
+                    json.dump({
+                        'task_id': task_id,
+                        'last_updated': datetime.now(timezone.utc).isoformat(),
+                        'evidence': merged,
+                        'confidence': self._calculate_overall_confidence(merged)
+                    }, f, indent=2)
+
+            await asyncio.to_thread(_write_file)
     
     def _resolve_conflicts(self, old: List[Dict], new: List[Dict]) -> List[Dict]:
         """

@@ -5,6 +5,8 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel
 from typing import Type, TypeVar, Any, Optional, List
 
+from agent_core.services.response_cache import build_cache_from_env
+
 T = TypeVar('T', bound=BaseModel)
 
 class LLMGateway:
@@ -14,7 +16,7 @@ class LLMGateway:
 
     CHAINS = {
         "depth": ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"],
-        "vision": ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "meta-llama/llama-3.2-90b-vision-instruct"],
+        "vision": ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "google/gemini-3.5-flash"],
         "dialogue": ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"],
         "fast": ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"],
     }
@@ -40,6 +42,7 @@ class LLMGateway:
         self.circuit_opened_at = 0.0
         self.live_unlocked = False
         self._rebuild()
+        self.cache = build_cache_from_env()
 
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
@@ -115,10 +118,30 @@ class LLMGateway:
         else:
             messages.append({"role": "user", "content": prompt})
 
+        # --- Birebir yanit onbellegi (salt-metin, yerel/vision disi) ---
+        # Anahtar model+system_prompt+sicaklik+prompt'u icerir; farkli
+        # model/kisilik yanitlari asla birbirine karismaz.
+        cache_key = None
+        if (
+            not images
+            and not is_local_request
+            and self.cache
+            and self.cache.is_cachable(prompt, images)
+        ):
+            cache_key = self.cache.make_key(
+                prompt=prompt,
+                model=selected_model,
+                system_prompt=system_prompt,
+                temperature=temperature,
+            )
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         import asyncio
         import logging
         max_retries = 3
-        
+
         for attempt in range(max_retries):
             try:
                 r = await target_client.chat.completions.create(
@@ -127,7 +150,10 @@ class LLMGateway:
                     timeout=45.0
                 )
                 self.failure_count = 0
-                return r.choices[0].message.content
+                content = r.choices[0].message.content
+                if cache_key and content:
+                    self.cache.put(cache_key, content)
+                return content
             except Exception as e:
                 err_str = str(e).lower()
                 is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
