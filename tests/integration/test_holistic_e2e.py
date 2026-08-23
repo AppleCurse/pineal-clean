@@ -94,6 +94,11 @@ async def test_holistic_360_e2e_pipeline():
 
     mock_gateway.query_json = AsyncMock(side_effect=mock_query_json)
     mock_gateway.query = AsyncMock(return_value="Mocked LLM raw response")
+
+    async def _qjc(prompt, schema=None, task="depth", **kw):
+        return await mock_query_json(prompt, schema=schema, **kw)
+    mock_gateway.query_json_chain = AsyncMock(side_effect=_qjc)
+    mock_gateway.query_chain = AsyncMock(return_value="Mocked LLM raw response")
     
     from agent_core.services.search_engine import SearchResult
     executor.search_engine.tavily_key = "mock_tavily_key"
