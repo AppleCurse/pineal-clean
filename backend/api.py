@@ -65,7 +65,7 @@ _default_origins = [
     "http://localhost:5173", "http://127.0.0.1:5173",
 ]
 _allowed = os.getenv("PINEAL_ALLOWED_ORIGINS", "")
-ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip()] or _default_origins
+ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip() and o.strip() != "*"] or _default_origins
 
 app.add_middleware(
     CORSMiddleware,
