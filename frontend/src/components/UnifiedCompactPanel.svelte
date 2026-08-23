@@ -757,7 +757,7 @@
         
         <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.3); font-size: 8px; color: #e0f2fe;">
           <b style="color: #7dd3fc;">Kanıtlar:</b> 
-          {(osintFootprint.associated_platforms || []).join(', ') || 'Platform kaydı bulunamadı (Olası Bot/Sahte)'}
+          {(osintFootprint.associated_platforms || []).join(', ') || 'Platform kaydı bulunamadı (Simülasyon/Olası Bot)'}
         </div>
       </div>
     {/if}
