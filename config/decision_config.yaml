@@ -1,0 +1,66 @@
+# Decision & Uncertainty Engine Configuration
+version: "1.0"
+
+pipeline:
+  # Pipeline genelinde geçerli olan varsayılanlar
+  default:
+    min_data_score: 0.60
+    min_llm_confidence: 0.65
+    require_data_confidence: true
+    graceful_degradation: true
+
+  # Kritik ajanlar - Bunlardan herhangi biri başarısız olursa 
+  # pipeline "halted_critical" olarak bitebilir
+  critical_agents:
+    - mirror_truth
+    - passion_mapper
+
+agents:
+  passion_mapper:
+    min_data_score: 0.57
+    min_llm_confidence: 0.70
+    graceful_degradation: true
+    field_weights:
+      core_passions: 0.25
+      energizing_topics: 0.20
+      passion_categories: 0.20
+      intensity_indicators: 0.15
+      anti_passions: 0.10
+      evidence_strength: 0.10
+    empty_list_penalty: 0.12
+    semantic_richness_weight: 0.35
+
+  mirror_truth:
+    min_llm_confidence: 0.70
+    min_data_score: 0.60
+    min_final_confidence: 0.65
+    critical: true
+    field_weights:
+      user_core_frequency: 0.3
+      surface_persona: 0.3
+      alignment_score: 0.2
+      authentic_anchors: 0.2
+    empty_list_penalty: 0.08
+
+  shadow_profile:
+    min_data_score: 0.52
+    min_llm_confidence: 0.60
+    graceful_degradation: true
+    field_weights:
+      dark_profile: 0.30
+      strategy: 0.25
+      nlp_sequence: 0.25
+      message: 0.20
+    empty_list_penalty: 0.08
+
+  osint_investigator:
+    min_data_score: 0.40
+    min_llm_confidence: 0.55
+    graceful_degradation: true
+    fallback_enabled: true
+    field_weights:
+      associated_platforms: 0.30
+      digital_footprint_score: 0.25
+      behavioral_signals: 0.25
+      risk_indicators: 0.20
+    empty_list_penalty: 0.05

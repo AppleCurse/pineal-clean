@@ -13,6 +13,8 @@ class OsintProfile(BaseModel):
     digital_footprint_score: float = 0.0  # 0.0 (hayalet) - 1.0 (çok aktif)
     dark_web_hits: int = 0
     confidence: float = 1.0
+    data_confidence: bool = True          # False → LLM kullanılamadı veya API yoktu
+    fallback_reason: Optional[str] = None # "no_api_key" | "llm_unavailable" | None
 
     model_config = ConfigDict(extra="allow")
 
@@ -70,10 +72,11 @@ JSON formatında yanıt ver:
                     task="depth",
                     temperature=0.1
                 )
+                result.data_confidence = False
                 return result
             except Exception as e:
                 logger.warning(f"OSINT LLM fallback hatası: {e}")
-                return OsintProfile(confidence=1.0)
+                return OsintProfile(confidence=1.0, data_confidence=False)
         else:
             # TODO: Gerçek osint.industries entegrasyonu (Canlı ortam için)
             # async with aiohttp.ClientSession() as session:

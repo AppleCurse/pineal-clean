@@ -21,7 +21,7 @@ def test_build_telemetry_summary(aspasia):
     snapshot = TaskSnapshot(task_id="test1", status="processing", current_agent="mirror_truth")
     summary = aspasia.build_telemetry_summary(snapshot)
     assert "test1" in summary
-    assert "processing" in summary
+    assert "processing" in summary.lower()
     assert "mirror_truth" in summary
 
 @pytest.mark.asyncio

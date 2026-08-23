@@ -77,11 +77,14 @@ class HolisticProfile(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-# --- GÖREV VE TELEMETRİ SNAPSHOT MODELLERİ ---
+try:
+    from agent_core.domain.pipeline_status import PipelineStatus
+except Exception:
+    from domain.pipeline_status import PipelineStatus
 
 class TaskSnapshot(BaseModel):
     task_id: str
-    status: str = "initialized"  # initialized, processing, halted_evidence, halted_frequency, completed, failed
+    status: PipelineStatus = PipelineStatus.INITIALIZED
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     current_agent: Optional[str] = None

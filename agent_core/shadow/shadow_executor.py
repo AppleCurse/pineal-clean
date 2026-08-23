@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional
 from pydantic import BaseModel, ConfigDict
 
 # Import yeni modüller
@@ -14,7 +14,9 @@ class ShadowResult(BaseModel):
     strategy: str
     nlp_sequence: list
     confidence: float
-    
+    data_confidence: bool = True          # False → LLM kullanılamadı, NLP deterministik
+    fallback_reason: Optional[str] = None
+
     model_config = ConfigDict(extra="forbid")
 
 class ShadowExecutor:
@@ -23,8 +25,8 @@ class ShadowExecutor:
         self.presupposition = PresuppositionEngine()
         self.dark_triad = DarkTriadAnalyzer()
         self.pattern = PatternInterrupt()
-        self.mirror = MirrorOfTruth()
         self.llm_gateway = LLMGateway()
+        self.mirror = MirrorOfTruth(self.llm_gateway)
     
     async def execute(self, task_input: Dict) -> ShadowResult:
         import logging
@@ -39,12 +41,12 @@ class ShadowExecutor:
         try:
             mirror_result = await self.mirror.execute(
                 {
-                    "user_rituals": task_input.get('user_profile', {}).get('rituals', []),
-                    "user_music": task_input.get('user_profile', {}).get('music', ''),
-                    "user_envies": task_input.get('user_profile', {}).get('envies', '')
-                },
-                None,
-                self.llm_gateway
+                    "user_profile": {
+                        "rituals": task_input.get('user_profile', {}).get('rituals', []),
+                        "music": task_input.get('user_profile', {}).get('music', ''),
+                        "envies": task_input.get('user_profile', {}).get('envies', '')
+                    }
+                }
             )
         except Exception as e:
             log.warning("ShadowExecutor: Mirror LLM atlandı: %s", e)

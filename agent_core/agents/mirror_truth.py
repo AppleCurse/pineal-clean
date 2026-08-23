@@ -1,97 +1,137 @@
+from typing import Any, Dict, List
 from pydantic import BaseModel, ConfigDict
-from typing import Dict
+import logging
+
 
 class MirrorReflection(BaseModel):
-    user_core_frequency: str  # Kullanıcının gerçek frekansı
-    surface_persona: str      # Dışarıya yansıttığı
-    alignment_score: float      # Uyum skoru (0-1)
-    authentic_anchors: list   # Gerçekliğin sabit noktaları
+    user_core_frequency: str
+    surface_persona: str
+    alignment_score: float
+    authentic_anchors: List[str]
     confidence: float = 0.9
-    
+    data_confidence: bool = True
+    fallback_reason: str | None = None
+
     model_config = ConfigDict(extra="forbid")
 
+
 class MirrorOfTruth:
-    """
-    Kullanıcının kendine ayna tutması.
-    Yüzey vs. Öz ayrımı.
-    """
-    
-    async def execute(self, input_data: Dict, memory, llm_gateway) -> MirrorReflection:
-        import logging
+    def __init__(self, llm_gateway=None):
+        if llm_gateway is None:
+            from agent_core.services.llm_gateway import LLMGateway
+            self.llm_gateway = LLMGateway()
+        else:
+            self.llm_gateway = llm_gateway
+
+    async def execute(self, input_data: Dict[str, Any]) -> MirrorReflection:
         log = logging.getLogger(__name__)
 
-        user_data = input_data.get('user_profile', {})
-        user_ctx = input_data.get('user_context', {})
-        sacred_rules = input_data.get('sacred_rules', "")
+        user_data = input_data.get("user_profile") or {}
+        user_ctx = input_data.get("user_context") or {}
+        sacred_rules = input_data.get("sacred_rules", "")
 
         merged_user = {
-            'private_rituals': user_data.get('private_rituals') or ([user_ctx.get('rituals')] if isinstance(user_ctx.get('rituals'), str) else user_ctx.get('rituals', [])),
-            'late_night_playlist': user_data.get('late_night_playlist') or ([user_ctx.get('playlist')] if isinstance(user_ctx.get('playlist'), str) else user_ctx.get('playlist', [])),
-            'secret_envies': user_data.get('secret_envies') or ([user_ctx.get('envies')] if isinstance(user_ctx.get('envies'), str) else user_ctx.get('envies', []))
+            "private_rituals": self._as_list(
+                user_data.get("private_rituals")
+                or user_ctx.get("rituals")
+            ),
+            "late_night_playlist": self._as_list(
+                user_data.get("late_night_playlist")
+                or user_ctx.get("playlist")
+            ),
+            "secret_envies": self._as_list(
+                user_data.get("secret_envies")
+                or user_ctx.get("envies")
+            ),
         }
 
         core_freq = self._extract_core_frequency(merged_user)
         anchors = self._find_anchors(merged_user)
 
         prompt = (
-            f"Sen 'Mirror of Truth' ajanısın. Görevin, verilen kullanıcı verisinden yüzey kimliğini ve gerçek (core) frekansı bulmak.\n"
+            "Sen 'Mirror of Truth' ajanısın. "
+            "Verilen kullanıcı verisindeki yüzeysel persona ile "
+            "gözlemlenebilir davranış sinyallerini karşılaştır.\n"
+            "Bu çıktı kesin psikolojik teşhis değildir; yalnızca "
+            "sağlanan veriye dayalı analitik bir tahmindir.\n\n"
             f"Kullanıcı Verisi:\n"
-            f"Ritüeller: {merged_user.get('private_rituals')}\n"
-            f"Müzik: {merged_user.get('late_night_playlist')}\n"
-            f"Kıskançlık/Arzu: {merged_user.get('secret_envies')}\n\n"
-            f"GERÇEK METRİKLER (NLP ile Çıkarılmış Frekans ve Çapalar):\n"
-            f"- Algoritmik Kök Frekans Sinyali: {core_freq}\n"
-            f"- NLP Tabanlı Sabit Noktalar (Anchors): {anchors}\n\n"
+            f"Ritüeller: {merged_user['private_rituals']}\n"
+            f"Müzik: {merged_user['late_night_playlist']}\n"
+            f"Kıskançlık/Arzu: {merged_user['secret_envies']}\n\n"
+            f"Algoritmik frekans sinyali: {core_freq}\n"
+            f"Anchor'lar: {anchors}\n"
             f"{sacred_rules}\n"
-            f"Şimdi bu verileri analiz et ve beklenen JSON formatında çıktı üret."
+            "Beklenen JSON formatında çıktı üret."
         )
 
         try:
-            return await llm_gateway.query_json(prompt, MirrorReflection)
-        except Exception as e:
-            log.warning("MirrorOfTruth: LLM atlandı, deterministik fallback kullanılıyor: %s", e)
-            # Deterministik fallback — data_confidence=False ile işaretlendi
+            return await self.llm_gateway.query_json(
+                prompt,
+                MirrorReflection,
+            )
+        except Exception as exc:
+            log.warning(
+                "MirrorOfTruth: LLM atlandı, deterministik fallback kullanılıyor: %s - %s",
+                type(exc).__name__, exc,
+            )
+
             return MirrorReflection(
                 user_core_frequency=core_freq,
                 surface_persona="bilinmiyor_llm_kapali",
                 alignment_score=0.5,
                 authentic_anchors=anchors,
-                confidence=0.1,  # Düşük güven: LLM verisi yok
+                confidence=0.1,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
             )
-    def _calculate_alignment(self, surface: str, core: str, user_data: Dict) -> float:
-        return user_data.get('authenticity_score', 0.8) if isinstance(user_data, dict) else 0.8
-    
-    def _extract_core_frequency(self, user_data: Dict) -> str:
-        """
-        Kullanıcının yalnız kaldığında yaptığı eylemlerden dinamik frekans analizi
-        """
+
+    @staticmethod
+    def _as_list(value: Any) -> List[str]:
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            return [value]
+
+        if isinstance(value, (list, tuple)):
+            return [str(item) for item in value if item is not None]
+
+        return [str(value)]
+
+    def _extract_core_frequency(self, user_data: Dict[str, Any]) -> str:
         import re
         from collections import Counter
-        
-        rituals = " ".join(user_data.get('private_rituals', [])).lower()
-        music = " ".join(user_data.get('late_night_playlist', [])).lower()
-        envy = " ".join(user_data.get('secret_envies', [])).lower()
-        
-        text = f"{rituals} {music} {envy}"
-        words = [w for w in re.findall(r'\b\w+\b', text) if len(w) > 3]
-        
+
+        rituals = " ".join(self._as_list(user_data.get("private_rituals")))
+        music = " ".join(self._as_list(user_data.get("late_night_playlist")))
+        envy = " ".join(self._as_list(user_data.get("secret_envies")))
+
+        text = f"{rituals} {music} {envy}".lower()
+        words = [word for word in re.findall(r"\b\w+\b", text) if len(word) > 3]
+
         if not words:
             return "belirsiz_frekans"
-            
-        common = Counter(words).most_common(3)
-        return "_".join([w for w, c in common])
-    
-    def _find_anchors(self, user_data: Dict) -> list:
-        """
-        Dinamik anchor (sabit nokta) tespiti - NLP ile
-        """
+
+        return "_".join(word for word, _ in Counter(words).most_common(3))
+
+    def _find_anchors(self, user_data: Dict[str, Any]) -> List[str]:
         import re
         from collections import Counter
-        
-        rituals = " ".join(user_data.get('private_rituals', [])).lower()
-        words = [w for w in re.findall(r'\b\w+\b', rituals) if len(w) > 4]
-        
+
+        rituals = " ".join(
+            self._as_list(user_data.get("private_rituals"))
+        ).lower()
+
+        words = [
+            word
+            for word in re.findall(r"\b\w+\b", rituals)
+            if len(word) > 4
+        ]
+
         if not words:
             return ["bilinmeyen_caba"]
-            
-        return [w + "_anchor" for w, c in Counter(words).most_common(3)]
+
+        return [
+            f"{word}_anchor"
+            for word, _ in Counter(words).most_common(3)
+        ]

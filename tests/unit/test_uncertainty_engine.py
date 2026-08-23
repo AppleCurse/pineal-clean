@@ -4,6 +4,7 @@ from agent_core.services.uncertainty_engine import UncertaintyEngine
 class DummyResultBaseModel(BaseModel):
     name: str = ""
     evidence: list = []
+    extra: int | None = None
     confidence: float = 0.8
 
 class DummyResultWithAbsolutes(BaseModel):
@@ -12,7 +13,7 @@ class DummyResultWithAbsolutes(BaseModel):
 
 def test_uncertainty_evaluate_safe():
     engine = UncertaintyEngine()
-    result = DummyResultBaseModel(name="test", evidence=[1], confidence=0.8)
+    result = DummyResultBaseModel(name="test", evidence=[1], extra=1, confidence=0.8)
     report = engine.evaluate(result, "test_agent")
     
     assert not report.is_suspicious
@@ -21,7 +22,7 @@ def test_uncertainty_evaluate_safe():
 def test_uncertainty_evaluate_empty_list():
     engine = UncertaintyEngine()
     # evidence is empty list
-    result = DummyResultBaseModel(name="test", evidence=[], confidence=0.8)
+    result = DummyResultBaseModel(name="test", evidence=[], extra=1, confidence=0.8)
     report = engine.evaluate(result, "test_agent")
     
     # Due to removing the overly aggressive 'any list empty means fail' check,
@@ -35,6 +36,7 @@ def test_uncertainty_evaluate_missing_str():
     class DummyNoEvidence(BaseModel):
         name: str = "bulunamadı"
         other_list: list = [1]
+        extra: int | None = 1
         confidence: float = 0.8
     result = DummyNoEvidence()
     report = engine.evaluate(result, "test_agent")

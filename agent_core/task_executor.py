@@ -7,6 +7,8 @@ try:
     from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
     from agent_core.services.canonical_memory import CanonicalMemory
     from agent_core.services.uncertainty_engine import UncertaintyEngine
+    from agent_core.services.decision_engine import DecisionEngine
+    from agent_core.domain.pipeline_status import PipelineStatus
     from agent_core.services.llm_gateway import LLMGateway
     from agent_core.agents.passion_mapper import PassionMapperAgent
     from agent_core.agents.friction_detector import FrictionDetectorAgent
@@ -23,10 +25,13 @@ try:
     from agent_core.agents.authenticity_auditor import AuthenticityAuditorAgent
     from agent_core.agents.osint_investigator import OsintInvestigatorAgent
     from agent_core.shadow.shadow_executor import ShadowExecutor
+    from agent_core.config_loader import DecisionConfig
 except Exception:
     from services.cognitive_router import CognitiveRouter, RoutePlan
     from services.canonical_memory import CanonicalMemory
     from services.uncertainty_engine import UncertaintyEngine
+    from services.decision_engine import DecisionEngine
+    from domain.pipeline_status import PipelineStatus
     from services.llm_gateway import LLMGateway
     from agents.passion_mapper import PassionMapperAgent
     from agents.friction_detector import FrictionDetectorAgent
@@ -42,6 +47,7 @@ except Exception:
     from agents.interpreter_agent import InterpreterAgent
     from agents.authenticity_auditor import AuthenticityAuditorAgent
     from agents.osint_investigator import OsintInvestigatorAgent
+    from config_loader import DecisionConfig
 
 try:
     from agent_core.domain.memory_models import (
@@ -74,6 +80,8 @@ class PinealExecutor:
         self.router = CognitiveRouter()
         self.memory = CanonicalMemory()
         self.injector = MemoryInjector()
+        self.config = DecisionConfig.load()
+        self.decision_engine = DecisionEngine(self.config)
         self.uncertainty = UncertaintyEngine()
         self.llm_gateway = LLMGateway()
         self.search_engine = SearchEngine()
@@ -84,7 +92,7 @@ class PinealExecutor:
             "cognitive_profiler": CognitiveProfilerAgent(self.llm_gateway),
             "resonance_synthesizer": ResonanceSynthesizerAgent(self.llm_gateway),
             "human_behavior": HumanBehaviorAnalyzer(),
-            "mirror_truth": MirrorOfTruth(),
+            "mirror_truth": MirrorOfTruth(self.llm_gateway),
             "resonance_calc": ResonanceCalculator(),
             "pattern_interrupt": PatternInterrupt(),
             "autonomous_verifier": AutonomousVerifier(self.search_engine),
@@ -218,6 +226,8 @@ class PinealExecutor:
                     agent_name=agent_name,
                     input_summary="Ajan tetiklendi"
                 ))
+                agent_cfg = self.config.get_agent_config(agent_name)
+                
                 try:
                     agent = self.agents[agent_name]
                     try:
@@ -232,38 +242,57 @@ class PinealExecutor:
                     run.status = "failed"
                     run.error_code = type(e).__name__
                     run.error_message = str(e)[:200]
-                    status.status = "failed"
-                    status.completed_at = datetime.now(timezone.utc)
-                    self._snapshot(status)
                     self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
-                    self._emit(ErrorHaltEvent(
-                        task_id=task_id,
-                        agent_name=agent_name,
-                        error_code=type(e).__name__,
-                        error_message=str(e)[:200],
-                        severity=Severity.Critical
-                    ))
-                    self._log("ERROR", f"[{task_id}] PIPELINE FAILED; silent continuation disabled")
-                    await self.memory.merge_evidence(task_id, status.evidence_chain)
-                    return status
+                    
+                    if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                        status.status = "halted_critical"
+                        status.completed_at = datetime.now(timezone.utc)
+                        self._snapshot(status)
+                        self._emit(ErrorHaltEvent(
+                            task_id=task_id,
+                            agent_name=agent_name,
+                            error_code=type(e).__name__,
+                            error_message=str(e)[:200],
+                            severity=Severity.Critical
+                        ))
+                        self._log("ERROR", f"[{task_id}] PIPELINE FAILED; critical agent failed.")
+                        await self.memory.merge_evidence(task_id, status.evidence_chain)
+                        return status
+                    else:
+                        self._log("WARNING", f"[{task_id}] Non-critical agent {agent_name} failed. Continuing pipeline (graceful degradation).")
+                        self._snapshot(status)
+                        continue
 
                 check = self.uncertainty.evaluate(result, agent_name)
-                if check.confidence < 0.6:
-                    halt_reason = f"Düşük güven ({check.confidence}). Router zinciri kesti."
+                
+                if check.confidence < agent_cfg.min_llm_confidence:
+                    halt_reason = check.reason
                     self._log("ERROR", f"[{task_id}] COGNITIVE ROUTER: {halt_reason}")
                     run.status = "halted"
                     run.error_code = "LOW_CONFIDENCE"
                     run.error_message = halt_reason
-                    status.halted_reason = halt_reason
-                    self._snapshot(status)
-                    raise InsufficientEvidenceError(halt_reason)
+                    
+                    if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                        status.halted_reason = halt_reason
+                        status.status = "halted_critical"
+                        self._snapshot(status)
+                        raise InsufficientEvidenceError(halt_reason)
+                    else:
+                        self._log("WARNING", f"[{task_id}] Non-critical agent {agent_name} halted due to evidence. Continuing pipeline.")
+                        self._snapshot(status)
+                        continue
 
                 if check.is_suspicious:
+                    # Should be covered above, but just in case for deep research
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
                     try:
                         result = await self._deep_research(input_data, result, agent_name)
                     except Exception as e:
-                        raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
+                        if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                            raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
+                        else:
+                            self._log("WARNING", f"[{task_id}] Non-critical agent {agent_name} deep research failed. Continuing.")
+                            continue
 
                 if agent_name == "mirror_truth":
                     input_data["user_mirror"] = result.model_dump()
@@ -399,11 +428,20 @@ class PinealExecutor:
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] OSINT taraması atlandı: {e}")
 
-            status.status = "completed"
+            # Determine final status via DecisionEngine
+            final_status = self.decision_engine.make_decision(status.agent_runs)
+            status.status = final_status
+            
+            if final_status == PipelineStatus.PARTIALLY_COMPLETED:
+                failed_agents = [name for name, run in status.agent_runs.items() if run.status in ("failed", "halted")]
+                self._log("WARNING", f"[{task_id}] TAMAMLANDI (KISMİ). Başarısız ajanlar: {', '.join(failed_agents)}")
+            else:
+                self._log("INFO", f"[{task_id}] TAMAMLANDI. Kanıt adımı: {len(status.evidence_chain)}")
+                
             status.completed_at = datetime.now(timezone.utc)
             await self.memory.merge_evidence(task_id, status.evidence_chain)
             self._snapshot(status)
-            self._log("INFO", "[" + task_id + "] TAMAMLANDI. Kanit adimi: " + str(len(status.evidence_chain)))
+            
             self._emit(TaskCompletedEvent(
                 task_id=task_id,
                 agent_name="PinealExecutor",
