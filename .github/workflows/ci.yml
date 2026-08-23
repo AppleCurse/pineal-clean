@@ -41,7 +41,7 @@ jobs:
         run: npm run build
       - name: Verify real Svelte build
         run: |
-          grep -c "VINTAGE STATION" dist/assets/*.js
+          grep -q "PINEAL-HERETIC" dist/assets/*.js
 
   smoke:
     runs-on: ubuntu-latest
