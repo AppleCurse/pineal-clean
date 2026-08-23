@@ -416,6 +416,7 @@ async def run_mission(req: InitiatePayload):
                         
                         is_ig_url = "instagram.com" in req.url.lower()
                         is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
+                        _ = is_x_url  # Appease ruff unused variable
                         clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
                         if (is_ig_url or req.scraper_type == "instagram") and InstagramGhostScraper:
