@@ -200,6 +200,7 @@
   let visualEvidence: any = null;
   let shadowProfile: any = null;
   let osintFootprint: any = null;
+  let telemetry: any = null;
   let copyFeedback = false;
 
   function copyMessage(text: string) {
@@ -221,6 +222,7 @@
       if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
       if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
       if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
+      if ($taskStatus.telemetry) telemetry = $taskStatus.telemetry;
 
       if ($taskStatus.reso) {
         ritualMatchScore = ($taskStatus.reso.ritual_match_score || 0) * 100;
@@ -700,6 +702,34 @@
         </div>
       {/if}
 
+    <!-- ==================== TELEMETRİ / ZEKÂ PANELİ ==================== -->
+    {#if telemetry}
+      <div class="screen-card" style="border-color: rgba(71, 85, 105, 0.4); background: #000000; box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 0 10px rgba(255,255,255,0.02); margin-top: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; margin-bottom: 8px;">
+          <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #94a3b8; text-shadow: 0 0 5px rgba(148, 163, 184, 0.3);">
+            📡 ZEKÂ PANELİ (TELEMETRİ)
+          </span>
+          <span style="font-size: 9px; font-weight: 700; color: #64748b;">
+            CANLI VERİ
+          </span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
+            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">CACHE HİT ORANI</div>
+            <div style="font-size: 12px; color: #38bdf8; font-weight: 800;">{telemetry.cache_hit_rate || '0.0%'}</div>
+          </div>
+          <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
+            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">TASARRUF EDİLEN MALİYET</div>
+            <div style="font-size: 12px; color: #4ade80; font-weight: 800;">{telemetry.saved_llm_cost || '$0.000'}</div>
+          </div>
+          <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
+            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">KARAR AĞIRLIĞI GÜNC.</div>
+            <div style="font-size: 12px; color: #a78bfa; font-weight: 800;">{telemetry.decision_weight_updates || 0}</div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
       <!-- 6. 📸 GÖRSEL KANIT -->
       {#if visualEvidence}
         <div class="screen-card" style="border-color: rgba(236, 72, 153, 0.6); background: #1a0b16;">
@@ -763,6 +793,11 @@
           <div style="display: flex; align-items: center; gap: 8px;">
             <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #7dd3fc;">
               🌐 6. DAMGA: DİJİTAL AYAK İZİ
+              {#if osintFootprint.fallback_reason}
+                <span style="font-size: 9px; font-weight: 800; background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">
+                  [SİMÜLASYON / API BAĞLANTISI YOK]
+                </span>
+              {/if}
             </span>
             <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
               Ağ Eşleşme Skoru: %{((osintFootprint.digital_footprint_score || 0) * 100).toFixed(0)}

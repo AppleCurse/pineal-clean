@@ -31,6 +31,30 @@ class OsintInvestigatorAgent:
         # osint.industries API key vault'tan veya env'den alınabilir.
         self.osint_api_key = os.getenv("OSINT_INDUSTRIES_KEY", None)
 
+    def _get_alf_headers(self) -> Dict[str, str]:
+        import random
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0"
+        ]
+        headers = {
+            "User-Agent": random.choice(user_agents),
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "X-Forwarded-For": f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}",
+            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
+        }
+        if self.osint_api_key:
+            headers["api-key"] = self.osint_api_key
+        return headers
+
     async def execute(self, payload: Dict[str, Any]) -> OsintProfile:
         target = payload.get("target_profile", {})
         username = target.get("username", "")
@@ -81,7 +105,7 @@ JSON formatında yanıt ver:
         else:
             try:
                 async with aiohttp.ClientSession() as session:
-                    headers = {"api-key": self.osint_api_key}
+                    headers = self._get_alf_headers()
                     async with session.get(f"https://api.osint.industries/v1/user/{clean_username}", headers=headers, timeout=15) as resp:
                         if resp.status == 200:
                             data = await resp.json()

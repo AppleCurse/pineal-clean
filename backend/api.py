@@ -295,6 +295,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
         "visual_evidence": _dump_field(getattr(snapshot, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(snapshot, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(snapshot, "osint_footprint", None)),
+        "telemetry": getattr(snapshot, "telemetry", None),
         "runs": {
             name: {
                 "status": getattr(r, "status", None),
@@ -544,7 +545,8 @@ def broadcast_result(client_id, res):
         "depth_report": _dump_field(getattr(res, "depth_report", None)),
         "visual_evidence": _dump_field(getattr(res, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(res, "shadow_profile", None)),
-        "osint_footprint": _dump_field(getattr(res, "osint_footprint", None))
+        "osint_footprint": _dump_field(getattr(res, "osint_footprint", None)),
+        "telemetry": getattr(res, "telemetry", None)
     }))
 
 async def _send_result(room: dict, data: dict):

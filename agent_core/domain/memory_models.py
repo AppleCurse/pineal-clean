@@ -102,6 +102,7 @@ class TaskSnapshot(BaseModel):
     visual_evidence: Optional[Dict[str, Any]] = None
     shadow_profile: Optional[Dict[str, Any]] = None
     osint_footprint: Optional[Dict[str, Any]] = None
+    telemetry: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(extra="allow")
 

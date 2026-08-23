@@ -103,6 +103,22 @@ class PinealExecutor:
         }
 
     def _snapshot(self, status: TaskStatus):
+        cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
+        hits = cache_stats.get("hits", 0)
+        hit_rate = cache_stats.get("hit_rate", "0.0%")
+        # Assuming avg 0.005$ per LLM call saved
+        if isinstance(hits, (int, float)):
+            saved_cost = hits * 0.005
+            saved_cost_str = f"${saved_cost:.3f}"
+        else:
+            saved_cost_str = "$0.000"
+        
+        status.telemetry = {
+            "cache_hit_rate": hit_rate,
+            "saved_llm_cost": saved_cost_str,
+            "decision_weight_updates": len(status.agent_runs)
+        }
+        
         if self._snapshot_cb:
             self._snapshot_cb(status)
             
