@@ -1,6 +1,7 @@
 import logging
 import base64
 import json
+import asyncio
 import httpx
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict
@@ -33,7 +34,7 @@ class VisionAnalyzer:
         if not image_url or not image_url.startswith("http"):
             return None
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 resp = await client.get(image_url, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 })
@@ -58,11 +59,11 @@ class VisionAnalyzer:
                 confidence=0.2
             )
 
-        encoded_images = []
-        for url in valid_urls:
-            b64 = await self._download_and_encode_image(url)
-            if b64:
-                encoded_images.append(b64)
+        # Parallel image download
+        tasks = [self._download_and_encode_image(url) for url in valid_urls]
+        results = await asyncio.gather(*tasks)
+
+        encoded_images = [b64 for b64 in results if b64]
 
         if not encoded_images:
             return VisualEvidence(
