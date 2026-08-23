@@ -48,13 +48,17 @@ PinealExecutor        (durum makinesi: processing → completed | failed | halte
  └─ ResonanceSynthesizer (sahici ilk temas köprüsü)
         │
         ▼
-HolisticProfile (360°) + CanonicalMemory (memory/*.json kanıt zinciri)
+HolisticProfile (360°) + CanonicalMemory (memory/*.json kanıt zinciri;
+PINEAL_MEMORY_ENGINE=hindsight ile anlamsal arama katmanı açılır)
         │
+        ├─ 6 Forensik Damga: follower_audit · timing_forensics · depth_report
+        │   · visual_evidence · shadow_profile · osint_footprint
+        ├─ LLM yanıt önbelleği (PINEAL_RESPONSE_CACHE; birebir, cross-safe)
         ├─ Telemetry events → FIFO kuyruk → WebSocket (sıralı, kayıpsız)
         └─ Svelte UI + Aspasia (gözlemci sohbet; görsel de yüklenebilir)
 ```
 
-**Durum makinesi:** `initialized → processing → completed | failed | halted_evidence | halted_frequency` (güven eşiği 0.6; rezonans eşiği 0.70).
+**Durum makinesi:** `initialized → processing → completed | partially_completed | failed | halted_evidence | halted_frequency | halted_critical` (güven eşiği 0.6; rezonans eşiği 0.70).
 
 ## 3. 360° Veri Modelleri (`agent_core/domain/memory_models.py`)
 

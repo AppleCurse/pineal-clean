@@ -3,7 +3,7 @@
 # 2. Aşama: Python runtime + FastAPI + Playwright/Chromium (scraper için)
 
 # ---------- Stage 1: frontend ----------
-FROM node:20-slim AS frontend
+FROM node:22-slim AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund

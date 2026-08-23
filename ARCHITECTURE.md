@@ -28,7 +28,10 @@ PinealExecutor.execute_task [processing]
    ├─ CognitiveRouter.analyze → rota
    ├─ her ajan: execute → UncertaintyEngine (güven<0.6 → halted_evidence)
    │            resonance<0.70 → halted_frequency
-   ├─ kanıt → evidence_chain + CanonicalMemory (json)
+   ├─ 6 Forensik Damga: follower_audit · timing_forensics · depth_report
+   │   · visual_evidence · shadow_profile · osint_footprint
+   ├─ kanıt → evidence_chain + CanonicalMemory (json; hindsight ile anlamsal)
+   ├─ LLM yanıt önbelleği (exact-key, model/system/sıcaklık dahil)
    └─ 360° HolisticProfile (passions+frictions+cognitive+bridge)
 Telemetry: _emit → asyncio.Queue (FIFO) → _room_sender → WebSocket
 UI: snapshot_update / event / result → paneller
