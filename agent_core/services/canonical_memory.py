@@ -1,4 +1,5 @@
 import json
+import aiofiles
 import os
 import asyncio
 from collections import defaultdict
@@ -33,29 +34,24 @@ class CanonicalMemory:
         profile_file = os.path.join(self.storage_path, f"{task_id}.json")
         
         async with self._locks[task_id]:
-            # Mevcut veriyi oku
-            def _read_file():
-                if os.path.exists(profile_file):
-                    with open(profile_file, 'r') as f:
-                        return json.load(f)
-                return {}
-
-            existing = await asyncio.to_thread(_read_file)
+            existing = {}
+            if os.path.exists(profile_file):
+                async with aiofiles.open(profile_file, 'r') as f:
+                    content = await f.read()
+                    existing = json.loads(content)
             
             # Yeni kanıtları ekle (Çelişki kontrolü ile)
             merged = self._resolve_conflicts(existing.get('evidence', []), evidence_chain)
             
             # Kaydet
-            def _write_file():
-                with open(profile_file, 'w') as f:
-                    json.dump({
-                        'task_id': task_id,
-                        'last_updated': datetime.now(timezone.utc).isoformat(),
-                        'evidence': merged,
-                        'confidence': self._calculate_overall_confidence(merged)
-                    }, f, indent=2)
-
-            await asyncio.to_thread(_write_file)
+            async with aiofiles.open(profile_file, 'w') as f:
+                content = json.dumps({
+                    'task_id': task_id,
+                    'last_updated': datetime.now(timezone.utc).isoformat(),
+                    'evidence': merged,
+                    'confidence': self._calculate_overall_confidence(merged)
+                }, indent=2)
+                await f.write(content)
     
     def _resolve_conflicts(self, old: List[Dict], new: List[Dict]) -> List[Dict]:
         """

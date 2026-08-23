@@ -120,20 +120,26 @@ class PinealExecutor:
         import httpx
         import asyncio
 
-        async def fetch_image(u):
+        def _write_file(content):
+            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            tmp.write(content)
+            tmp.close()
+            return tmp.name
+
+        async def fetch_image(c, u):
             try:
-                async with httpx.AsyncClient() as c:
-                    r = await c.get(u, timeout=15)
-                    r.raise_for_status()
-                    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-                    tmp.write(r.content)
-                    tmp.close()
-                    return tmp.name
+                r = await c.get(u, timeout=15)
+                r.raise_for_status()
+                # Offload synchronous file I/O to a thread to avoid blocking the event loop
+                return await asyncio.to_thread(_write_file, r.content)
             except Exception as e:
                 self._log("WARNING", "Gorsel indirilemedi: " + str(e)[:60])
                 return None
 
-        results = await asyncio.gather(*(fetch_image(u) for u in urls[:2]))
+        # Use a shared httpx.AsyncClient to enable connection pooling
+        async with httpx.AsyncClient() as client:
+            results = await asyncio.gather(*(fetch_image(client, u) for u in urls[:2]))
+        
         paths = [p for p in results if p is not None]
         return paths
 
