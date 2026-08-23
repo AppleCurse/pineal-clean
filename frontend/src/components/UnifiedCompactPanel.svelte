@@ -699,6 +699,25 @@
           </div>
         </div>
       {/if}
+
+      <!-- 6. 📸 GÖRSEL KANIT -->
+      {#if visualEvidence}
+        <div class="screen-card" style="border-color: rgba(236, 72, 153, 0.6); background: #1a0b16;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #f472b6;">
+                📸 GÖRSEL KANIT (6. DAMGA)
+              </span>
+            </div>
+          </div>
+          <div style="font-size: 10px; color: #fbcfe8; font-weight: 600; margin-bottom: 4px;">
+            Stil: {visualEvidence.aesthetic_style || 'Bilinmiyor'}
+          </div>
+          <div style="font-size: 8px; color: #f9a8d4; line-height: 1.3;">
+            {visualEvidence.visual_evidence_summary || 'Özet bulunamadı.'}
+          </div>
+        </div>
+      {/if}
     </div>
     {/if}
 
