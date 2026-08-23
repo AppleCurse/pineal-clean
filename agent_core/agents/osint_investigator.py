@@ -1,6 +1,5 @@
 import logging
 import os
-import aiohttp
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict
 from agent_core.services.llm_gateway import LLMGateway
