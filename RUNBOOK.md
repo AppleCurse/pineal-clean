@@ -40,5 +40,5 @@ CI: `.github/workflows/ci.yml` (token izinleri nedeniyle manuel eklenmelidir —
 
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
-- Rust/Tauri yok (4C) — masaüstü paket istenirse Tauri kabuğu ayrı faz olarak planlanmalı.
+- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur).
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.

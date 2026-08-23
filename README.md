@@ -1,4 +1,4 @@
-# PINEAL-HERETIC v2.0 · PINEAL 3.0 — 360° Bütüncül İnsan Tanıma
+# PINEAL-HERETIC v3.0 · PINEAL 3.0 — 360° Bütüncül İnsan Tanıma
 
 Sosyal medya profillerini (Instagram / X) anonim tarayan; fotoğrafları **çoklu modlu
 görsel zeka (VisionAnalyzer)** ile inceleyen; kişiyi tutkular, neşe, hassasiyetler,
@@ -8,9 +8,9 @@ destekli tek kullanıcılı yerel bir analiz istasyonudur.
 Kararları `PinealExecutor` + `CognitiveRouter` verir; **Aspasia** karar verici değil,
 sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 
-> Bu depo 2026-08-22'de adli röntgenden geçti: sahte demo arayüz kaldırıldı, canlı
-> 500 veren Aspasia endpoint'i onarıldı, ölü manipülasyon motorları silindi, olmayan
-> Rust/Tauri katmanı kapatıldı (4C). Ardından 360° vision hattı main'den birleştirildi.
+> Bu depo güncel olarak şu yeni bileşenleri içermektedir:
+> `rust_core/` (Rust katmanı, 8 birim testi ile), 4 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
+> i18n çift dil desteği (TR/EN) ve yeni OSINTInvestigatorAgent & AuthenticityAuditorAgent zincirleri.
 
 ---
 
@@ -39,6 +39,8 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
         ▼
 PinealExecutor        (durum makinesi: processing → completed | failed | halted_*)
  ├─ MirrorOfTruth (kullanıcı öz frekansı)
+ ├─ OSINTInvestigator (Açık kaynak derin analiz)
+ ├─ AuthenticityAuditor (Orijinallik ve görsel kanıt kontrolü)
  ├─ AutonomousVerifier (web iddia teyidi; Tavily)
  ├─ HumanBehaviorAnalyzer (OpenCV + dilbilimsel mikro izler)
  ├─ PassionMapper · FrictionDetector · CognitiveProfiler

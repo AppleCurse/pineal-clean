@@ -6,16 +6,17 @@
 
 | Katman | Konum | Sorumluluk |
 |---|---|---|
-| UI | `frontend/` (Svelte 5 + Vite) | Vault, görev başlatma, Aspasia sohbeti, agent deck, 360° panel |
+| UI | `frontend/` (Svelte 5 + Vite) | Vault, görev başlatma, Aspasia sohbeti, agent deck, 360° panel, 4 Forensik Damga Paneli, i18n (TR/EN) |
 | API | `backend/api.py` (FastAPI) | Oda yönetimi, WebSocket, scraping orkestrasyonu, auth/limit |
 | Orchestrator | `agent_core/task_executor.py` | Görev durum makinesi + ajan zinciri + kanıt biriktirme |
 | Router | `agent_core/services/cognitive_router.py` | Girdiye göre ajan rotası (kural tabanlı, LLM'siz) |
-| Ajanlar | `agent_core/agents/*` | 10 kayıtlı ajan (8'i LLM'li; `resonance_calc` saf numpy) |
+| Ajanlar | `agent_core/agents/*` | OSINTInvestigator, AuthenticityAuditor dahil kayıtlı ajanlar (`resonance_calc` saf numpy) |
 | LLM | `agent_core/services/llm_gateway.py` | OpenRouter/Ollama; tier'lar, retry, circuit breaker, JSON tamiri, vision |
 | Bellek | `agent_core/services/canonical_memory.py` | Görev başına `memory/<task_id>.json` (bilinçli: DB yok) |
-| Telemetri | `agent_core/schemas/telemetry.py` + api.py kuyruğu | Pydantic event şemaları → FIFO → WebSocket |
+| Telemetri | `agent_core/schemas/telemetry.py` + api.py kuyruğu | Pydantic event şemaları → FIFO → WebSocket (Snapshot + SearchEngine ayrımı) |
 | Aspasia | `agent_core/aspasia/aspasia_chief.py` | Gözlemci persona; telemetri özeti + sohbet (karar verici DEĞİL) |
 | Scraper | `scraper.py` (X), `agent_core/scraper/instagram_ghost.py` (IG) | Playwright+stealth; Pydantic V2 şema; kanıt yoksa HALT |
+| Rust Core | `rust_core/` | Yüksek performanslı core logic ve birim testleri (Cargo.toml) |
 
 ## Çalışma zamanı zincirleri
 
@@ -33,7 +34,7 @@ Telemetry: _emit → asyncio.Queue (FIFO) → _room_sender → WebSocket
 UI: snapshot_update / event / result → paneller
 ```
 
-### 2) Durum makinesi (Python — Rust yok, 4C kararı)
+### 2) Durum makinesi (Python + rust_core/)
 `initialized → processing → completed | failed | halted_evidence | halted_frequency`
 
 ### 3) Aspasia akışı
@@ -46,7 +47,7 @@ UI ──POST /api/aspasia/chat──► room.aspasia.chat(msg, room, model?, im
 ## Alınan mimari kararlar (ADR özeti)
 | Karar | Neden |
 |---|---|
-| **4C: Rust/Tauri kapatıldı** | 0 satır Rust vardı; ölü köprü ve karşılıksız invoke silindi; web yeterli |
+| **Masaüstü Tauri kapatıldı** | `rust_core/` mevcut ancak Tauri kabuğu ayrı faz olarak planlanmalı |
 | **SQLite reddedildi** | Tek kullanıcılı istasyon; FIFO kuyruk yarışmayı çözdü, disk I/O gereksizdi |
 | **LIVE_LLM_E2E kapısı** | Anahtarsız/halüsinasyonlu koşular kodda reddedilir (bilinçli tasarım) |
 | **D5: deneysel API'ler** | shadow/chat/interpreter → `/api/experimental/*` (UI çağrıcısı yok) |
