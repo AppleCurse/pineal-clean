@@ -1,4 +1,5 @@
 import json
+import aiofiles
 import os
 import asyncio
 from collections import defaultdict
@@ -36,20 +37,22 @@ class CanonicalMemory:
             # Mevcut veriyi oku
             existing = {}
             if os.path.exists(profile_file):
-                with open(profile_file, 'r') as f:
-                    existing = json.load(f)
+                async with aiofiles.open(profile_file, 'r') as f:
+                    content = await f.read()
+                    existing = json.loads(content)
             
             # Yeni kanıtları ekle (Çelişki kontrolü ile)
             merged = self._resolve_conflicts(existing.get('evidence', []), evidence_chain)
             
             # Kaydet
-            with open(profile_file, 'w') as f:
-                json.dump({
+            async with aiofiles.open(profile_file, 'w') as f:
+                content = json.dumps({
                     'task_id': task_id,
                     'last_updated': datetime.now(timezone.utc).isoformat(),
                     'evidence': merged,
                     'confidence': self._calculate_overall_confidence(merged)
-                }, f, indent=2)
+                }, indent=2)
+                await f.write(content)
     
     def _resolve_conflicts(self, old: List[Dict], new: List[Dict]) -> List[Dict]:
         """
