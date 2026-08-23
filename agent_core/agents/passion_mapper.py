@@ -65,11 +65,11 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 }}
 """
         try:
-            result = await self.llm_gateway.query_json(
+            result = await self.llm_gateway.query_json_chain(
                 prompt=prompt,
                 schema=PassionProfile,
-                temperature=0.3,
-                tier=1
+                task="depth",
+                temperature=0.3
             )
             return result
         except Exception as e:

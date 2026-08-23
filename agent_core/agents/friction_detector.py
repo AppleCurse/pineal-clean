@@ -64,11 +64,11 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 Not: Profilde belirgin bir sürtüşme veya çatışma yoksa listeleri boş ([]) bırakabilirsin, ancak analiz güvenilirliğini ifade etmek için "confidence": 0.85 olarak dön.
 """
         try:
-            result = await self.llm_gateway.query_json(
+            result = await self.llm_gateway.query_json_chain(
                 prompt=prompt,
                 schema=FrictionProfile,
-                temperature=0.3,
-                tier=1
+                task="depth",
+                temperature=0.3
             )
             if hasattr(result, "confidence") and (result.confidence is None or result.confidence < 0.6):
                 result.confidence = 0.85

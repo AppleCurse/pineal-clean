@@ -15,7 +15,7 @@ async def test_cognitive_profiler_empty_data():
 @pytest.mark.asyncio
 async def test_cognitive_profiler_with_data():
     mock_gateway = MagicMock(spec=LLMGateway)
-    mock_gateway.query_json = AsyncMock(return_value=CognitiveStyle(
+    mock_gateway.query_json_chain = AsyncMock(return_value=CognitiveStyle(
         communication_tone="analitik",
         complexity_level="kavramsal",
         humor_style="kuru mizah",

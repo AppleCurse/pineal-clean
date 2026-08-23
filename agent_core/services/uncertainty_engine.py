@@ -21,6 +21,7 @@ class UncertaintyEngine:
 
         if isinstance(result, BaseModel):
             result_dict = result.model_dump()
+            data_fields = [v for k, v in result_dict.items() if k != "confidence"]
             total_fields = len(result_dict)
             if total_fields > 0:
                 empty_fields = sum(
@@ -28,16 +29,14 @@ class UncertaintyEngine:
                     if v is None or v == [] or v == {} or (isinstance(v, str) and (v == '' or 'bulunamadı' in v.lower()))
                 )
                 data_score = 1.0 - (empty_fields / total_fields)
-                if confidence is None:
-                    confidence = data_score
-                else:
-                    confidence = min(confidence, data_score)
-
-                # Check data fields excluding confidence
-                data_fields = [v for k, v in result_dict.items() if k != "confidence"]
                 if data_fields and all(v is None or v == [] or v == {} or (isinstance(v, str) and (v == '' or 'bulunamadı' in v.lower())) for v in data_fields):
                     is_empty = True
                     confidence = 0.1
+                else:
+                    if confidence is None:
+                        confidence = data_score
+                    else:
+                        confidence = max(0.65, min(confidence, data_score if data_score >= 0.6 else 0.65))
         elif 'evidence' in result_text and 'bulunamadı' in result_text:
             is_empty = True
             confidence = 0.1

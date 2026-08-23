@@ -15,7 +15,7 @@ async def test_friction_detector_empty_data():
 @pytest.mark.asyncio
 async def test_friction_detector_with_data():
     mock_gateway = MagicMock(spec=LLMGateway)
-    mock_gateway.query_json = AsyncMock(return_value=FrictionProfile(
+    mock_gateway.query_json_chain = AsyncMock(return_value=FrictionProfile(
         sensitivities=["Yüzeysel İletişim", "Zaman İsrafı"],
         stress_triggers=["Gereksiz Toplantılar"],
         boundary_signals=["Özel Hayat Saygısı"],

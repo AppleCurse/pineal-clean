@@ -15,7 +15,7 @@ async def test_passion_mapper_empty_data():
 @pytest.mark.asyncio
 async def test_passion_mapper_with_data():
     mock_gateway = MagicMock(spec=LLMGateway)
-    mock_gateway.query_json = AsyncMock(return_value=PassionProfile(
+    mock_gateway.query_json_chain = AsyncMock(return_value=PassionProfile(
         core_passions=["Mimari", "Fotoğrafçılık"],
         energizing_topics=["Minimalist Tasarım", "Işık Oyunları"],
         flow_triggers=["Sokak Çekimleri"],
