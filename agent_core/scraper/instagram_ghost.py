@@ -16,7 +16,8 @@ import random
 import re
 import time
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
+import html as html_lib
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -112,95 +113,105 @@ class InstagramGhostScraper:
 
         raise InsufficientEvidenceError(f"Instagram HTML'inde JSON bulunamadı: {username} - muhtemelen private veya rate-limit")
 
+
+    @staticmethod
+    def _parse_num(val_str: Optional[str]) -> Optional[int]:
+        if not val_str:
+            return None
+        clean = val_str.strip().upper().replace(',', '').replace(' ', '')
+        try:
+            if clean.endswith('M'):
+                return int(float(clean[:-1]) * 1_000_000)
+            elif clean.endswith('K'):
+                return int(float(clean[:-1]) * 1_000)
+            else:
+                return int(float(clean))
+        except Exception:
+            return None
+
+    def _extract_counts(self, html: str) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+        follower_count = None
+        following_count = None
+        post_count = None
+        og_desc_match = re.search(r'<meta property="og:description" content="([^"]*)"', html)
+        if og_desc_match:
+            og_desc = og_desc_match.group(1)
+            fol_m = re.search(r'([\d\.,]+(?:\s*[KMkm])?)\s*(?:Takipçi|Followers)', og_desc, re.IGNORECASE)
+            if fol_m:
+                follower_count = self._parse_num(fol_m.group(1))
+            fing_m = re.search(r'([\d\.,]+(?:\s*[KMkm])?)\s*(?:Takip\b|Following)', og_desc, re.IGNORECASE)
+            if fing_m:
+                following_count = self._parse_num(fing_m.group(1))
+            post_m = re.search(r'([\d\.,]+(?:\s*[KMkm])?)\s*(?:Gönderi|Posts)', og_desc, re.IGNORECASE)
+            if post_m:
+                post_count = self._parse_num(post_m.group(1))
+        return follower_count, following_count, post_count
+
+    def _extract_full_name(self, html: str) -> Optional[str]:
+        og_title_match = re.search(r'<meta property="og:title" content="([^"]*)"', html)
+        if og_title_match:
+            name_m = re.search(r'^(.*?)\s*(?:\(@|•|\-)', og_title_match.group(1))
+            if name_m:
+                return name_m.group(1).strip()
+        return None
+
+    def _extract_biography(self, html: str) -> Optional[str]:
+        bio_match = re.search(r'<meta\s+content="[^"]*(?:Instagram\'da|on Instagram):\s*&quot;([^&]*)&quot;"', html)
+        if bio_match:
+            return html_lib.unescape(bio_match.group(1).strip())
+
+        og_desc_match = re.search(r'<meta property="og:description" content="([^"]*)"', html)
+        if og_desc_match and " - " in og_desc_match.group(1):
+            parts = og_desc_match.group(1).split(" - ", 1)
+            if len(parts) > 1 and not parts[1].startswith("See Instagram") and not parts[1].startswith("Instagram fotoğraflarını"):
+                return parts[1].strip()
+        return None
+
+    def _extract_profile_pic(self, html: str) -> Optional[str]:
+        profile_pic_match = re.search(r'<meta property="og:image" content="([^"]+)"', html) or re.search(r'"profile_pic_url":"([^"]+)"', html)
+        return profile_pic_match.group(1).replace("&amp;", "&").replace("\\u0026", "&") if profile_pic_match else None
+
+    def _extract_posts(self, html: str) -> List[InstagramPost]:
+        posts = []
+        shortcodes = re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html) or re.findall(r'/p/([A-Za-z0-9_-]+)/', html)
+        display_urls = re.findall(r'"display_url":"([^"]+)"', html)
+
+        if not display_urls:
+            for m in re.finditer(r'https://scontent[^\s"\'<>&]+\.jpg[^\s"\'<>]*', html):
+                url = m.group(0).replace("&amp;", "&").replace("\\u0026", "&")
+                if url not in display_urls and ("s150x150" not in url and "s320x320" not in url):
+                    display_urls.append(url)
+
+        for i in range(min(len(display_urls), 12)):
+            try:
+                sc = shortcodes[i] if i < len(shortcodes) else f"post_{i+1}"
+                url = display_urls[i].replace("\\u0026", "&")
+                posts.append(InstagramPost(
+                    shortcode=sc,
+                    display_url=url,
+                    caption=None,
+                    is_video=False
+                ))
+            except Exception:
+                continue
+        return posts
+
+
     def _parse_real_profile(self, raw_json: Dict[str, Any], html: str, username: str) -> InstagramProfile:
         """
         Ham JSON veya meta tag'leri gerçek Pydantic modele çevirir.
         """
-        import html as html_lib
-
-        def _parse_num(val_str: Optional[str]) -> Optional[int]:
-            if not val_str:
-                return None
-            clean = val_str.strip().upper().replace(',', '').replace(' ', '')
-            try:
-                if clean.endswith('M'):
-                    return int(float(clean[:-1]) * 1_000_000)
-                elif clean.endswith('K'):
-                    return int(float(clean[:-1]) * 1_000)
-                else:
-                    return int(float(clean))
-            except Exception:
-                return None
-
         try:
             is_private = '"is_private":true' in html or '"isPrivate":true' in html or 'Bu hesap gizli' in html or 'This account is private' in html
-            
-            follower_count = None
-            following_count = None
-            post_count = None
-            full_name = None
-            biography = None
 
-            # 1. Meta Description (Follower & Following & Post Count)
-            og_desc_match = re.search(r'<meta property="og:description" content="([^"]*)"', html)
-            if og_desc_match:
-                og_desc = og_desc_match.group(1)
-                fol_m = re.search(r'([\d\.,]+(?:\s*[KMkm])?)\s*(?:Takipçi|Followers)', og_desc, re.IGNORECASE)
-                if fol_m:
-                    follower_count = _parse_num(fol_m.group(1))
-                fing_m = re.search(r'([\d\.,]+(?:\s*[KMkm])?)\s*(?:Takip\b|Following)', og_desc, re.IGNORECASE)
-                if fing_m:
-                    following_count = _parse_num(fing_m.group(1))
-                post_m = re.search(r'([\d\.,]+(?:\s*[KMkm])?)\s*(?:Gönderi|Posts)', og_desc, re.IGNORECASE)
-                if post_m:
-                    post_count = _parse_num(post_m.group(1))
-
-            # 2. Meta Title (Full Name)
-            og_title_match = re.search(r'<meta property="og:title" content="([^"]*)"', html)
-            if og_title_match:
-                name_m = re.search(r'^(.*?)\s*(?:\(@|•|\-)', og_title_match.group(1))
-                if name_m:
-                    full_name = name_m.group(1).strip()
-
-            # 3. Bio parse (Multilingual)
-            bio_match = re.search(r'<meta\s+content="[^"]*(?:Instagram\'da|on Instagram):\s*&quot;([^&]*)&quot;"', html)
-            if bio_match:
-                biography = html_lib.unescape(bio_match.group(1).strip())
-            elif og_desc_match and " - " in og_desc_match.group(1):
-                parts = og_desc_match.group(1).split(" - ", 1)
-                if len(parts) > 1 and not parts[1].startswith("See Instagram") and not parts[1].startswith("Instagram fotoğraflarını"):
-                    biography = parts[1].strip()
-
-            # 4. Profile Picture
-            profile_pic_match = re.search(r'<meta property="og:image" content="([^"]+)"', html) or re.search(r'"profile_pic_url":"([^"]+)"', html)
-            profile_pic_url = profile_pic_match.group(1).replace("&amp;", "&").replace("\\u0026", "&") if profile_pic_match else None
-
-            # 5. Postlar ve Görseller
-            posts = []
-            shortcodes = re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html) or re.findall(r'/p/([A-Za-z0-9_-]+)/', html)
-            display_urls = re.findall(r'"display_url":"([^"]+)"', html)
-            
-            # Ekstra yüksek çözünürlüklü fotoğraflar
-            if not display_urls:
-                for m in re.finditer(r'https://scontent[^\s"\'<>&]+\.jpg[^\s"\'<>]*', html):
-                    url = m.group(0).replace("&amp;", "&").replace("\\u0026", "&")
-                    if url not in display_urls and ("s150x150" not in url and "s320x320" not in url):
-                        display_urls.append(url)
-
-            for i in range(min(len(display_urls), 12)):
-                try:
-                    sc = shortcodes[i] if i < len(shortcodes) else f"post_{i+1}"
-                    url = display_urls[i].replace("\\u0026", "&")
-                    posts.append(InstagramPost(
-                        shortcode=sc,
-                        display_url=url,
-                        caption=None,
-                        is_video=False
-                    ))
-                except Exception:
-                    continue
+            follower_count, following_count, post_count = self._extract_counts(html)
+            full_name = self._extract_full_name(html)
+            biography = self._extract_biography(html)
+            profile_pic_url = self._extract_profile_pic(html)
+            posts = self._extract_posts(html)
 
             # Eğer private ve post yoksa, sonraki ajanlar boş veriyle halüsinasyon göreceği için durdur
+
             if is_private and len(posts) == 0:
                 raise InsufficientEvidenceError(f"Hedef profil gizli (Private) ve gönderi okunamıyor: {username}")
 
