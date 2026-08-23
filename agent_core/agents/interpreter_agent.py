@@ -25,11 +25,11 @@ class InterpreterAgent:
     def __init__(self, llm_gateway=None):
         self.llm_gateway = llm_gateway
 
-    def _setup_interpreter(self, api_key: str = None, model: str = None, auto_run: bool = True):
+    def _setup_interpreter(self, api_key: str = None, model: str = None, auto_run: bool = False):
         try:
             from interpreter import interpreter
             
-            interpreter.auto_run = auto_run
+            interpreter.auto_run = False # Security Fix: Force auto_run to False to prevent arbitrary code execution
             interpreter.offline = False
             
             # Key configuration
@@ -48,7 +48,7 @@ class InterpreterAgent:
             logging.error(f"InterpreterAgent setup failed: {e}. 'open-interpreter' is likely not installed.")
             return None
 
-    async def execute_task(self, prompt: str, api_key: str = None, model: str = None, auto_run: bool = True) -> InterpreterResult:
+    async def execute_task(self, prompt: str, api_key: str = None, model: str = None, auto_run: bool = False) -> InterpreterResult:
         """
         Executes a task prompt using Open Interpreter and returns structured execution results.
         """
