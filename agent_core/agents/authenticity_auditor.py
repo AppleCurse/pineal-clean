@@ -79,7 +79,7 @@ JSON formatında yanıt ver:
             )
             return result
         except Exception as e:
-            logger.warning(f"AuthenticityAuditor LLM hatası: {{e}}")
+            logger.warning("AuthenticityAuditor LLM hatası: %s", e)
             return AuthenticityProfile(
                 authenticity_score=0.5,
                 visual_text_gaps=["Analiz sırasında hata oluştu."],

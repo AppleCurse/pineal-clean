@@ -24,7 +24,7 @@ except Exception:
     scrape_readonly = None
 
 try:
-    from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InsufficientEvidenceError as IGInsufficientEvidenceError
+    from agent_core.scraper.instagram_ghost import InstagramGhostScraper
 except Exception:
     InstagramGhostScraper = None
 

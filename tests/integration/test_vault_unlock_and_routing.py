@@ -1,4 +1,3 @@
-import os
 import uuid
 import httpx
 import pytest

@@ -1,5 +1,5 @@
 import pytest
-from agent_core.services.quote_guard import quote_matches, guard_report
+from agent_core.services.quote_guard import guard_report
 from agent_core.services.timing_forensics import analyze_timing
 from agent_core.services.follower_audit import audit_followers
 from agent_core.services.search_engine import SearchEngine, SearchResult

@@ -2,7 +2,7 @@ import asyncio
 import os
 import re
 import httpx
-from typing import List, Optional, Dict
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 
 class SearchResult(BaseModel):

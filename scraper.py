@@ -1,3 +1,4 @@
+import json
 import logging
 import sys
 
@@ -78,7 +79,7 @@ def scrape_readonly(profile_url: str, cookies: str = None) -> dict:
         page = browser.new_page()
         if cookies:
             page.set_cookies(cookies)
-        response = page.goto(profile_url, wait_until="networkidle")
+        page.goto(profile_url, wait_until="networkidle")
         
         # Parse GraphQL responses intercepted by browser_oxide
         for req in page.get_requests():
