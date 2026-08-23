@@ -198,6 +198,8 @@
   let timingForensics: any = null;
   let depthReport: any = null;
   let visualEvidence: any = null;
+  let shadowProfile: any = null;
+  let osintFootprint: any = null;
   let copyFeedback = false;
 
   function copyMessage(text: string) {
@@ -217,6 +219,8 @@
       if ($taskStatus.timing_forensics) timingForensics = $taskStatus.timing_forensics;
       if ($taskStatus.depth_report) depthReport = $taskStatus.depth_report;
       if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
+      if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
+      if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
 
       if ($taskStatus.reso) {
         ritualMatchScore = ($taskStatus.reso.ritual_match_score || 0) * 100;
@@ -695,6 +699,66 @@
         </div>
       {/if}
     </div>
+    {/if}
+
+    <!-- ==================== 5. VE 6. DAMGALAR (YENİ) ==================== -->
+    {#if shadowProfile}
+      <div class="screen-card" style="border-color: rgba(139, 92, 246, 0.6); background: #1a1025; margin-top: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #a78bfa;">
+              🕳️ 5. DAMGA: GÖLGE PROFİLİ
+            </span>
+            <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
+              Manipülasyon Skoru: %{((shadowProfile.dark_profile?.narcissism || 0) * 100).toFixed(0)}
+            </span>
+          </div>
+        </div>
+        
+        <div style="font-size: 10px; color: #e9d5ff; font-style: italic; margin-bottom: 6px;">
+          "{shadowProfile.message || 'Gölge dizisi oluşturulamadı'}"
+        </div>
+        
+        <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(139,92,246,0.3);">
+          <div style="font-size: 9px; font-weight: 700; color: #c4b5fd; margin-bottom: 3px;">
+            🧠 NLP & Strateji
+          </div>
+          <div style="font-size: 8px; color: #ddd; margin-bottom: 4px;">
+            {shadowProfile.strategy || 'Belirtilmedi'}
+          </div>
+          {#if shadowProfile.dark_profile}
+            <div style="display: flex; gap: 8px; font-size: 8px; color: #c4b5fd;">
+              <span>NAR: {shadowProfile.dark_profile.narcissism?.toFixed(2)}</span>
+              <span>MAC: {shadowProfile.dark_profile.machiavellianism?.toFixed(2)}</span>
+              <span>PSY: {shadowProfile.dark_profile.psychopathy?.toFixed(2)}</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    {#if osintFootprint}
+      <div class="screen-card" style="border-color: rgba(56, 189, 248, 0.6); background: #0c1a25; margin-top: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #7dd3fc;">
+              🌐 6. DAMGA: DİJİTAL AYAK İZİ
+            </span>
+            <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
+              Ağ Eşleşme Skoru: %{((osintFootprint.digital_footprint_score || 0) * 100).toFixed(0)}
+            </span>
+          </div>
+          
+          <span style="font-size: 9px; font-weight: 700; background: rgba(56,189,248,0.2); border: 1px solid #7dd3fc; color: #bae6fd; padding: 2px 6px; border-radius: 4px;">
+            {(osintFootprint.associated_platforms || []).length} Platform
+          </span>
+        </div>
+        
+        <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.3); font-size: 8px; color: #e0f2fe;">
+          <b style="color: #7dd3fc;">Kanıtlar:</b> 
+          {(osintFootprint.associated_platforms || []).join(', ') || 'Platform kaydı bulunamadı (Olası Bot/Sahte)'}
+        </div>
+      </div>
     {/if}
   </section>
 
