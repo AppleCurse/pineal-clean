@@ -11,6 +11,10 @@ logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(me
 
 from agent_core.task_executor import executor
 
+# Bu dosya elle çalistirilan canli bir LLM script'idir (python e2e_test.py);
+# pytest'in 'test' fonksiyonunu test sanip toplamasini engelle.
+__test__ = False
+
 async def test():
     input_data = {
         'target_profile': {

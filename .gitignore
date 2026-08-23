@@ -38,3 +38,7 @@ check_runs.py
 memory/*.json
 cov_out.txt
 
+
+# LLM response cache (prompt + ciktilar yerel kalir)
+cache/
+memory/*.db
