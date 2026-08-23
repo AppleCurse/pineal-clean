@@ -1,4 +1,5 @@
 import logging
+import aiohttp
 import os
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict
@@ -78,13 +79,25 @@ JSON formatında yanıt ver:
                 logger.warning(f"OSINT LLM fallback hatası: {e}")
                 return OsintProfile(confidence=1.0, data_confidence=False)
         else:
-            # TODO: Gerçek osint.industries entegrasyonu (Canlı ortam için)
-            # async with aiohttp.ClientSession() as session:
-            #     headers = {"api-key": self.osint_api_key}
-            #     async with session.get(f"https://api.osint.industries/v1/user/{clean_username}", headers=headers) as resp:
-            #         data = await resp.json()
-            #         ...
-            return OsintProfile(
-                associated_platforms=["Gerçek API Bağlantısı Bekleniyor"],
-                confidence=0.9
-            )
+            try:
+                async with aiohttp.ClientSession() as session:
+                    headers = {"api-key": self.osint_api_key}
+                    async with session.get(f"https://api.osint.industries/v1/user/{clean_username}", headers=headers, timeout=15) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            emails = data.get("emails", [])
+                            phones = data.get("phones", [])
+                            platforms = data.get("platforms", [])
+                            return OsintProfile(
+                                connected_emails=emails,
+                                connected_phones=phones,
+                                associated_platforms=platforms,
+                                confidence=0.9,
+                                data_confidence=True
+                            )
+                        else:
+                            logger.warning(f"[OSINT] Canlı API hatası: HTTP {resp.status} - {await resp.text()}")
+                            return OsintProfile(confidence=1.0, data_confidence=False, fallback_reason="api_error")
+            except Exception as e:
+                logger.warning(f"[OSINT] Canlı API bağlantı hatası: {e}")
+                return OsintProfile(confidence=1.0, data_confidence=False, fallback_reason="api_error")

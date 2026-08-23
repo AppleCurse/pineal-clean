@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from agent_core.agents.osint_investigator import OsintInvestigatorAgent, OsintProfile
 from agent_core.services.llm_gateway import LLMGateway
 
@@ -78,13 +78,29 @@ async def test_osint_llm_failure_graceful_fallback(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_osint_with_api_key_simulation(monkeypatch):
+@patch("aiohttp.ClientSession.get")
+async def test_osint_with_api_key_simulation(mock_get, monkeypatch):
     """OSINT_INDUSTRIES_KEY mevcutken canlı bağlantı simülasyonu çalışmalıdır."""
     monkeypatch.setenv("OSINT_INDUSTRIES_KEY", "sk-osint-valid-test-key")
+
+    # Configure the mock
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={
+        "emails": ["test@example.com"],
+        "phones": [],
+        "platforms": ["X"]
+    })
+
+    # Set __aenter__ to return the mock response object
+    mock_get.return_value.__aenter__.return_value = mock_resp
+
     agent = OsintInvestigatorAgent()
     payload = {"target_profile": {"username": "cyber_agent"}}
     
     res = await agent.execute(payload)
     assert isinstance(res, OsintProfile)
     assert res.confidence == 0.9
-    assert "Gerçek API Bağlantısı Bekleniyor" in res.associated_platforms
+    assert res.data_confidence is True
+    assert res.connected_emails == ["test@example.com"]
+    assert res.associated_platforms == ["X"]
