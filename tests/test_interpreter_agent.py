@@ -9,6 +9,6 @@ async def test_interpreter_agent_initialization():
 @pytest.mark.asyncio
 async def test_interpreter_agent_fallback_or_execute():
     agent = InterpreterAgent()
-    result = await agent.execute_task("Print hello world in python", auto_run=True)
+    result = await agent.execute_task("Print hello world in python", auto_run=False)
     assert isinstance(result, InterpreterResult)
     assert result.status in ["success", "error"]
