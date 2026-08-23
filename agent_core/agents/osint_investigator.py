@@ -74,10 +74,11 @@ JSON formatında yanıt ver:
                     temperature=0.1
                 )
                 result.data_confidence = False
+                result.fallback_reason = "llm_simulation"
                 return result
             except Exception as e:
                 logger.warning(f"OSINT LLM fallback hatası: {e}")
-                return OsintProfile(confidence=1.0, data_confidence=False)
+                return OsintProfile(confidence=1.0, data_confidence=False, fallback_reason="llm_unavailable")
         else:
             try:
                 async with aiohttp.ClientSession() as session:

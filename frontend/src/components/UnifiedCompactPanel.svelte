@@ -202,6 +202,12 @@
   let osintFootprint: any = null;
   let copyFeedback = false;
 
+  // Kac damga gercekten dolu geldi? (statik "DOGRULANMIS" yazisi yaniltici olmasin)
+  $: presentStamps = [
+    followerAudit, timingForensics, depthReport,
+    visualEvidence, shadowProfile, osintFootprint
+  ].filter(Boolean).length;
+
   function copyMessage(text: string) {
     if (!text) return;
     navigator.clipboard.writeText(text);
@@ -579,7 +585,7 @@
           🏛️ 6 DAMGA FORENSİK KONTROLÜ
         </span>
         <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
-          ● DOĞRULANMIŞ DAMGALAR
+          ● {presentStamps}/6 {t[$currentLang].verifiedStamps || 'DOĞRULANMIŞ DAMGA'}
         </span>
       </div>
 
@@ -755,8 +761,13 @@
         </div>
         
         <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.3); font-size: 8px; color: #e0f2fe;">
-          <b style="color: #7dd3fc;">Kanıtlar:</b> 
-          {(osintFootprint.associated_platforms || []).join(', ') || 'Platform kaydı bulunamadı (Olası Bot/Sahte)'}
+          {#if osintFootprint.data_confidence === false}
+            <span style="color: #fbbf24;">⚠️ {osintFootprint.fallback_reason === 'api_error' ? 'OSINT API hatası — doğrulanamadı' : 'LLM simülasyonu (gerçek API doğrulaması yok)'}</span>
+          {/if}
+          <div>
+            <b style="color: #7dd3fc;">Kanıtlar:</b>
+            {(osintFootprint.associated_platforms || []).join(', ') || (osintFootprint.data_confidence === false ? ' Platform verisi yok' : ' Platform kaydı bulunamadı')}
+          </div>
         </div>
       </div>
     {/if}

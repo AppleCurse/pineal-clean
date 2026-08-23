@@ -93,6 +93,7 @@ export const t = {
     findingsTitle: "Doğrulanmış Gerçeklik Bulguları ve Alıntılar",
     kalkanAyakta: "Bulgu Kanıtla Ayakta",
     kalkanElenen: "Sahte Alıntı Elendi",
+    verifiedStamps: "DOĞRULANMIŞ DAMGA",
 
     // Right Panel: Agent Chain
     agentChainTitle: "AJAN ZİNCİRİ VE DURUM",
@@ -193,6 +194,7 @@ export const t = {
     findingsTitle: "Verified Reality Findings & Quotes",
     kalkanAyakta: "Findings Backed by Evidence",
     kalkanElenen: "Fake Quotes Dropped",
+    verifiedStamps: "STAMPS VERIFIED",
 
     // Right Panel: Agent Chain
     agentChainTitle: "AGENT CHAIN & STATUS",
