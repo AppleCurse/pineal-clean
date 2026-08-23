@@ -15,7 +15,6 @@ import types
 
 import pytest
 
-from agent_core.task_executor import PinealExecutor  # noqa: F401  (geriye dönük import sözleşmesi)
 
 
 def test_scraper_raises_when_no_browser_engine_and_no_data():
