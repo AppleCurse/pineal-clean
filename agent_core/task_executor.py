@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 try:
     from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
-    from agent_core.services.canonical_memory import CanonicalMemory
+    from agent_core.services.hindsight_memory import build_memory_from_env
     from agent_core.services.uncertainty_engine import UncertaintyEngine
     from agent_core.services.decision_engine import DecisionEngine
     from agent_core.domain.pipeline_status import PipelineStatus
@@ -28,7 +28,7 @@ try:
     from agent_core.config_loader import DecisionConfig
 except Exception:
     from services.cognitive_router import CognitiveRouter, RoutePlan
-    from services.canonical_memory import CanonicalMemory
+    from services.hindsight_memory import build_memory_from_env
     from services.uncertainty_engine import UncertaintyEngine
     from services.decision_engine import DecisionEngine
     from domain.pipeline_status import PipelineStatus
@@ -78,7 +78,7 @@ class PinealExecutor:
         self._emit = emit_event_callback or (lambda evt: None)
         self._snapshot_cb = snapshot_callback
         self.router = CognitiveRouter()
-        self.memory = CanonicalMemory()
+        self.memory = build_memory_from_env()
         self.injector = MemoryInjector()
         self.config = DecisionConfig.load()
         self.decision_engine = DecisionEngine(self.config)
@@ -117,19 +117,24 @@ class PinealExecutor:
         }
 
     async def _download_images(self, urls: List[str]) -> List[str]:
-        paths = []
-        for u in urls[:2]:
+        import httpx
+        import asyncio
+
+        async def fetch_image(u):
             try:
-                import httpx
                 async with httpx.AsyncClient() as c:
                     r = await c.get(u, timeout=15)
                     r.raise_for_status()
                     tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
                     tmp.write(r.content)
                     tmp.close()
-                    paths.append(tmp.name)
+                    return tmp.name
             except Exception as e:
                 self._log("WARNING", "Gorsel indirilemedi: " + str(e)[:60])
+                return None
+
+        results = await asyncio.gather(*(fetch_image(u) for u in urls[:2]))
+        paths = [p for p in results if p is not None]
         return paths
 
     async def _deep_research(self, input_data, suspicious, agent_name):
