@@ -337,10 +337,11 @@
 
       <div style="display: flex; flex-direction: column; gap: 10px;">
         <div>
-          <label style="display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;">
+          <label for="targetUrlInput" style="display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;">
             {t[$currentLang].targetUrlLabel}
           </label>
           <input 
+            id="targetUrlInput"
             style="font-size: 13px; font-weight: 600; padding: 8px 12px;" 
             bind:value={targetUrl} 
             placeholder={t[$currentLang].targetUrlPlaceholder} 
@@ -350,16 +351,16 @@
 
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
           <div>
-            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].ritualsLabel}</label>
-            <input bind:value={userRituals} placeholder={t[$currentLang].ritualsPlaceholder} disabled={$isProcessing} />
+            <label for="userRitualsInput" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].ritualsLabel}</label>
+            <input id="userRitualsInput" bind:value={userRituals} placeholder={t[$currentLang].ritualsPlaceholder} disabled={$isProcessing} />
           </div>
           <div>
-            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].playlistLabel}</label>
-            <input bind:value={userPlaylist} placeholder={t[$currentLang].playlistPlaceholder} disabled={$isProcessing} />
+            <label for="userPlaylistInput" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].playlistLabel}</label>
+            <input id="userPlaylistInput" bind:value={userPlaylist} placeholder={t[$currentLang].playlistPlaceholder} disabled={$isProcessing} />
           </div>
           <div>
-            <label style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].enviesLabel}</label>
-            <input bind:value={userEnvies} placeholder={t[$currentLang].enviesPlaceholder} disabled={$isProcessing} />
+            <label for="userEnviesInput" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].enviesLabel}</label>
+            <input id="userEnviesInput" bind:value={userEnvies} placeholder={t[$currentLang].enviesPlaceholder} disabled={$isProcessing} />
           </div>
         </div>
 
@@ -579,7 +580,7 @@
           🏛️ 6 DAMGA FORENSİK KONTROLÜ
         </span>
         <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
-          ● DOĞRULANMIŞ DAMGALAR
+          ● {(followerAudit ? 1 : 0) + (timingForensics ? 1 : 0) + (depthReport ? 1 : 0) + (visualEvidence ? 1 : 0) + (shadowProfile ? 1 : 0) + (osintFootprint ? 1 : 0)} DOĞRULANMIŞ DAMGA
         </span>
       </div>
 
