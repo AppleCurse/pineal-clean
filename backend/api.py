@@ -418,7 +418,7 @@ async def run_mission(req: InitiatePayload):
                         is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
                         clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
-                        if (is_ig_url or req.scraper_type == "instagram") and InstagramGhostScraper:
+                        if effective_type == "instagram" and InstagramGhostScraper:
                             ctx = await browser.new_context(**ctx_kwargs)
                             if cookie and "sessionid" in cookie:
                                 parsed = []
@@ -444,11 +444,11 @@ async def run_mission(req: InitiatePayload):
                                 "is_private": ig_data.is_private
                             })
                             
-                        elif is_x_url and scrape_readonly:
+                        elif effective_type == "x" and scrape_readonly:
                             data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
                             payload["target_profile"].update({k: v for k, v in data.items() if v})
 
-                        elif req.scraper_type == "cross" and InstagramGhostScraper:
+                        elif effective_type == "cross" and InstagramGhostScraper:
                             # Try Instagram first
                             ctx = await browser.new_context(**ctx_kwargs)
                             page = await ctx.new_page()
