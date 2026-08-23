@@ -117,19 +117,24 @@ class PinealExecutor:
         }
 
     async def _download_images(self, urls: List[str]) -> List[str]:
-        paths = []
-        for u in urls[:2]:
+        import httpx
+        import asyncio
+
+        async def fetch_image(u):
             try:
-                import httpx
                 async with httpx.AsyncClient() as c:
                     r = await c.get(u, timeout=15)
                     r.raise_for_status()
                     tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
                     tmp.write(r.content)
                     tmp.close()
-                    paths.append(tmp.name)
+                    return tmp.name
             except Exception as e:
                 self._log("WARNING", "Gorsel indirilemedi: " + str(e)[:60])
+                return None
+
+        results = await asyncio.gather(*(fetch_image(u) for u in urls[:2]))
+        paths = [p for p in results if p is not None]
         return paths
 
     async def _deep_research(self, input_data, suspicious, agent_name):
