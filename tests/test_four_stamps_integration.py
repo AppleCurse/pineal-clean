@@ -6,7 +6,7 @@ from agent_core.services.search_engine import SearchEngine
 from backend.api import _send_snapshot, broadcast_result, app
 
 @pytest.mark.asyncio
-async def test_snapshot_and_result_four_stamps_serialization():
+async def test_snapshot_and_result_six_stamps_serialization():
     snapshot = TaskSnapshot(
         task_id='test_task_stamps',
         status='completed',
@@ -35,6 +35,15 @@ async def test_snapshot_and_result_four_stamps_serialization():
         visual_evidence={
             'aesthetic_style': 'Dark',
             'visual_evidence_summary': 'Studio ekipmanlari'
+        },
+        shadow_profile={
+            'message': 'Golge dizisi',
+            'strategy': 'Yumusak gecis',
+            'dark_profile': {'narcissism': 0.2, 'machiavellianism': 0.3, 'psychopathy': 0.1}
+        },
+        osint_footprint={
+            'digital_footprint_score': 0.7,
+            'associated_platforms': ['GitHub', 'Spotify']
         }
     )
 
@@ -61,6 +70,11 @@ async def test_snapshot_and_result_four_stamps_serialization():
     assert snap_data['depth_report']['quote_guard']['kept'] == 1
     assert 'visual_evidence' in snap_data
     assert snap_data['visual_evidence']['aesthetic_style'] == 'Dark'
+    # 5. ve 6. damgalar da anlik snapshot'a dusmeli
+    assert 'shadow_profile' in snap_data
+    assert snap_data['shadow_profile']['dark_profile']['narcissism'] == 0.2
+    assert 'osint_footprint' in snap_data
+    assert snap_data['osint_footprint']['digital_footprint_score'] == 0.7
 
     app.state.rooms = {'client_test': {'queue': None, 'websockets': set(), 'executor': None, 'vault': {}}}
     import asyncio
@@ -74,6 +88,9 @@ async def test_snapshot_and_result_four_stamps_serialization():
     assert res_data['timing_forensics']['night_owl_score'] == 0.8
     assert res_data['depth_report']['reality_index'] == 0.85
     assert res_data['visual_evidence']['aesthetic_style'] == 'Dark'
+    # 5. ve 6. damgalar da nihai result'ta yer almali
+    assert res_data['shadow_profile']['strategy'] == 'Yumusak gecis'
+    assert res_data['osint_footprint']['associated_platforms'] == ['GitHub', 'Spotify']
 
 def test_searchengine_none_vs_empty_string(monkeypatch):
     monkeypatch.setenv('TAVILY_API_KEY', 'env_tavily')

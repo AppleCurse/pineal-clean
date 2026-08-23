@@ -571,12 +571,12 @@
     </div>
     {/if}
 
-    <!-- ==================== 4 FORENSİK DAMGA VE DERİNLİK RAPORU ==================== -->
-    {#if followerAudit || timingForensics || depthReport}
+    <!-- ==================== 6 FORENSİK DAMGA VE DERİNLİK RAPORU ==================== -->
+    {#if followerAudit || timingForensics || depthReport || shadowProfile || osintFootprint}
     <div class="brass-plate" style="border: 1px solid var(--gold); display: flex; flex-direction: column; gap: 10px;">
       <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a1e12; padding-bottom: 6px;">
         <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
-          🏛️ 4 DAMGA FORENSİK KONTROLÜ
+          🏛️ 6 DAMGA FORENSİK KONTROLÜ
         </span>
         <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
           ● DOĞRULANMIŞ DAMGALAR
