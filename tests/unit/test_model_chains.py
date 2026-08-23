@@ -15,7 +15,7 @@ def test_default_chains_and_env_overrides(monkeypatch):
     
     # 1. Varsayılan zincirler
     assert gw.get_chain("depth") == ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"]
-    assert gw.get_chain("vision") == ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "google/gemini-3.5-flash"]
+    assert gw.get_chain("vision") == ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "meta-llama/llama-3.2-90b-vision-instruct"]
     assert gw.get_chain("dialogue") == ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"]
     assert gw.get_chain("fast") == ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"]
     
