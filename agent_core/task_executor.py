@@ -440,6 +440,58 @@ class PinealExecutor:
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Derinlik analizi atlandı: {e}")
 
+            # --- PINEAL DETERMINISTIC 7-PILLAR ---
+            pillar_start = datetime.now(timezone.utc)
+            self._log("INFO", f"[{task_id}] 7-PILLAR analizi başlatılıyor...")
+            try:
+                from agent_core.engines.pillar_orchestrator import PillarOrchestrator
+
+                pillar_fields = await PillarOrchestrator().run(input_data)
+                for field in (
+                    "frequency_map", "seismos_events", "void_map", "strata_map",
+                    "gravity_map", "pulse_map", "key_matrix", "pillar_bundle",
+                ):
+                    setattr(status, field, pillar_fields.get(field))
+                input_data["pillar_bundle"] = pillar_fields.get("pillar_bundle")
+                pillar_end = datetime.now(timezone.utc)
+                elapsed_ms = int((pillar_end - pillar_start).total_seconds() * 1000)
+                status.evidence_chain.append({
+                    "agent": "pineal_7pillar",
+                    "result": {
+                        "frequency": (status.frequency_map or {}).get("status"),
+                        "seismos_events": (status.seismos_events or {}).get("event_count", 0),
+                        "void_top": (status.void_map or {}).get("top_voids", []),
+                        "gravity_dominant": (status.gravity_map or {}).get("dominant_attractor"),
+                        "pulse_rhythm": (status.pulse_map or {}).get("rhythm_signature"),
+                        "key_confidence": (status.key_matrix or {}).get("confidence", 0),
+                        "elapsed_ms": elapsed_ms,
+                    },
+                    "timestamp": pillar_end.isoformat(),
+                })
+                status.agent_runs["pineal_7pillar"] = AgentRun(
+                    task_id=task_id, agent_name="pineal_7pillar", status="completed",
+                    started_at=pillar_start, completed_at=pillar_end,
+                    confidence=(status.key_matrix or {}).get("confidence", 0),
+                    output_summary={
+                        name: (pillar_fields.get(field) or {}).get("machine_note", "")
+                        for name, field in (
+                            ("frequency", "frequency_map"), ("seismos", "seismos_events"),
+                            ("void", "void_map"), ("strata", "strata_map"),
+                            ("gravity", "gravity_map"), ("pulse", "pulse_map"),
+                            ("key", "key_matrix"),
+                        )
+                    },
+                )
+                self._log("INFO", f"[{task_id}] 7-PILLAR tamamlandı ({elapsed_ms}ms)")
+                self._snapshot(status)
+            except Exception as e:
+                self._log("ERROR", f"[{task_id}] 7-PILLAR graceful failure: {e}")
+                status.agent_runs["pineal_7pillar"] = AgentRun(
+                    task_id=task_id, agent_name="pineal_7pillar", status="failed",
+                    started_at=pillar_start, completed_at=datetime.now(timezone.utc),
+                    error_message=str(e)[:250],
+                )
+
             # --- 5. ve 6. DAMGA: SHADOW & OSINT FORENSİKLERİ ---
             # Bu iki ajan ana döngünün dışında çalıştığı için, başarılı/başarısız
             # durumlarını da status.agent_runs'a kaydediyoruz ki DecisionEngine
