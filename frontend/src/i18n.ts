@@ -13,9 +13,9 @@ export const t = {
 
     // Left Panel: Telemetry & Vault
     engineTelemetry: "MOTOR TELEMETRİSİ",
-    ritualMatch: "RİTÜEL UYUMU",
-    playlistResonance: "MÜZİK REZONANSI",
-    envyIntensity: "TUTKU VE DERİNLİK",
+    resonanceScoreLabel: "REZONANS SKORU",
+    approachLabel: "ÖNERİLEN YAKLAŞIM",
+    redFlagsLabel: "UYARI BAYRAKLARI",
     sigintFeed: "CANLI SİSTEM LOGLARI",
     active: "AKTİF",
     vaultTitle: "GÜVENLİ KASA (VAULT)",
@@ -86,7 +86,7 @@ export const t = {
     nightOwlScoreLabel: "Gece Kuşu Oranı",
     peakHourLabel: "Tepe Aktivite Saati",
     tzShiftLabel: "Tahmini Zaman Kayması",
-    botProbLabel: "Bot İhtimali",
+    engagementRateLabel: "Etkileşim Oranı",
     verdictLabel: "Forensik Hükmü",
     evidenceLabel: "Adli Kanıtlar",
     contradictionsTitle: "Sahnelenen Vitrin vs. Sızan Gerçeklik Çelişkileri",
@@ -113,9 +113,9 @@ export const t = {
 
     // Left Panel: Telemetry & Vault
     engineTelemetry: "ENGINE TELEMETRY",
-    ritualMatch: "RITUAL MATCH",
-    playlistResonance: "PLAYLIST RESONANCE",
-    envyIntensity: "PASSION & DEPTH",
+    resonanceScoreLabel: "RESONANCE SCORE",
+    approachLabel: "RECOMMENDED APPROACH",
+    redFlagsLabel: "RED FLAGS",
     sigintFeed: "LIVE SYSTEM LOGS",
     active: "ACTIVE",
     vaultTitle: "SECURE VAULT",
@@ -186,7 +186,7 @@ export const t = {
     nightOwlScoreLabel: "Night Owl Score",
     peakHourLabel: "Peak Activity Hour",
     tzShiftLabel: "Likely Timezone Drift",
-    botProbLabel: "Bot Probability",
+    engagementRateLabel: "Engagement Rate",
     verdictLabel: "Forensic Verdict",
     evidenceLabel: "Forensic Evidence",
     contradictionsTitle: "Staged Showcase vs. Leaked Reality Contradictions",
