@@ -47,6 +47,15 @@ cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest),
 frontend (check + build + dist doğrulama), smoke (uvicorn + curl).
 
+Canlı LLM gate (manuel, gerçek anahtar gerektirir):
+```
+OPENROUTER_API_KEY=sk-or-v1-... LIVE_LLM_E2E=1 python live_llm_gate.py
+```
+Kriterler: `completed` + dolu evidence + kritik ajanlarda sıfır UNAVAILABLE
+fallback + dolu HolisticProfile + hakem onayı (varsayılan hakem:
+`openai/gpt-5.6-sol-pro`; `OPENROUTER_JUDGE_MODEL` ile ezilebilir).
+Bu script 360° zincirinin gerçek LLM ile uçtan uca doğrulamasıdır.
+
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
 - Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur — derlenmeyen/bağlantısız deneysel kod).
