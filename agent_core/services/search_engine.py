@@ -56,6 +56,9 @@ class SearchEngine:
 
     async def _search_tavily(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://api.tavily.com/search"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         payload = {"api_key": self.tavily_key, "query": query, "max_results": num_results}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -72,6 +75,9 @@ class SearchEngine:
 
     async def _search_serpapi(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://serpapi.com/search"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         params = {"api_key": self.serpapi_key, "q": query, "num": num_results, "engine": "google"}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -88,6 +94,9 @@ class SearchEngine:
 
     async def _search_exa(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://api.exa.ai/search"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         headers = {"x-api-key": self.exa_key, "Content-Type": "application/json"}
         payload = {"query": query, "numResults": num_results}
         try:
@@ -105,6 +114,9 @@ class SearchEngine:
 
     async def _search_duckduckgo(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://html.duckduckgo.com/html/"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         data = {"q": query}
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:

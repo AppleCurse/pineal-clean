@@ -803,6 +803,11 @@ class InterpreterPayload(BaseModel):
 @app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
+    import os
+    if os.getenv("ENABLE_INTERPRETER", "false").lower() != "true":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Interpreter endpoint is disabled by default for security.")
+        
     room = get_room(req.client_id)
     executor = room.get("executor")
     interpreter_agent = executor.agents.get("interpreter")

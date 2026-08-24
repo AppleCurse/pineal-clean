@@ -16,6 +16,8 @@ class VisualEvidence(BaseModel):
     activity_signals: List[str] = []         # Gece çalışması, yalnız yürüyüş, müzik kaydı vb.
     visual_evidence_summary: str = ""        # 2-3 cümlelik somut görsel özet
     confidence: float = 1.0
+    data_confidence: bool = True
+    fallback_reason: str = ""
 
     model_config = ConfigDict(extra="allow")
 
@@ -32,6 +34,12 @@ class VisionAnalyzer:
         """Görseli indirip base64 formatına çevirir."""
         if not image_url or not image_url.startswith("http"):
             return None
+            
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(image_url):
+            logger.warning(f"SSRF Güvenlik Koruması: Bu URL'ye erişim yasaktır: {image_url}")
+            return None
+            
         try:
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 resp = await client.get(image_url, headers={
@@ -55,7 +63,9 @@ class VisionAnalyzer:
                 aesthetic_style="Görsel bulunamadı",
                 activity_signals=[],
                 visual_evidence_summary="İncelenecek fotoğraf verisi yok.",
-                confidence=0.2
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_urls"
             )
 
         # Parallel image download
@@ -71,7 +81,9 @@ class VisionAnalyzer:
                 aesthetic_style="Görseller indirilemedi",
                 activity_signals=[],
                 visual_evidence_summary="Fotoğraflar erişim kısıtlaması nedeniyle indirilemedi.",
-                confidence=0.3
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="download_failed"
             )
 
         # Multimodal Vision Prompt
@@ -111,5 +123,7 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
             aesthetic_style="UNAVAILABLE",
             activity_signals=[],
             visual_evidence_summary="NO_EVIDENCE",
-            confidence=0.0
+            confidence=0.0,
+            data_confidence=False,
+            fallback_reason="llm_unavailable"
         )

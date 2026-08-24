@@ -226,6 +226,7 @@ class HindsightMemory(CanonicalMemory):
         conn = self._connect()
         try:
             if task_id:
+                self._validate_task_id(task_id)
                 rows = conn.execute(
                     "SELECT content_text, embedding, metadata, created_at "
                     "FROM semantic_memories WHERE task_id = ? ORDER BY created_at DESC LIMIT 5000",
@@ -257,6 +258,7 @@ class HindsightMemory(CanonicalMemory):
 
     async def get_task_history(self, task_id: str) -> List[Dict[str, Any]]:
         """Bir göreve ait tüm indekslenmiş kanıtları döndürür."""
+        self._validate_task_id(task_id)
         conn = self._connect()
         try:
             rows = conn.execute(
@@ -274,6 +276,7 @@ class HindsightMemory(CanonicalMemory):
 
     async def delete_task_semantic(self, task_id: str) -> int:
         """Bir görevin anlamsal indeks kayıtlarını siler."""
+        self._validate_task_id(task_id)
         conn = self._connect()
         try:
             cur = conn.execute("DELETE FROM semantic_memories WHERE task_id = ?", (task_id,))

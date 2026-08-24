@@ -2,6 +2,7 @@ import json
 import aiofiles
 import os
 import asyncio
+import re
 from collections import defaultdict
 from typing import List, Dict
 from datetime import datetime, timezone
@@ -27,10 +28,17 @@ class CanonicalMemory:
         os.makedirs(storage_path, exist_ok=True)
         self._locks = defaultdict(asyncio.Lock)
     
+    @staticmethod
+    def _validate_task_id(task_id: str):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", task_id):
+            raise ValueError(f"Geçersiz task_id formatı: {task_id}")
+
+    
     async def merge_evidence(self, task_id: str, evidence_chain: List[Dict]):
         """
         Kanıtları birleştir, çelişkileri çöz
         """
+        self._validate_task_id(task_id)
         profile_file = os.path.join(self.storage_path, f"{task_id}.json")
         
         async with self._locks[task_id]:
@@ -63,6 +71,7 @@ class CanonicalMemory:
         
     def get_task_memory(self, task_id: str) -> dict:
         """ Belleği oku, yoksa veya bozuksa boş dict dön. """
+        self._validate_task_id(task_id)
         profile_file = os.path.join(self.storage_path, f"{task_id}.json")
         if not os.path.exists(profile_file):
             return {}
