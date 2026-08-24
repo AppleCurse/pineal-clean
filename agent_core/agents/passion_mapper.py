@@ -73,12 +73,16 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
             )
             return result
         except Exception as e:
+            # P0 SÖZLEŞMESİ: LLM kullanılamıyorsa UNAVAILABLE — boş kanıt + confidence=0.0.
+            # Uydurma tutku/ilgi alanı üretilmez.
             logger.warning(f"PassionMapper LLM hatası: {e}")
             return PassionProfile(
-                core_passions=["Genel İletişim"],
+                core_passions=[],
                 energizing_topics=[],
                 flow_triggers=[],
                 sentiment_polarity=0.0,
                 evidence_quotes=[],
-                confidence=0.3
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
             )

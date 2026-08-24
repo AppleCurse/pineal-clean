@@ -2,6 +2,7 @@ import logging
 import base64
 import json
 import asyncio
+import os
 import httpx
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict
@@ -17,6 +18,8 @@ class VisualEvidence(BaseModel):
     activity_signals: List[str] = []         # Gece çalışması, yalnız yürüyüş, müzik kaydı vb.
     visual_evidence_summary: str = ""        # 2-3 cümlelik somut görsel özet
     confidence: float = 1.0
+    data_confidence: bool = True             # False → UNAVAILABLE (analiz yapılamadı)
+    fallback_reason: Optional[str] = None    # llm_api_key_unavailable | image_download_failed | ...
 
     model_config = ConfigDict(extra="allow")
 
@@ -47,17 +50,15 @@ class VisionAnalyzer:
     async def analyze_images(self, image_urls: List[str], target_context: str = "") -> VisualEvidence:
         """
         Fotoğraf URL'lerini indirir ve Multimodal Vision modeliyle inceler.
+
+        P0 SÖZLEŞMESİ:
+        - Vision modeli yalnızca OPENROUTER_VISION_MODEL env'i ile belirlenir (hardcode yok).
+        - Kimlik bilgisi yoksa veya analiz yapılamazsa UNAVAILABLE dönülür:
+          boş kanıt + confidence=0.0 + data_confidence=False. Uydurma içerik üretilmez.
         """
         valid_urls = [u for u in image_urls if isinstance(u, str) and u.startswith("http")][:4]
         if not valid_urls:
-            return VisualEvidence(
-                detected_objects=[],
-                environment_and_places=[],
-                aesthetic_style="Görsel bulunamadı",
-                activity_signals=[],
-                visual_evidence_summary="İncelenecek fotoğraf verisi yok.",
-                confidence=0.2
-            )
+            return self._unavailable("no_http_image_urls")
 
         # Parallel image download
         tasks = [self._download_and_encode_image(url) for url in valid_urls]
@@ -66,14 +67,7 @@ class VisionAnalyzer:
         encoded_images = [b64 for b64 in results if b64]
 
         if not encoded_images:
-            return VisualEvidence(
-                detected_objects=[],
-                environment_and_places=[],
-                aesthetic_style="Görseller indirilemedi",
-                activity_signals=[],
-                visual_evidence_summary="Fotoğraflar erişim kısıtlaması nedeniyle indirilemedi.",
-                confidence=0.3
-            )
+            return self._unavailable("image_download_failed")
 
         # Multimodal Vision Prompt
         prompt = f"""
@@ -96,14 +90,7 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
         try:
             # OpenRouter Multimodal Vision çağrısı
             if not self.llm_gateway.api_key:
-                return VisualEvidence(
-                    detected_objects=["Görsel nesneleri"],
-                    environment_and_places=["İç mekan"],
-                    aesthetic_style="Dengeli",
-                    activity_signals=["Günlük paylaşım"],
-                    visual_evidence_summary="Fotoğraflar incelendi.",
-                    confidence=0.5
-                )
+                return self._unavailable("llm_api_key_unavailable")
 
             headers = {
                 "Authorization": f"Bearer {self.llm_gateway.api_key}",
@@ -121,8 +108,11 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
                     }
                 })
 
+            # P0: vision modeli env/config üzerinden belirlenir; hardcode yok.
+            vision_model = os.getenv("OPENROUTER_VISION_MODEL", LLMGateway.DEFAULT_VISION_MODEL)
+
             body = {
-                "model": "google/gemini-3.7-flash",
+                "model": vision_model,
                 "messages": [
                     {
                         "role": "user",
@@ -142,14 +132,22 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
                     return VisualEvidence(**parsed)
                 else:
                     logger.warning(f"Vision API hatası ({res.status_code}): {res.text[:100]}")
+                    return self._unavailable(f"vision_http_{res.status_code}")
         except Exception as e:
             logger.warning(f"Vision analizi çalışırken hata: {e}")
 
+        return self._unavailable("vision_analysis_failed")
+
+    @staticmethod
+    def _unavailable(reason: str) -> VisualEvidence:
+        """P0 SÖZLEŞMESİ: analiz yapılamadığında boş kanıt + confidence=0.0 döner."""
         return VisualEvidence(
             detected_objects=[],
             environment_and_places=[],
-            aesthetic_style="Standart",
+            aesthetic_style="",
             activity_signals=[],
-            visual_evidence_summary="Görsel analizi fallback modunda tamamlandı.",
-            confidence=0.4
+            visual_evidence_summary="",
+            confidence=0.0,
+            data_confidence=False,
+            fallback_reason=reason,
         )

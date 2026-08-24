@@ -5,15 +5,24 @@ from agent_core.domain.memory_models import AuthenticBridge
 from agent_core.services.llm_gateway import LLMGateway
 
 @pytest.mark.asyncio
-async def test_resonance_synthesizer_fallback():
+async def test_resonance_synthesizer_unavailable_on_llm_failure():
+    """P0: LLM çökerse UNAVAILABLE — boş kanıt + confidence=0.0;
+    uydurma ortak tutku/mesaj üretilmez."""
     mock_gateway = MagicMock(spec=LLMGateway)
     mock_gateway.query_json_chain = AsyncMock(side_effect=RuntimeError("LLM Hatası"))
     
     agent = ResonanceSynthesizerAgent(llm_gateway=mock_gateway)
     res = await agent.execute({})
     assert isinstance(res, AuthenticBridge)
-    assert res.confidence == 0.4
-    assert res.resonance_score == 0.5
+    assert res.confidence == 0.0
+    assert res.resonance_score == 0.0
+    assert res.shared_passions == []
+    assert res.complementary_perspectives == []
+    assert res.authentic_opening_topic == ""
+    assert res.conversation_starter_rationale == ""
+    assert res.suggested_opening_message == ""
+    assert res.data_confidence is False
+    assert res.fallback_reason == "llm_unavailable"
 
 @pytest.mark.asyncio
 async def test_resonance_synthesizer_success():

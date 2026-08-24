@@ -65,13 +65,17 @@ Aşağıdaki JSON formatında yanıt ver:
             )
             return result
         except Exception as e:
+            # P0 SÖZLEŞMESİ: LLM kullanılamıyorsa UNAVAILABLE — boş kanıt + confidence=0.0.
+            # Uydurma ortak tutku/mesaj üretilmez.
             logger.warning(f"ResonanceSynthesizer LLM hatası: {e}")
             return AuthenticBridge(
-                shared_passions=["Genel İletişim"],
+                shared_passions=[],
                 complementary_perspectives=[],
-                resonance_score=0.5,
-                authentic_opening_topic="Ortak İlgi Alanları",
-                conversation_starter_rationale="Fallback",
-                suggested_opening_message="Merhaba, paylaşımlarınızdaki bakış açısı dikkatimi çekti.",
-                confidence=0.4
+                resonance_score=0.0,
+                authentic_opening_topic="",
+                conversation_starter_rationale="",
+                suggested_opening_message="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
             )
