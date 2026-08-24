@@ -30,10 +30,12 @@ class AuthenticityAuditorAgent:
 
         if not visual_evidence or not (bio or posts):
             return AuthenticityProfile(
-                authenticity_score=1.0,
+                authenticity_score=0.0,
                 visual_text_gaps=[],
                 supported_claims=[],
-                confidence=0.1
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="insufficient_evidence"
             )
 
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
@@ -81,8 +83,10 @@ JSON formatında yanıt ver:
         except Exception as e:
             logger.warning("AuthenticityAuditor LLM hatası: %s", e)
             return AuthenticityProfile(
-                authenticity_score=0.5,
-                visual_text_gaps=["Analiz sırasında hata oluştu."],
+                authenticity_score=0.0,
+                visual_text_gaps=[],
                 supported_claims=[],
-                confidence=0.2
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable"
             )

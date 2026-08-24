@@ -26,11 +26,13 @@ class CognitiveProfilerAgent:
 
         if not bio and not posts and not visual_evidence:
             return CognitiveStyle(
-                communication_tone="dengeli",
-                complexity_level="orta",
+                communication_tone="",
+                complexity_level="",
                 humor_style=None,
-                social_orientation="bağımsız",
-                confidence=0.2
+                social_orientation="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_target_data"
             )
 
         prompt = f"""
@@ -65,9 +67,11 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
         except Exception as e:
             logger.warning(f"CognitiveProfiler LLM hatası: {e}")
             return CognitiveStyle(
-                communication_tone="dengeli",
-                complexity_level="orta",
+                communication_tone="",
+                complexity_level="",
                 humor_style=None,
-                social_orientation="bağımsız",
-                confidence=0.3
+                social_orientation="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable"
             )

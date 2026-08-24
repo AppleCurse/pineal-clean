@@ -9,8 +9,10 @@ async def test_cognitive_profiler_empty_data():
     agent = CognitiveProfilerAgent()
     res = await agent.execute({})
     assert isinstance(res, CognitiveStyle)
-    assert res.communication_tone == "dengeli"
-    assert res.confidence == 0.2
+    assert res.communication_tone == ""
+    assert res.confidence == 0.0
+    assert res.data_confidence is False
+    assert res.fallback_reason == "no_target_data"
 
 @pytest.mark.asyncio
 async def test_cognitive_profiler_with_data():

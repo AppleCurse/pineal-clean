@@ -10,7 +10,9 @@ async def test_friction_detector_empty_data():
     res = await agent.execute({})
     assert isinstance(res, FrictionProfile)
     assert res.sensitivities == []
-    assert res.confidence == 0.2
+    assert res.confidence == 0.0
+    assert res.data_confidence is False
+    assert res.fallback_reason == "no_target_data"
 
 @pytest.mark.asyncio
 async def test_friction_detector_with_data():
