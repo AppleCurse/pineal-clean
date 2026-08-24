@@ -9,7 +9,7 @@ Kararları `PinealExecutor` + `CognitiveRouter` verir; **Aspasia** karar verici 
 sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 
 > Bu depo güncel olarak şu yeni bileşenleri içermektedir:
-> `rust_core/` (Rust katmanı, 8 birim testi ile), 4 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
+> `rust_core/` (Rust katmanı — derlenmeyen/CI'da koşmayan, Python'a bağlanmamış deneysel kod; dosyada birim testleri mevcut), 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
 > i18n çift dil desteği (TR/EN) ve yeni OSINTInvestigatorAgent & AuthenticityAuditorAgent zincirleri.
 
 ---
@@ -23,7 +23,10 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 3. **Multimodal görsel zeka:** fotoğraflar kör geçilmez; kadraktaki nesneler
    (kitaplar, analog kameralar, mekânlar, estetik dil) taranıp kanıt zincirine girer.
 4. **Hibrit akıl:** hızlı durum/telemetri yerel modelle (Ollama) veya OpenRouter
-   (Llama 3.x; vision: llama-3.2-90b-vision) ile yürür — anahtar sizdedir.
+   ile yürür — anahtar sizdedir. Varsayılan modeller (env ile ezilebilir):
+   Tier-1 `anthropic/claude-sonnet-4.5` (`OPENROUTER_TIER_1_MODEL`),
+   Tier-2 `deepseek/deepseek-chat`,
+   Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL`).
 
 ## 2. Sistem Mimarisi (koddan doğrulanmış)
 
@@ -31,7 +34,7 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 [ HEDEF PROFİL (URL / Veri) ]
         │
         ▼
-[ Hayalet Tarayıcı ]  (Playwright + stealth; X: scraper.py, IG: instagram_ghost)
+[ Hayalet Tarayıcı ]  (Playwright + stealth; IG: instagram_ghost — X kazıma devre dışı, bkz. §9)
         │
         ▼
 [ VisionAnalyzer ]    (görseller → somut nesne/mekân kanıtı; LLM multimodal)
@@ -98,10 +101,11 @@ Canlı profil çözümleme demosu: `python analyze_target_instagram.py` (Chrome 
 | Değişken | Anlamı |
 |---|---|
 | `OPENROUTER_API_KEY` | LLM anahtarı. Yoksa pipeline ilk LLM'li ajanda durur (halüsinasyon önleme, tasarımdır). |
+| `OPENROUTER_TIER_1_MODEL` | Birincil LLM modeli (varsayılan `anthropic/claude-sonnet-4.5`). |
 | `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
 | `TAVILY_API_KEY` | AutonomousVerifier web araması (yoksa `UNVERIFIED`). |
-| `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan llama-3.2-90b-vision). |
+| `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan `google/gemini-3.7-flash`; VisionAnalyzer ve görselli Aspasia istekleri). |
 | `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
 
@@ -109,7 +113,8 @@ Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 
 ## 6. Testler
 ```bash
-pytest                          # 118 test: unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+pytest                          # 218 test (bu revizyon itibarıyla): unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+                                # Güncel sayı için: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build
 ```
 
@@ -126,9 +131,15 @@ cd frontend && npm run check && npm run build
 ## 8. Güvenlik ve Veri
 - Sır koruması: anahtar/cookie yalnızca bellekte; loglara/telemetriye sızmaz (test kilitli).
 - **Veri silme (retention):** `GET /api/tasks` ile geçmişi görün, `DELETE /api/tasks/{id}` ile kalıcı silin.
-- Tutarlı hata modeli: `{error:{code,message}}`.
+- Hata modeli: uygulama katmanı hataları (401/429/404/500, Aspasia) `{error:{code,message}}` biçimindedir; FastAPI şema doğrulama hataları (422) ise FastAPI'nin standart `{detail:[...]}` biçimini kullanır (kasten değiştirilmez).
 
 ## 9. Kullanım Sınırları
 Araştırma/analitik amaçlıdır; kişisel veri işler — yasalara ve platform şartlarına
-uymak kullanıcının sorumluluğundadır. Ürün kimliği "sahici iletişim köprüsü"dür;
-manipülasyon motorları kaldırılmıştır. Deneysel API'ler: `/api/experimental/*`.
+uymak kullanıcının sorumluluğundadır. Ürün kimliği "sahici iletişim köprüsü"dür ve
+sistem hiçbir platforma otomatik/gizli mesaj **göndermez**. Şeffaflık notu: pipeline
+içinde deterministik bir "gölge profil" analiz bileşeni (`shadow_executor`:
+dark-triad puanlama + NLP dizisi) her görevde forensik damga olarak kaydedilir;
+mesaj/kontra-hamle üretimi araçları (`shadow/generate`, `chat/respond`) yalnız
+kullanıcının açıkça çağırdığı deneysel endpoint'lerdedir: `/api/experimental/*`.
+X (Twitter) kazıması devre dışıdır (`XScraperUnsupportedError`); Instagram kazıması
+tarayıcı kurulumuna (`playwright install chromium`) ve platform erişimine bağlıdır.
