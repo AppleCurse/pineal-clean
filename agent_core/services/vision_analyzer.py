@@ -1,10 +1,8 @@
 import logging
 import base64
-import json
 import asyncio
-import os
 import httpx
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 from agent_core.services.llm_gateway import LLMGateway
 
@@ -55,6 +53,11 @@ class VisionAnalyzer:
         - Vision modeli yalnızca OPENROUTER_VISION_MODEL env'i ile belirlenir (hardcode yok).
         - Kimlik bilgisi yoksa veya analiz yapılamazsa UNAVAILABLE dönülür:
           boş kanıt + confidence=0.0 + data_confidence=False. Uydurma içerik üretilmez.
+
+        S2 SÖZLEŞMESİ:
+        - Çağrı doğrudan OpenRouter HTTP'si DEĞİL, LLMGateway.query üzerinden
+          yapılır; LIVE_LLM_E2E kapısı, circuit breaker, retry ve provider
+          politikası bu yolda da geçerlidir (bypass yok).
         """
         valid_urls = [u for u in image_urls if isinstance(u, str) and u.startswith("http")][:4]
         if not valid_urls:
@@ -87,56 +90,38 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
   "confidence": 0.90
 }}
 """
+        if not self.llm_gateway.api_key:
+            return self._unavailable("llm_api_key_unavailable")
+
+        # S2: çağrı LLMGateway üzerinden yapılır; LIVE_LLM_E2E kapısı,
+        # circuit breaker, retry ve env-tabanlı vision modeli miras alınır.
+        images = [f"data:image/jpeg;base64,{b64}" for b64 in encoded_images]
         try:
-            # OpenRouter Multimodal Vision çağrısı
-            if not self.llm_gateway.api_key:
-                return self._unavailable("llm_api_key_unavailable")
-
-            headers = {
-                "Authorization": f"Bearer {self.llm_gateway.api_key}",
-                "HTTP-Referer": "http://localhost:5173",
-                "X-Title": "PINEAL-VISION",
-                "Content-Type": "application/json"
-            }
-
-            content_parts: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
-            for b64 in encoded_images:
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{b64}"
-                    }
-                })
-
-            # P0: vision modeli env/config üzerinden belirlenir; hardcode yok.
-            vision_model = os.getenv("OPENROUTER_VISION_MODEL", LLMGateway.DEFAULT_VISION_MODEL)
-
-            body = {
-                "model": vision_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": content_parts
-                    }
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.2
-            }
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                res = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body)
-                if res.status_code == 200:
-                    data = res.json()
-                    content = data["choices"][0]["message"]["content"]
-                    parsed = json.loads(content)
-                    return VisualEvidence(**parsed)
-                else:
-                    logger.warning(f"Vision API hatası ({res.status_code}): {res.text[:100]}")
-                    return self._unavailable(f"vision_http_{res.status_code}")
-        except Exception as e:
-            logger.warning(f"Vision analizi çalışırken hata: {e}")
-
-        return self._unavailable("vision_analysis_failed")
+            raw = await self.llm_gateway.query(prompt, temperature=0.2, images=images)
+            try:
+                parsed = self.llm_gateway.extract_json(raw)
+            except ValueError:
+                # Tek tamir denemesi (query_json deseninin vision muadili)
+                repair_prompt = (
+                    "Önceki yanıtın geçerli bir JSON nesnesi değildi. "
+                    "Yalnızca şu alanları içeren JSON döndür: "
+                    "detected_objects (liste), environment_and_places (liste), "
+                    "aesthetic_style (metin), activity_signals (liste), "
+                    "visual_evidence_summary (metin), confidence (0-1 sayı). "
+                    f"Bozuk yanıt: {raw[:200]}"
+                )
+                raw = await self.llm_gateway.query(repair_prompt, temperature=0.2, images=images)
+                parsed = self.llm_gateway.extract_json(raw)
+            return VisualEvidence(**parsed)
+        except RuntimeError as exc:
+            if "REAL_LLM_CALL_NOT_EXECUTED" in str(exc):
+                # S2: canlı-çağrı kapısı kapalı — outbound provider çağrısı YOK.
+                return self._unavailable("llm_live_gate_closed")
+            logger.warning(f"Vision LLM çağrı hatası: {exc}")
+            return self._unavailable("llm_unavailable")
+        except Exception as exc:
+            logger.warning(f"Vision analizi çalışırken hata: {exc}")
+            return self._unavailable("vision_analysis_failed")
 
     @staticmethod
     def _unavailable(reason: str) -> VisualEvidence:
