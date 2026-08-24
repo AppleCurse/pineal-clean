@@ -13,7 +13,12 @@
 - Yerel: `USE_LOCAL_LLM=true`, `LOCAL_LLM_URL=http://localhost:11434/v1`, `LOCAL_LLM_MODEL=...` (anahtar gerekmez).
 - `TAVILY_API_KEY` → AutonomousVerifier web doğrulaması (yoksa `UNVERIFIED`).
 - Vision: `OPENROUTER_VISION_MODEL` — varsayılan `google/gemini-3.7-flash`; VisionAnalyzer (profil fotoğrafları) ve görselli Aspasia isteklerinde kullanılır.
-- Model varsayılanları: Tier-1 `anthropic/claude-sonnet-4.5` (`OPENROUTER_TIER_1_MODEL`), Tier-2 `deepseek/deepseek-chat`.
+- Model varsayılanları (P2 ekonomik set; fiyatlar OpenRouter promosyonlarına tabi):
+  Tier-1 `upstage/solar-pro4` (`OPENROUTER_TIER_1_MODEL`, promo 2026-09-10'a kadar),
+  Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`).
+  Zincirler: depth `deepseek-v4-flash → laguna-s-2.1 → glm-5.2` · dialogue
+  `minimax-m2.7 → deepseek-v4-pro → glm-5.2` · fast `ling-3.0-flash →
+  qwen3-235b-a22b-2507` (env: `OPENROUTER_CHAIN_<TASK>`).
 - Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
 
 ## Sık sorunlar
