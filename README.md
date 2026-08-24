@@ -23,10 +23,17 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 3. **Multimodal görsel zeka:** fotoğraflar kör geçilmez; kadraktaki nesneler
    (kitaplar, analog kameralar, mekânlar, estetik dil) taranıp kanıt zincirine girer.
 4. **Hibrit akıl:** hızlı durum/telemetri yerel modelle (Ollama) veya OpenRouter
-   ile yürür — anahtar sizdedir. Varsayılan modeller (env ile ezilebilir):
-   Tier-1 `anthropic/claude-sonnet-4.5` (`OPENROUTER_TIER_1_MODEL`),
-   Tier-2 `deepseek/deepseek-chat`,
-   Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL`).
+   ile yürür — anahtar sizdedir. Varsayılan modeller (env ile ezilebilir;
+   P2 ekonomik model seti, slug'lar OpenRouter kataloğundan doğrulandı):
+   Tier-1 `upstage/solar-pro4` (`OPENROUTER_TIER_1_MODEL`, promo fiyat
+   2026-09-10'a kadar),
+   Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`),
+   Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL` — listedeki
+   metin modelleri vision desteklemediği için korundu).
+   Zincirler: depth `deepseek-v4-flash → laguna-s-2.1 → glm-5.2` ·
+   dialogue `minimax-m2.7 → deepseek-v4-pro → glm-5.2` ·
+   fast `ling-3.0-flash → qwen3-235b-a22b-2507` (env:
+   `OPENROUTER_CHAIN_<TASK>`).
 
 ## 2. Sistem Mimarisi (koddan doğrulanmış)
 
@@ -101,7 +108,8 @@ Canlı profil çözümleme demosu: `python analyze_target_instagram.py` (Chrome 
 | Değişken | Anlamı |
 |---|---|
 | `OPENROUTER_API_KEY` | LLM anahtarı. Yoksa pipeline ilk LLM'li ajanda durur (halüsinasyon önleme, tasarımdır). |
-| `OPENROUTER_TIER_1_MODEL` | Birincil LLM modeli (varsayılan `anthropic/claude-sonnet-4.5`). |
+| `OPENROUTER_TIER_1_MODEL` | Birincil LLM modeli (varsayılan `upstage/solar-pro4`). |
+| `OPENROUTER_TIER_2_MODEL` | Hızlı ikincil model (varsayılan `inclusionai/ling-3.0-flash`). |
 | `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
 | `TAVILY_API_KEY` | AutonomousVerifier web araması (yoksa `UNVERIFIED`). |
