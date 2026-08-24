@@ -12,8 +12,8 @@ async def test_resonance_synthesizer_fallback():
     agent = ResonanceSynthesizerAgent(llm_gateway=mock_gateway)
     res = await agent.execute({})
     assert isinstance(res, AuthenticBridge)
-    assert res.confidence == 0.4
-    assert res.resonance_score == 0.5
+    assert res.confidence == 0.0
+    assert res.resonance_score == 0.0
 
 @pytest.mark.asyncio
 async def test_resonance_synthesizer_success():
