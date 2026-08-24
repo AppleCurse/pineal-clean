@@ -38,7 +38,8 @@
         } else if (data.type === "snapshot_update") {
           taskStatus.update(s => ({ ...s, ...data }));
         } else if (data.type === "result") {
-          taskStatus.set(data);
+          // W4: snapshot bilgisini (runs/planned_agents/damgalar) ezme; birleştir.
+          taskStatus.update(s => ({ ...s, ...data }));
           isProcessing.set(false);
           logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "OPERASYON TAMAMLANDI: " + data.status}]);
         }

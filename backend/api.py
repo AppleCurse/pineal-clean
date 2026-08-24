@@ -133,6 +133,34 @@ def rate_limit(key: str, bucket: str) -> bool:
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
 
+# W5: tarayici yetenegi probu (60sn cache). Telemetri artik import basarisi
+# degil, GERCEK capability raporlar (x_scraper / instagram_scraper / browser_installed).
+_telemetry_capability = {"ts": 0.0, "value": None}
+_telemetry_capability_lock = asyncio.Lock()
+
+async def _scraper_capability() -> dict:
+    now = time.monotonic()
+    cached = _telemetry_capability["value"]
+    if cached is not None and now - _telemetry_capability["ts"] < 60.0:
+        return cached
+    async with _telemetry_capability_lock:
+        cached = _telemetry_capability["value"]
+        if cached is not None and time.monotonic() - _telemetry_capability["ts"] < 60.0:
+            return cached
+        result = {"instagram": False, "browser": False}
+        try:
+            if InstagramGhostScraper is not None:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    exe = p.chromium.executable_path
+                    result["browser"] = bool(exe and os.path.exists(exe))
+                    result["instagram"] = result["browser"]
+        except Exception:
+            result = {"instagram": False, "browser": False}
+        _telemetry_capability["ts"] = time.monotonic()
+        _telemetry_capability["value"] = result
+        return result
+
 def get_room(client_id: str) -> dict:
     if client_id not in app.state.rooms:
         executor = PinealExecutor(
@@ -399,7 +427,11 @@ async def run_mission(req: InitiatePayload):
                 broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
-        if req.url:
+        if effective_type == "x":
+            # W5/B4: X kazimasi desteklenmiyor — tarayici bile acilmadan
+            # WS/UI'da ACIK hata logu uretilir; uydurma veri uretilmez.
+            broadcast_log(client_id, "ERROR", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: B4 kararıyla devre dışı bırakıldı; profil analizi boş hedefle sürecek.")
+        if req.url and effective_type != "x":
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
@@ -550,6 +582,18 @@ def broadcast_result(client_id, res):
         "reading": find(res.evidence_chain, "human_behavior"),
         "reso": find(res.evidence_chain, "resonance_calc"),
         "hook": find(res.evidence_chain, "pattern_interrupt"),
+        # W4: zincir durumu final result'ta da korunur; UI snapshot bilgisini
+        # kaybetmesin diye planned/completed/runs buraya da girer.
+        "planned_agents": getattr(res, "planned_agents", []) or [],
+        "completed_agents": getattr(res, "completed_agents", []) or [],
+        "runs": {
+            name: {
+                "status": getattr(run, "status", None),
+                "confidence": getattr(run, "confidence", None),
+                "error_message": getattr(run, "error_message", None),
+            }
+            for name, run in (getattr(res, "agent_runs", None) or {}).items()
+        },
         "follower_audit": _dump_field(getattr(res, "follower_audit", None)),
         "timing_forensics": _dump_field(getattr(res, "timing_forensics", None)),
         "depth_report": _dump_field(getattr(res, "depth_report", None)),
@@ -645,12 +689,18 @@ async def api_override(req: OverridePayload):
 async def api_telemetry(client_id: str):
     executor = get_executor(client_id)
     vault = get_vault(client_id)
+    capability = await _scraper_capability()
     return {
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
-        "scraper": scrape_readonly is not None,
+        # geriye uyumlu anahtar; artik import basarisi degil, GERCEK yetenek
+        "scraper": capability["instagram"],
         "vault": "x_cookie" in vault or bool(vault.get("or_key")),
-        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None))
+        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
+        # W5: gercek capability raporu
+        "x_scraper": False,  # B4: X kazimasi devre disi birakildi
+        "instagram_scraper": capability["instagram"],
+        "browser_installed": capability["browser"],
     }
 
 @app.post("/api/experimental/shadow/analyze")

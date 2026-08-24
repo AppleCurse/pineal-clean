@@ -192,11 +192,13 @@ class PinealExecutor:
             if t_res:
                 input_data["timing_forensics"] = t_res
                 status.timing_forensics = t_res
-                gece = int(t_res.get("night_owl_score", 0) * 100)
-                tepe = t_res.get("peak_utc_hour", 0)
-                kayma = t_res.get("tz_offset_hours_likely", 0)
-                kayma_str = f"+{kayma}sa" if kayma >= 0 else f"{kayma}sa"
-                self._log("INFO", f"[{task_id}] ZAMAN FORENSİĞİ: gece %{gece} | tepe {tepe:02d} | kayma {kayma_str}")
+                # W1: timing_forensics'in GERCEK alanlari (night_share, peak_hour,
+                # median_drift_hours) okunur; olmayan alanlarla %0 gosterilmez.
+                gece = int(t_res.get("night_share", 0) * 100)
+                tepe = str(t_res.get("peak_hour", "--"))
+                kayma = t_res.get("median_drift_hours", 0)
+                kayma_str = f"+{kayma:.1f}sa" if kayma >= 0 else f"{kayma:.1f}sa"
+                self._log("INFO", f"[{task_id}] ZAMAN FORENSİĞİ: gece %{gece} | tepe {tepe} | kayma {kayma_str}")
         except Exception as e:
             self._log("WARNING", f"[{task_id}] Forensik veri analizi uyarısı: {e}")
 

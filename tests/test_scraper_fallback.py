@@ -1,104 +1,55 @@
 """
-scraper.py hata yayılımı sözleşmesi.
+scraper.py (X kazima) B4 sözleşmesi.
 
-Eski Playwright tabanlı scraper'ın yerine `browser_oxide` kullanan yeni
-uygulamaya göre testler güncellendi:
-
-1. Tarayıcı motoru (browser_oxide) yoksa -> ImportError yolu -> yedek mantık
-   çalışır ve hiç veri toplanamazsa InsufficientEvidenceError yükselir
-   (hata yutulup boş JSON dönmemeli).
-2. Tarayıcı motoru varsa ama hedef hesap gizliyse (GraphQL `protected: true`)
-   -> TargetPrivateError yükselir.
+B4 kararı: browser_oxide kaldırıldı; X kazima yolu açıkça
+"desteklenmiyor" durumuna getirildi. Sözleşme:
+  1) scrape_readonly her çağrıda XScraperUnsupportedError fırlatır
+     (uydurma veri yok, sessiz boş JSON yok).
+  2) main() --stdin akışı failed JSON + exit 1 döner.
+  3) Kaynak kodu browser_oxide referansı içermez.
 """
+
+import inspect
+import json
 import sys
 import types
 
 import pytest
 
-from agent_core.task_executor import PinealExecutor  # noqa: F401  (geriye dönük import sözleşmesi)
+import scraper
 
 
-def test_scraper_raises_when_no_browser_engine_and_no_data():
-    """browser_oxide yok ve hiç veri kazılamazsa hata yutulmamalı."""
-    import scraper
-
-    # Test ortamında browser_oxide kesinlikle yokmuş gibi davran.
-    assert "browser_oxide" not in sys.modules or True
-    with pytest.raises(RuntimeError, match="InsufficientEvidenceError"):
-        scraper.scrape_readonly("https://x.com/empty_or_blocked_user")
+def test_scrape_readonly_raises_unsupported():
+    with pytest.raises(scraper.XScraperUnsupportedError, match="desteklenmiyor"):
+        scraper.scrape_readonly("https://x.com/some_user")
 
 
-def test_scraper_raises_target_private_when_graphql_reports_protected(monkeypatch):
-    """GraphQL yanıtı hesap gizli (protected) derse TargetPrivateError yükselir."""
-    import scraper
+def test_scrape_readonly_raises_even_with_cookies():
+    with pytest.raises(scraper.XScraperUnsupportedError):
+        scraper.scrape_readonly("https://x.com/some_user", cookies="auth_token=abc")
 
-    # --- Sahte browser_oxide modülü ---
-    fake_engine = types.ModuleType("browser_oxide")
 
-    class _FakeResp:
-        def __init__(self, url, status, payload, method="GET"):
-            self.url = url
-            self.status = status
-            self.request = types.SimpleNamespace(method=method)
-            self._payload = payload
+def test_main_stdin_returns_failed_json(monkeypatch, capsys):
+    payload = json.dumps({"target_url": "https://x.com/some_user"})
+    monkeypatch.setattr(sys, "argv", ["scraper.py", "--stdin"])
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(read=lambda: payload))
+    with pytest.raises(SystemExit) as exc:
+        scraper.main()
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    data = json.loads(out.strip().splitlines()[-1])
+    assert data["status"] == "failed"
+    assert "desteklenmiyor" in data["error"]
 
-        def json(self):
-            return self._payload
 
-    class _FakePage:
-        def __init__(self):
-            self._cookies = None
-
-        def set_cookies(self, cookies):
-            self._cookies = cookies
-
-        def goto(self, url, wait_until=None):
-            # protected (gizli) hesap GraphQL yanıtı
-            return _FakeResp(
-                url="https://x.com/i/api/graphql/abc/UserByScreenName",
-                status=200,
-                payload={
-                    "data": {
-                        "user": {
-                            "result": {"legacy": {"protected": True, "description": ""}}
-                        }
-                    }
-                },
-            )
-
-        def get_requests(self):
-            # intercept_response bu yanıtı işler
-            return [
-                types.SimpleNamespace(
-                    url="https://x.com/i/api/graphql/abc/UserByScreenName",
-                    response=_FakeResp(
-                        url="https://x.com/i/api/graphql/abc/UserByScreenName",
-                        status=200,
-                        payload={
-                            "data": {
-                                "user": {
-                                    "result": {
-                                        "legacy": {"protected": True, "description": ""}
-                                    }
-                                }
-                            }
-                        },
-                    ),
-                )
-            ]
-
-    class _FakeBrowser:
-        def __init__(self, *args, **kwargs):
-            self.page = _FakePage()
-
-        def new_page(self):
-            return self.page
-
-        def close(self):
-            pass
-
-    fake_engine.Browser = _FakeBrowser
-    monkeypatch.setitem(sys.modules, "browser_oxide", fake_engine)
-
-    with pytest.raises(scraper.TargetPrivateError):
-        scraper.scrape_readonly("https://x.com/private_user")
+def test_source_has_no_browser_oxide_reference():
+    """Kaynakta browser_oxide'a KOD referansi olmamali (docstring aciklamasi serbest)."""
+    import ast
+    tree = ast.parse(inspect.getsource(scraper))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert not any(alias.name == "browser_oxide" for alias in node.names)
+        if isinstance(node, ast.ImportFrom):
+            assert node.module != "browser_oxide"
+        if isinstance(node, ast.Attribute):
+            assert not (isinstance(node.value, ast.Name) and node.value.id == "browser_oxide")

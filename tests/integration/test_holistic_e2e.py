@@ -18,15 +18,11 @@ async def test_holistic_360_e2e_pipeline():
         name = getattr(model, "__name__", "")
         if name == "PassionProfile":
             return PassionProfile(
-                core_passions=["Mimari tasarımları estetik ve işlevsellikle birleştirmek", "Görsel ve kentsel algı üzerine derinlemesine analizler yapmak"],
-                energizing_topics=["Minimalist kentsel dokular ve binalar", "Şehir planlamanın insan psikolojisine etkileri", "Sessiz mekan tasarımları"],
-                passion_categories=["Estetik", "Mimari Tasarım", "Kentsel Psikoloji"],
-                intensity_indicators=["Estetik her şeydir vurgusuyla net bir tavır sergilemesi", "Sürekli mekan ve huzur algısına referans vermesi"],
-                anti_passions=["Yüzeysel tasarımlar", "Gürültülü yapılar"],
-                evidence_strength="Güçlü (birden fazla gönderide tutarlı estetik algısı)",
-                flow_triggers=["Sokak fotoğrafları çekmek"],
+                core_passions=["Mimari ve kentsel estetik", "Analog fotografi"],
+                energizing_topics=["Minimalist mekan tasarimi"],
+                flow_triggers=["Sokak cekimleri"],
                 sentiment_polarity=0.8,
-                evidence_quotes=["Estetik her şeydir."],
+                evidence_quotes=["Estetik her seydir."],
                 confidence=0.9
             )
         elif name == "FrictionProfile":
@@ -58,10 +54,10 @@ async def test_holistic_360_e2e_pipeline():
         elif name == "MirrorReflection":
             from agent_core.agents.mirror_truth import MirrorReflection
             return MirrorReflection(
-                user_core_frequency="derin tasarım ve estetik arayışlara dayalı, iç dünyasında mimari ve mekansal bir estetik arayan çok boyutlu bir yaşam frekansı",
-                surface_persona="analitik, mantıklı, ölçülü ve dışa dönük teknik bir imaj çizen, insanlarla mesafeli ama aynı zamanda fikirlerini paylaşan",
+                user_core_frequency="derin tasarim ve estetik arayisi",
+                surface_persona="analitik, olculu ve mesafeli",
                 alignment_score=0.9,
-                authentic_anchors=["estetik detaylar ve mimari güzellikler üzerine konuşmak", "teknik kusursuzluk ve tasarım felsefesi", "uzun mimari yürüyüşler", "şehir hatıraları"]
+                authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"]
             )
         elif name == "ClaimList":
             from agent_core.agents.autonomous_verifier import Claim
@@ -149,7 +145,7 @@ async def test_holistic_360_e2e_pipeline():
     assert "cognitive_profiler" in res.completed_agents
     assert "resonance_synthesizer" in res.completed_agents
     assert res.holistic_profile is not None
-    assert res.holistic_profile.passions.core_passions == ["Mimari tasarımları estetik ve işlevsellikle birleştirmek", "Görsel ve kentsel algı üzerine derinlemesine analizler yapmak"]
+    assert res.holistic_profile.passions.core_passions == ["Mimari ve kentsel estetik", "Analog fotografi"]
     assert "Zaman İsrafı" in res.holistic_profile.frictions.sensitivities
     assert res.holistic_profile.cognitive.communication_tone == "analitik"
     assert res.holistic_profile.bridge.resonance_score == 0.94

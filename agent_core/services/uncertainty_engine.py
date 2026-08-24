@@ -38,7 +38,6 @@ class UncertaintyEngine:
         agent_config = self.config.get_agent_config(agent_name)
         field_weights = agent_config.field_weights
         empty_list_penalty = agent_config.empty_list_penalty
-        semantic_richness_weight = agent_config.semantic_richness_weight
         
         breakdown = {}
         total_score = 0.0
@@ -65,7 +64,7 @@ class UncertaintyEngine:
                 continue
             
             value = output_dict[field]
-            field_score = self._score_field_value(value, empty_list_penalty, semantic_richness_weight)
+            field_score = self._score_field_value(value, empty_list_penalty)
             
             breakdown[field] = {
                 "present": True,
@@ -86,26 +85,26 @@ class UncertaintyEngine:
         
         return final_score, breakdown
 
-    def _score_field_value(self, value: Any, empty_list_penalty: float, semantic_richness_weight: float) -> float:
-        """Score individual field value (0.0 to 1.0)."""
+    def _score_field_value(self, value: Any, empty_list_penalty: float) -> float:
+        """Score individual field value (0.0 to 1.0).
+
+        P1-B2 SÖZLEŞMESİ:
+        - Güven, içerik UZUNLUĞUNDAN üretilmez (karakter sayısı confidence'ı artırmaz).
+        - Dolu ve şema-geçerli string/liste -> sabit completeness katkısı (1.0).
+        - Boş -> ceza (empty_list_penalty / 0.0).
+        - Başka sihirli uzunluk eşiği YOKTUR.
+        """
         if value is None:
             return 0.0
         
         if isinstance(value, list):
             if len(value) == 0:
-                # Boş liste cezası (eskisi gibi direkt 0.0 vermek yerine penalty uygulanabilir, 
-                # ama genelde boş liste 0.0 veya penalty kadar olmalı)
+                # Boş liste cezası
                 return empty_list_penalty
-            # Eleman sayısına göre ve semantic richness'a göre
-            # Örneğin 3 elemanlı bir liste iyidir.
-            length_score = min(len(value) / 3.0, 1.0)
-            # Elemanların uzunluğu (semantic richness)
-            str_lengths = [len(str(item)) for item in value]
-            avg_length = sum(str_lengths) / len(str_lengths) if str_lengths else 0
-            semantic_score = min(avg_length / 50.0, 1.0)
-            
-            return (length_score * (1.0 - semantic_richness_weight)) + (semantic_score * semantic_richness_weight)
-            
+            # Dolu liste -> sabit katkı. (Eski 'eleman sayısı/3' ve
+            # 'ortalama karakter uzunluğu/50' eşikleri kaldırıldı.)
+            return 1.0
+        
         if isinstance(value, dict):
             if len(value) == 0:
                 return empty_list_penalty
@@ -114,8 +113,8 @@ class UncertaintyEngine:
         if isinstance(value, str):
             if not value.strip() or 'bulunamadı' in value.lower():
                 return 0.0
-            # Longer strings = richer data
-            return min(len(value) / 100.0, 1.0)
+            # Dolu ve şema-geçerli string -> sabit katkı; uzunluk fark yaratmaz.
+            return 1.0
         
         if isinstance(value, (int, float, bool)):
             return 0.8  # Primitives are moderate confidence
