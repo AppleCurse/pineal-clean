@@ -38,7 +38,7 @@ async def test_real_executor_uses_real_resonance_calculator(tmp_path):
     status = await executor.execute_task(input_data, "red_resonance")
 
     assert status.status == "halted_frequency"
-    assert status.evidence_chain[0]["agent"] == "resonance_calc"
+    assert status.evidence_chain[1]["agent"] == "resonance_calc"
     assert isinstance(executor.agents["resonance_calc"], ResonanceCalculator)
 
 

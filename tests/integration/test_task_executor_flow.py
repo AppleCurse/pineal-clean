@@ -91,7 +91,7 @@ async def test_execute_task_halt_low_confidence(executor):
     status = await executor.execute_task(input_data, "task_2")
     
     assert status.status == "halted_evidence"
-    assert len(status.evidence_chain) == 0 # It fails before appending if router cuts it
+    assert len(status.evidence_chain) == 1 # 7pillar appends first
     
 @pytest.mark.asyncio
 async def test_execute_task_suspicious_research(executor):
@@ -122,4 +122,4 @@ async def test_execute_task_frequency_mismatch(executor):
     
     assert status.status == "halted_frequency"
     # Should have appended evidence for human_behavior, mirror_truth, and resonance_calc
-    assert len(status.evidence_chain) == 3
+    assert len(status.evidence_chain) == 4 # 7pillar + human_behavior + mirror_truth + resonance_calc
