@@ -73,7 +73,7 @@ async def test_execute_task_full_flow(executor):
     assert isinstance(status, TaskSnapshot)
     assert status.status == "completed"
     assert status.task_id == "task_1"
-    assert len(status.evidence_chain) == 3 # 3 agents in route
+    assert len(status.evidence_chain) == 4 # 3 agents in route + pillar orchestrator
     
     # Ensure memory was updated
     executor.memory.merge_evidence.assert_called_once()
