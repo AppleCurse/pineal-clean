@@ -21,14 +21,12 @@ agents:
     min_llm_confidence: 0.70
     graceful_degradation: true
     field_weights:
-      core_passions: 0.25
-      energizing_topics: 0.20
-      passion_categories: 0.20
-      intensity_indicators: 0.15
-      anti_passions: 0.10
-      evidence_strength: 0.10
+      core_passions: 0.30
+      energizing_topics: 0.25
+      flow_triggers: 0.20
+      evidence_quotes: 0.15
+      sentiment_polarity: 0.10
     empty_list_penalty: 0.12
-    semantic_richness_weight: 0.35
 
   mirror_truth:
     min_llm_confidence: 0.70
@@ -61,6 +59,7 @@ agents:
     field_weights:
       associated_platforms: 0.30
       digital_footprint_score: 0.25
-      behavioral_signals: 0.25
-      risk_indicators: 0.20
+      connected_emails: 0.20
+      connected_phones: 0.15
+      dark_web_hits: 0.10
     empty_list_penalty: 0.05
