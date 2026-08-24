@@ -13,11 +13,11 @@ class SampleSchema(BaseModel):
 def test_default_chains_and_env_overrides(monkeypatch):
     gw = LLMGateway()
     
-    # 1. Varsayılan zincirler
-    assert gw.get_chain("depth") == ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"]
-    assert gw.get_chain("vision") == ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "google/gemini-3.5-flash"]
-    assert gw.get_chain("dialogue") == ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"]
-    assert gw.get_chain("fast") == ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"]
+    # 1. Varsayılan zincirler (P2 ekonomik model politikası)
+    assert gw.get_chain("depth") == ["deepseek/deepseek-v4-flash", "poolside/laguna-s-2.1", "z-ai/glm-5.2"]
+    assert gw.get_chain("vision") == ["google/gemini-3.7-flash", "google/gemini-3.5-flash"]
+    assert gw.get_chain("dialogue") == ["minimax/minimax-m2.7", "deepseek/deepseek-v4-pro", "z-ai/glm-5.2"]
+    assert gw.get_chain("fast") == ["inclusionai/ling-3.0-flash", "qwen/qwen3-235b-a22b-2507"]
     
     # 2. Env ile ezilebilirlik
     monkeypatch.setenv("OPENROUTER_CHAIN_DEPTH", "custom/model-1, custom/model-2")
@@ -36,14 +36,14 @@ async def test_query_chain_fallback_on_server_error():
     async def mock_query(prompt, model=None, **kwargs):
         nonlocal call_count
         call_count += 1
-        if model == "anthropic/claude-sonnet-5":
+        if model == "deepseek/deepseek-v4-flash":
             raise RuntimeError("503 Service Unavailable: Overloaded")
         return f"OK from {model}"
 
     gw.query = AsyncMock(side_effect=mock_query)
 
     res = await gw.query_chain("test prompt", task="depth")
-    assert res == "OK from anthropic/claude-sonnet-4.5"
+    assert res == "OK from poolside/laguna-s-2.1"
     assert call_count == 2
 
 @pytest.mark.asyncio
@@ -75,7 +75,7 @@ async def test_query_json_chain_fallback_on_schema_error():
     async def mock_query_json(prompt, schema=None, model=None, **kwargs):
         nonlocal call_count
         call_count += 1
-        if model == "anthropic/claude-sonnet-5":
+        if model == "deepseek/deepseek-v4-flash":
             raise ValueError("JSON şema tamir edilemedi")
         return SampleSchema(title=f"Başarı: {model}", score=0.95)
 
@@ -83,7 +83,7 @@ async def test_query_json_chain_fallback_on_schema_error():
 
     res = await gw.query_json_chain("JSON prompt", SampleSchema, task="depth")
     assert isinstance(res, SampleSchema)
-    assert res.title == "Başarı: anthropic/claude-sonnet-4.5"
+    assert res.title == "Başarı: poolside/laguna-s-2.1"
     assert call_count == 2
 
 @pytest.mark.asyncio

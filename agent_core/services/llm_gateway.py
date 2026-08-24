@@ -10,15 +10,20 @@ from agent_core.services.response_cache import build_cache_from_env
 T = TypeVar('T', bound=BaseModel)
 
 class LLMGateway:
-    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", "anthropic/claude-sonnet-4.5") # SOTA Bilişsel Zeka, Psikolojik Derinlik & Rezonans (Claude)
-    TIER_2_MODEL = "deepseek/deepseek-chat" # Hızlı & Yüksek IQ
-    DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-3.7-flash") # SOTA Çoklu Modlu Görsel Zeka
+    # P2-MODEL POLİTİKASI (2026-08): kullanıcı seçimli ekonomik model seti.
+    # Claude default'ları maliyet nedeniyle kaldırıldı (kullanıcı raporu:
+    # yalnızca test koşularında $0.60/4saat tüketim). Slug'lar OpenRouter
+    # kataloğundan doğrulandı. Not: upstage/solar-pro4 fiyatı 2026-09-10'a
+    # kadar promo'dur ($0.03/$0.12; liste $0.30/$1.20).
+    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", "upstage/solar-pro4") # Ana ekonomik ajan (512K)
+    TIER_2_MODEL = os.getenv("OPENROUTER_TIER_2_MODEL", "inclusionai/ling-3.0-flash") # Hızlı worker (262K)
+    DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-3.7-flash") # Multimodal (listedeki modeller vision desteklemiyor)
 
     CHAINS = {
-        "depth": ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"],
-        "vision": ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "google/gemini-3.5-flash"],
-        "dialogue": ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"],
-        "fast": ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"],
+        "depth": ["deepseek/deepseek-v4-flash", "poolside/laguna-s-2.1", "z-ai/glm-5.2"],
+        "vision": ["google/gemini-3.7-flash", "google/gemini-3.5-flash"],
+        "dialogue": ["minimax/minimax-m2.7", "deepseek/deepseek-v4-pro", "z-ai/glm-5.2"],
+        "fast": ["inclusionai/ling-3.0-flash", "qwen/qwen3-235b-a22b-2507"],
     }
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
