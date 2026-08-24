@@ -12,7 +12,8 @@
 - `OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1` → canlı bulut LLM.
 - Yerel: `USE_LOCAL_LLM=true`, `LOCAL_LLM_URL=http://localhost:11434/v1`, `LOCAL_LLM_MODEL=...` (anahtar gerekmez).
 - `TAVILY_API_KEY` → AutonomousVerifier web doğrulaması (yoksa `UNVERIFIED`).
-- Vision: `OPENROUTER_VISION_MODEL` (görselli Aspasia istekleri).
+- Vision: `OPENROUTER_VISION_MODEL` — varsayılan `google/gemini-3.7-flash`; VisionAnalyzer (profil fotoğrafları) ve görselli Aspasia isteklerinde kullanılır.
+- Model varsayılanları: Tier-1 `anthropic/claude-sonnet-4.5` (`OPENROUTER_TIER_1_MODEL`), Tier-2 `deepseek/deepseek-chat`.
 - Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
 
 ## Sık sorunlar
@@ -23,7 +24,8 @@
 | Tarayıcı boş | `frontend/dist` yok → build et; `/src/main.ts` 404 çıkarsa dist eski demektir |
 | 429 (initiate/aspasia) | Rate limit — 1 dk bekle (bilinçli koruma) |
 | 401 tüm API çağrıları | `PINEAL_TOKEN` tanımlı ama UI/istemci göndermiyor → `VITE_PINEAL_TOKEN` eşle veya token'ı kaldır |
-| Scrape 429/403 | Platform limit/cookie: Kasaya güncel cookie gir |
+| Scrape 429/403 (Instagram) | Platform limit/cookie: Kasaya güncel cookie gir |
+| X (Twitter) hedefi | Kazıma devre dışı (B4): `XScraperUnsupportedError`; WS logunda "DESTEKLENMİYOR" görünür, analiz boş hedefle sürer |
 | WS bağlanmıyor | Token kipinde `?token=` gerekli; port 8000 dışındaysa `VITE_API_BASE` tanımla |
 
 ## Görev verisi
@@ -33,12 +35,15 @@
 ## Test / Kalite kapıları
 ```
 ruff check .          # gerçek hata kapısı (E9+F)
-pytest -q             # 118 test: unit+integration+e2e+ws sıra+güvenlik+protokol
+pytest -q             # 218 test (bu revizyon itibarıyla): unit+integration+e2e+ws sıra+güvenlik+protokol
+                      # güncel sayı: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
-CI: `.github/workflows/ci.yml` (token izinleri nedeniyle manuel eklenmelidir — içerik RUNBOOK ekinde/repo geçmişinde).
+CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest),
+frontend (check + build + dist doğrulama), smoke (uvicorn + curl).
 
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
-- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur).
+- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur — derlenmeyen/bağlantısız deneysel kod).
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.
+- X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda `python -m playwright install chromium` ayrı adımdır (Docker imajı otomatik kurar).
