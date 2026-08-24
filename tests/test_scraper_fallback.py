@@ -43,5 +43,13 @@ def test_main_stdin_returns_failed_json(monkeypatch, capsys):
 
 
 def test_source_has_no_browser_oxide_reference():
-    src = inspect.getsource(scraper)
-    assert "browser_oxide" not in src
+    """Kaynakta browser_oxide'a KOD referansi olmamali (docstring aciklamasi serbest)."""
+    import ast
+    tree = ast.parse(inspect.getsource(scraper))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert not any(alias.name == "browser_oxide" for alias in node.names)
+        if isinstance(node, ast.ImportFrom):
+            assert node.module != "browser_oxide"
+        if isinstance(node, ast.Attribute):
+            assert not (isinstance(node.value, ast.Name) and node.value.id == "browser_oxide")
