@@ -67,11 +67,11 @@ Aşağıdaki JSON formatında yanıt ver:
         except Exception as e:
             logger.warning(f"ResonanceSynthesizer LLM hatası: {e}")
             return AuthenticBridge(
-                shared_passions=["Genel İletişim"],
+                shared_passions=[],
                 complementary_perspectives=[],
-                resonance_score=0.5,
-                authentic_opening_topic="Ortak İlgi Alanları",
-                conversation_starter_rationale="Fallback",
-                suggested_opening_message="Merhaba, paylaşımlarınızdaki bakış açısı dikkatimi çekti.",
-                confidence=0.4
+                resonance_score=0.0,
+                authentic_opening_topic="UNKNOWN",
+                conversation_starter_rationale="NO_EVIDENCE",
+                suggested_opening_message="UNAVAILABLE",
+                confidence=0.0
             )

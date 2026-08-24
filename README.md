@@ -91,7 +91,7 @@ cd frontend && npm ci && npm run build && cd ..
 uvicorn backend.api:app --host 0.0.0.0 --port 8000
 ```
 
-Canlı profil çözümleme demosu: `python analyze_target_instagram.py` (Chrome gerektirir).
+Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` (Chrome gerektirir).
 
 ## 5. Yapılandırma (`.env`)
 
@@ -100,8 +100,8 @@ Canlı profil çözümleme demosu: `python analyze_target_instagram.py` (Chrome 
 | `OPENROUTER_API_KEY` | LLM anahtarı. Yoksa pipeline ilk LLM'li ajanda durur (halüsinasyon önleme, tasarımdır). |
 | `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
-| `TAVILY_API_KEY` | AutonomousVerifier web araması (yoksa `UNVERIFIED`). |
-| `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan llama-3.2-90b-vision). |
+| `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` | AutonomousVerifier web araması (Tavily/SerpAPI/Exa; yoksa DuckDuckGo yedeği). |
+| `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan google/gemini-3.7-flash). |
 | `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
 
@@ -109,7 +109,7 @@ Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 
 ## 6. Testler
 ```bash
-pytest                          # 118 test: unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+pytest                          # 189 test: unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
 cd frontend && npm run check && npm run build
 ```
 

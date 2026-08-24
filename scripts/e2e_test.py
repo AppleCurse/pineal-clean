@@ -2,17 +2,22 @@ import asyncio
 import sys
 import logging
 import os
+from pathlib import Path
 
-os.environ["OPENROUTER_API_KEY"] = "YOUR_API_KEY_HERE"
+# Repo kök dizinini sys.path'e ekle
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+os.environ["OPENROUTER_API_KEY"] = os.getenv("OPENROUTER_API_KEY", "YOUR_API_KEY_HERE")
 os.environ["LIVE_LLM_E2E"] = "1"
 
-sys.path.insert(0, '.')
 logging.basicConfig(level=logging.DEBUG, format='%(name)s - %(levelname)s - %(message)s')
 
 from agent_core.task_executor import executor
 
-# Bu dosya elle çalistirilan canli bir LLM script'idir (python e2e_test.py);
-# pytest'in 'test' fonksiyonunu test sanip toplamasini engelle.
+# Bu dosya elle çalıştırılan canlı bir LLM script'idir (python scripts/e2e_test.py);
+# pytest'in 'test' fonksiyonunu test sanıp toplamasını engelle.
 __test__ = False
 
 async def test():
@@ -56,4 +61,5 @@ async def test():
         'osint_footprint': getattr(status, 'osint_footprint', None),
     }, indent=2, ensure_ascii=False, default=str))
 
-asyncio.run(test())
+if __name__ == "__main__":
+    asyncio.run(test())

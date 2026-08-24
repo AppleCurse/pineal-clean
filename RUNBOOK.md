@@ -11,8 +11,8 @@
 ## Anahtarlar (`.env` veya UI Kasası)
 - `OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1` → canlı bulut LLM.
 - Yerel: `USE_LOCAL_LLM=true`, `LOCAL_LLM_URL=http://localhost:11434/v1`, `LOCAL_LLM_MODEL=...` (anahtar gerekmez).
-- `TAVILY_API_KEY` → AutonomousVerifier web doğrulaması (yoksa `UNVERIFIED`).
-- Vision: `OPENROUTER_VISION_MODEL` (görselli Aspasia istekleri).
+- `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` → AutonomousVerifier web doğrulaması (yoksa DuckDuckGo yedeği).
+- Vision: `OPENROUTER_VISION_MODEL` (görselli Aspasia istekleri; varsayılan `google/gemini-3.7-flash`).
 - Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
 
 ## Sık sorunlar
@@ -33,7 +33,7 @@
 ## Test / Kalite kapıları
 ```
 ruff check .          # gerçek hata kapısı (E9+F)
-pytest -q             # 118 test: unit+integration+e2e+ws sıra+güvenlik+protokol
+pytest -q             # 189 test: unit+integration+e2e+ws sıra+güvenlik+protokol
 cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
 CI: `.github/workflows/ci.yml` (token izinleri nedeniyle manuel eklenmelidir — içerik RUNBOOK ekinde/repo geçmişinde).

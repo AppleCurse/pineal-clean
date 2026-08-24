@@ -2,7 +2,14 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from datetime import datetime
+
+# Repo kök dizinini sys.path'e ekle
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from agent_core.task_executor import PinealExecutor
 from agent_core.aspasia.aspasia_chief import AspasiaChief
 from agent_core.domain.memory_models import TaskSnapshot
@@ -49,8 +56,10 @@ async def run_fixture_test():
         executor.llm_gateway.set_key(api_key)
     
     tavily = vault_data.get('tavily_key')
-    if tavily:
-        executor.search_engine.set_keys(tavily=tavily)
+    serpapi = vault_data.get('serpapi_key')
+    exa = vault_data.get('exa_key')
+    if tavily or serpapi or exa:
+        executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
 
     fixture_input = {
         'target_url': 'https://instagram.com/fixture_user',

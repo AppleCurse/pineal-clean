@@ -67,41 +67,17 @@ class OsintInvestigatorAgent:
         # Gerçek bir API anahtarı yoksa Mock veri dön (Testlerin kırılmaması ve 
         # API maliyeti oluşturmaması için SOTA simülasyonu)
         if not self.osint_api_key:
-            logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için akıllı simülasyon yapılıyor...")
-            
-            # Gerçekte burada aiohttp ile api.osint.industries'e istek atılır.
-            # LLM'e kullanıcının adından olası dijital ayak izi tahmini yaptıralım.
-            prompt = f"""
-Aşağıdaki kullanıcı adını bir Siber İstihbarat (OSINT) aracı gibi analiz et:
-Kullanıcı: {clean_username}
-
-Biyografi: {target.get('bio', '')}
-
-Bu kullanıcının hangi platformlarda hesabı olma ihtimali yüksek? (Github, Spotify, vs.)
-Tahmini bir OSINT raporu oluştur.
-
-JSON formatında yanıt ver:
-{{
-    "connected_emails": ["tahmini_maskelenmis@gmail.com"],
-    "connected_phones": [],
-    "associated_platforms": ["Spotify", "LinkedIn", "GitHub"],
-    "digital_footprint_score": 0.7,
-    "dark_web_hits": 0,
-    "confidence": 0.8
-}}
-"""
-            try:
-                result = await self.llm_gateway.query_json_chain(
-                    prompt=prompt,
-                    schema=OsintProfile,
-                    task="depth",
-                    temperature=0.1
-                )
-                result.data_confidence = False
-                return result
-            except Exception as e:
-                logger.warning(f"OSINT LLM fallback hatası: {e}")
-                return OsintProfile(confidence=1.0, data_confidence=False)
+            logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için analiz atlanıyor (Fallback mode).")
+            # Return empty/unknown state due to lack of API key, avoiding LLM hallucinations.
+            return OsintProfile(
+                connected_emails=[],
+                connected_phones=[],
+                associated_platforms=[],
+                digital_footprint_score=0.0,
+                dark_web_hits=0,
+                confidence=0.0,
+                data_confidence=False
+            )
         else:
             try:
                 async with aiohttp.ClientSession() as session:

@@ -75,10 +75,10 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
         except Exception as e:
             logger.warning(f"PassionMapper LLM hatası: {e}")
             return PassionProfile(
-                core_passions=["Genel İletişim"],
+                core_passions=[],
                 energizing_topics=[],
                 flow_triggers=[],
                 sentiment_polarity=0.0,
                 evidence_quotes=[],
-                confidence=0.3
+                confidence=0.0
             )

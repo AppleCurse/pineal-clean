@@ -1,5 +1,13 @@
 import asyncio
 import time
+import sys
+from pathlib import Path
+
+# Repo kök dizinini sys.path'e ekle
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from agent_core.task_executor import PinealExecutor
 
 async def run_benchmark():

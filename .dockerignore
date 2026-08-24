@@ -17,4 +17,5 @@ frontend/dist
 docker-compose.yml
 Dockerfile
 tests/
+scripts/
 *.md

@@ -2,6 +2,10 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
+
+# Repo kök dizinini sys.path'e ekle
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -58,7 +62,7 @@ async def main():
         "sacred_rules": "Ucuz manipülasyon veya klişe iltifatlardan kaçın. Karşı tarafın sınırlarına ve kavramsal derinliğine saygılı, sahici ve entelektüel bir temas köprüsü kur."
     }
 
-    print("\n[HEDEF PROFİL]: @defne_art_arch")
+    print("\n[HEDEF PROFİL]: @refikanadol")
     print(f"Bio: {payload['target_profile']['bio']}")
     print(f"Gönderiler ({len(payload['target_profile']['posts'])} adet):")
     for p in payload['target_profile']['posts']:

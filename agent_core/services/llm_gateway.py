@@ -10,15 +10,24 @@ from agent_core.services.response_cache import build_cache_from_env
 T = TypeVar('T', bound=BaseModel)
 
 class LLMGateway:
-    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", "anthropic/claude-sonnet-4.5") # SOTA Bilişsel Zeka, Psikolojik Derinlik & Rezonans (Claude)
-    TIER_2_MODEL = "deepseek/deepseek-chat" # Hızlı & Yüksek IQ
-    DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-3.7-flash") # SOTA Çoklu Modlu Görsel Zeka
+    MODEL_REGISTRY = {
+        "solar_pro4": "upstage/solar-pro4",
+        "ling_3_flash": "inclusionai/ling-3.0-flash",
+        "deepseek_v4_flash": "deepseek/deepseek-v4-flash",
+        "glm_5_2": "z-ai/glm-5.2",
+        "deepseek_v4_pro": "deepseek/deepseek-v4-pro",
+        "gemini_3_7_flash": "google/gemini-3.7-flash"
+    }
+    
+    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["solar_pro4"])
+    TIER_2_MODEL = MODEL_REGISTRY["ling_3_flash"]
+    DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", MODEL_REGISTRY["gemini_3_7_flash"])
 
     CHAINS = {
-        "depth": ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"],
-        "vision": ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "google/gemini-3.5-flash"],
-        "dialogue": ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"],
-        "fast": ["deepseek/deepseek-chat", "meta-llama/llama-3.3-70b-instruct"],
+        "depth": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["glm_5_2"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "vision": [MODEL_REGISTRY["gemini_3_7_flash"]],
+        "dialogue": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_flash"]],
+        "fast": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
     }
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
@@ -268,7 +277,7 @@ class LLMGateway:
 
         return schema.model_validate(parsed_data)
 
-    async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None) -> T:
+    async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None, images: Optional[List[str]] = None) -> T:
         """LLM'den sorgu atar, beklenen JSON formatını (Pydantic schema) tamir mekanizmasıyla garanti eder."""
         full_prompt = (
             f"{prompt}\n\n"
@@ -279,7 +288,7 @@ class LLMGateway:
         selected_model = model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
         response_text = ""
         try:
-            response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model)
+            response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model, images=images)
             parsed_data = self.extract_json(response_text)
             return self._coerce_to_schema(parsed_data, schema)
         except Exception as err:
@@ -290,7 +299,7 @@ class LLMGateway:
                 f"DİKKAT: Eksik veri varsa uydurma kelimeler veya sahte skorlar YAZMA. Sadece var olanları yerleştir.\n"
                 f"Eklediğin bozuk çıktı şuydu:\n{response_text[:200]}"
             )
-            repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model)
+            repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model, images=images)
             parsed_data = self.extract_json(repair_text)
             return self._coerce_to_schema(parsed_data, schema)
 
@@ -341,7 +350,8 @@ class LLMGateway:
         prompt: str,
         schema: Type[T],
         task: str = "depth",
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        images: Optional[List[str]] = None
     ) -> T:
         """Görev bazlı model zinciri ile şemalı JSON sorgusu yapar.
 
@@ -358,7 +368,8 @@ class LLMGateway:
                     prompt=prompt,
                     schema=schema,
                     temperature=temperature,
-                    model=model
+                    model=model,
+                    images=images
                 )
             except Exception as e:
                 err_str = str(e).lower()

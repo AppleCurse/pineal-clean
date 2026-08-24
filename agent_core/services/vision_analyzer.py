@@ -1,9 +1,8 @@
 import logging
 import base64
-import json
 import asyncio
 import httpx
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 from agent_core.services.llm_gateway import LLMGateway
 
@@ -94,62 +93,23 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
 }}
 """
         try:
-            # OpenRouter Multimodal Vision çağrısı
-            if not self.llm_gateway.api_key:
-                return VisualEvidence(
-                    detected_objects=["Görsel nesneleri"],
-                    environment_and_places=["İç mekan"],
-                    aesthetic_style="Dengeli",
-                    activity_signals=["Günlük paylaşım"],
-                    visual_evidence_summary="Fotoğraflar incelendi.",
-                    confidence=0.5
-                )
-
-            headers = {
-                "Authorization": f"Bearer {self.llm_gateway.api_key}",
-                "HTTP-Referer": "http://localhost:5173",
-                "X-Title": "PINEAL-VISION",
-                "Content-Type": "application/json"
-            }
-
-            content_parts: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
-            for b64 in encoded_images:
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{b64}"
-                    }
-                })
-
-            body = {
-                "model": "google/gemini-3.7-flash",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": content_parts
-                    }
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.2
-            }
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                res = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body)
-                if res.status_code == 200:
-                    data = res.json()
-                    content = data["choices"][0]["message"]["content"]
-                    parsed = json.loads(content)
-                    return VisualEvidence(**parsed)
-                else:
-                    logger.warning(f"Vision API hatası ({res.status_code}): {res.text[:100]}")
+            image_uris = [f"data:image/jpeg;base64,{b64}" for b64 in encoded_images]
+            result = await self.llm_gateway.query_json_chain(
+                prompt=prompt,
+                schema=VisualEvidence,
+                task="vision",
+                temperature=0.2,
+                images=image_uris
+            )
+            return result
         except Exception as e:
             logger.warning(f"Vision analizi çalışırken hata: {e}")
 
         return VisualEvidence(
             detected_objects=[],
             environment_and_places=[],
-            aesthetic_style="Standart",
+            aesthetic_style="UNAVAILABLE",
             activity_signals=[],
-            visual_evidence_summary="Görsel analizi fallback modunda tamamlandı.",
-            confidence=0.4
+            visual_evidence_summary="NO_EVIDENCE",
+            confidence=0.0
         )
