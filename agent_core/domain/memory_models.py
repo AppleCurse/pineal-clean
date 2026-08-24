@@ -104,6 +104,16 @@ class TaskSnapshot(BaseModel):
     osint_footprint: Optional[Dict[str, Any]] = None
     telemetry: Optional[Dict[str, Any]] = None
 
+    # Pineal deterministic 7-Pillar outputs
+    frequency_map: Optional[Dict[str, Any]] = None
+    seismos_events: Optional[Dict[str, Any]] = None
+    void_map: Optional[Dict[str, Any]] = None
+    strata_map: Optional[Dict[str, Any]] = None
+    gravity_map: Optional[Dict[str, Any]] = None
+    pulse_map: Optional[Dict[str, Any]] = None
+    key_matrix: Optional[Dict[str, Any]] = None
+    pillar_bundle: Optional[Dict[str, Any]] = None
+
     model_config = ConfigDict(extra="allow")
 
 class ChatMessage(BaseModel):

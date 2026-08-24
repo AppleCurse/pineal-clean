@@ -2,6 +2,7 @@
   import { onMount, afterUpdate } from 'svelte';
   import { clientId, apiFetch, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
   import { currentLang, t } from '../i18n';
+  import PillarFeed from './PillarFeed.svelte';
   
   // ==========================================
   // TARGET & ENGINE TELEMETRY
@@ -201,6 +202,13 @@
   let shadowProfile: any = null;
   let osintFootprint: any = null;
   let telemetry: any = null;
+  let frequencyMap: any = null;
+  let seismosEvents: any = null;
+  let voidMap: any = null;
+  let strataMap: any = null;
+  let gravityMap: any = null;
+  let pulseMap: any = null;
+  let keyMatrix: any = null;
   let copyFeedback = false;
 
   function copyMessage(text: string) {
@@ -223,6 +231,13 @@
       if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
       if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
       if ($taskStatus.telemetry) telemetry = $taskStatus.telemetry;
+      frequencyMap = $taskStatus.frequency_map ?? null;
+      seismosEvents = $taskStatus.seismos_events ?? null;
+      voidMap = $taskStatus.void_map ?? null;
+      strataMap = $taskStatus.strata_map ?? null;
+      gravityMap = $taskStatus.gravity_map ?? null;
+      pulseMap = $taskStatus.pulse_map ?? null;
+      keyMatrix = $taskStatus.key_matrix ?? null;
 
       if ($taskStatus.reso) {
         ritualMatchScore = ($taskStatus.reso.ritual_match_score || 0) * 100;
@@ -888,6 +903,7 @@
         </div>
       </div>
 
+      <PillarFeed {frequencyMap} {seismosEvents} {voidMap} {strataMap} {gravityMap} {pulseMap} {keyMatrix} />
     </div>
 
   </aside>
