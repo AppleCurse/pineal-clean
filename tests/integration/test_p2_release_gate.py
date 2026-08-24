@@ -16,15 +16,11 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
     if name == "PassionProfile":
         from agent_core.domain.memory_models import PassionProfile
         return PassionProfile(
-            core_passions=["Mimari tasarımları estetik ve işlevsellikle birleştirmek", "Görsel ve kentsel algı üzerine derinlemesine analizler yapmak"],
-            energizing_topics=["Minimalist kentsel dokular ve binalar", "Şehir planlamanın insan psikolojisine etkileri", "Sessiz mekan tasarımları"],
-            passion_categories=["Estetik", "Mimari Tasarım", "Kentsel Psikoloji"],
-            intensity_indicators=["Estetik her şeydir vurgusuyla net bir tavır sergilemesi", "Sürekli mekan ve huzur algısına referans vermesi"],
-            anti_passions=["Yüzeysel tasarımlar", "Gürültülü ve karmaşık yapılar"],
-            evidence_strength="Güçlü (birden fazla gönderide tutarlı bir estetik algısı vurgulanmış)",
-            flow_triggers=["Sokak fotoğrafları çekmek"],
+            core_passions=["Mimari ve kentsel estetik", "Analog fotografi"],
+            energizing_topics=["Minimalist mekan tasarimi"],
+            flow_triggers=["Sokak cekimleri"],
             sentiment_polarity=0.8,
-            evidence_quotes=["Estetik her şeydir."],
+            evidence_quotes=["Estetik her seydir."],
             confidence=0.9
         )
     elif name == "FrictionProfile":
@@ -58,19 +54,10 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
         )
     elif name == "MirrorReflection":
         return MirrorReflection(
-            user_core_frequency="derin ruh ve iç dünyaya yönelik yaşam tarzı detayları",
-            surface_persona="pozitif ve enerjik dış görünüm, sosyal medya imajı için oluşturulmuş yüz",
+            user_core_frequency="derin tasarim ve estetik arayisi",
+            surface_persona="analitik, olculu ve mesafeli",
             alignment_score=0.9,
-            authentic_anchors=["yalnızlık ve iç huzur", "doğa yürüyüşleri ve sessizlik", "uzun uzun kitap okumak", "derin müzikler"]
-        )
-    elif name == "OSINTFootprint":
-        from agent_core.agents.osint_investigator import OSINTFootprint
-        return OSINTFootprint(
-            associated_platforms=["Instagram", "LinkedIn", "Twitter", "Medium", "GitHub", "Kişisel Blog", "Substack"],
-            digital_footprint_score=0.9,
-            behavioral_signals=["Sürekli sabah erken saatlerde paylaşım yapmak", "Cuma akşamları eve kapanmak ve bunu belirtmek", "Aşırı düzenli ve estetik içerikler"],
-            risk_indicators=["Sosyal izolasyon", "Aşırı mükemmeliyetçilik ve kontrol isteği", "Tükenmişlik sinyalleri"],
-            confidence=0.85
+            authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"]
         )
     elif name == "VerifierReport":
         return VerifierReport(
