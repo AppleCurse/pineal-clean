@@ -398,9 +398,12 @@ async def run_mission(req: InitiatePayload):
     vault = get_vault(client_id)
     
     try:
-        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else ["Gece stüdyo kayıtları", "Analog ses tasarımı"]
-        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else ["Dark Jazz", "Ambient"]
-        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else ["Sahici ve derin diyalog"]
+        # [009] Kullanıcı göndermediyse ASLA örnek/placeholder ritüel ÜRETME.
+        # Boş kullanıcı verisi -> boş listeler; MirrorOfTruth "user_data_missing"
+        # fallback'iyle çalışır. Sahte ritüel ile kullanıcı frekansı kirletilmez.
+        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else []
+        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else []
+        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else []
 
         payload = {
             "user_profile": {
@@ -467,7 +470,6 @@ async def run_mission(req: InitiatePayload):
                         browser = await p.chromium.launch(**launch_kwargs)
                         ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                         
-                        is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
                         clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
                         if effective_type == "instagram" and InstagramGhostScraper:
@@ -496,10 +498,10 @@ async def run_mission(req: InitiatePayload):
                                 "is_private": ig_data.is_private
                             })
                             
-                        elif effective_type == "x" and scrape_readonly:
-                            data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                            payload["target_profile"].update({k: v for k, v in data.items() if v})
-
+                        # [016] X buraya asla ulaşmaz: effective_type == "x"
+                        # run_mission başında awaiting_authorization'a döner.
+                        # (eski `elif effective_type == "x" and scrape_readonly`
+                        #  ölü daldı, kaldırıldı — scraper.py dosyası duruyor.)
                         elif effective_type == "cross" and InstagramGhostScraper:
                             # Try Instagram first
                             ctx = await browser.new_context(**ctx_kwargs)
@@ -507,23 +509,15 @@ async def run_mission(req: InitiatePayload):
                             if stealth_engine:
                                 await stealth_engine.apply_stealth_async(page)
                             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
-                            try:
-                                ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
-                                payload["target_profile"].update({
-                                    "username": "@" + ig_data.username,
-                                    "bio": ig_data.biography or "",
-                                    "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram: {ig_data.full_name or ig_data.username}"],
-                                    "images": [p.display_url for p in ig_data.posts],
-                                    "followers": ig_data.follower_count or 0,
-                                    "is_private": ig_data.is_private
-                                })
-                            except Exception as ig_err:
-                                if scrape_readonly and is_x_url:
-                                    x_data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                                    payload["target_profile"].update({k: v for k, v in x_data.items() if v})
-                                else:
-                                    raise ig_err
-                                
+                            ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
+                            payload["target_profile"].update({
+                                "username": "@" + ig_data.username,
+                                "bio": ig_data.biography or "",
+                                "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram: {ig_data.full_name or ig_data.username}"],
+                                "images": [p.display_url for p in ig_data.posts],
+                                "followers": ig_data.follower_count or 0,
+                                "is_private": ig_data.is_private
+                            })
                         elif scrape_readonly:
                             data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
                             payload["target_profile"].update({k: v for k, v in data.items() if v})

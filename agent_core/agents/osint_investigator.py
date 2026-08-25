@@ -70,10 +70,11 @@ class OsintInvestigatorAgent:
 
         clean_username = username.lstrip("@")
         
-        # Gerçek bir API anahtarı yoksa Mock veri dön (Testlerin kırılmaması ve 
-        # API maliyeti oluşturmaması için SOTA simülasyonu)
+        # [011] Gerçek API anahtarı yoksa MOCK veri dönülmez: dürüst boş
+        # fallback döner (confidence=0.0, data_confidence=False). Sahte
+        # e-posta/telefon/oturum üretmek yasak.
         if not self.osint_api_key:
-            logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için analiz atlanıyor (Fallback mode).")
+            logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için analiz atlanıyor.")
             # Return empty/unknown state due to lack of API key, avoiding LLM hallucinations.
             return OsintProfile(
                 connected_emails=[],

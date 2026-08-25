@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 class Claim(BaseModel):
     claim_text: str
@@ -16,6 +16,10 @@ class VerifierReport(BaseModel):
     overall_authenticity_score: float = 0.0
     status: str = "UNVERIFIED"
     confidence: float = 0.0
+    # [015] Kanıt sözleşmesi: doğrulama yapılmadıysa data_confidence=False
+    # ve fallback_reason doldurulur; yüksek güvenli "UNVERIFIED" üretilmez.
+    data_confidence: bool = True
+    fallback_reason: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -29,12 +33,33 @@ class AutonomousVerifier:
         target_profile = input_data.get('target_profile', {})
         bio = target_profile.get('bio', '')
 
-        if not bio or not self.search_engine.tavily_key:
+        if not bio:
             return VerifierReport(
                 verifications=[],
                 overall_authenticity_score=0.0,
                 status="UNVERIFIED",
                 confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_bio",
+            )
+
+        # [028] Doğrulama sözleşmesi provider-backed aramadır. DuckDuckGo
+        # HTML yedeği verifier yolunda bilinçli KAPALI: kırılgan scrape
+        # "doğrulandı/yalanlandı" kanıtı sayılmaz. Tavily/SerpAPI/Exa
+        # anahtarlarından biri yoksa dürüst UNVERIFIED döner.
+        has_provider_key = bool(
+            getattr(self.search_engine, "tavily_key", None)
+            or getattr(self.search_engine, "serpapi_key", None)
+            or getattr(self.search_engine, "exa_key", None)
+        )
+        if not has_provider_key:
+            return VerifierReport(
+                verifications=[],
+                overall_authenticity_score=0.0,
+                status="UNVERIFIED",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_search_provider",
             )
 
         claim_prompt = (
@@ -59,6 +84,8 @@ class AutonomousVerifier:
                 overall_authenticity_score=0.0,
                 status="UNVERIFIED",
                 confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_claims",
             )
 
         verifications = []
@@ -75,6 +102,8 @@ class AutonomousVerifier:
                     overall_authenticity_score=0.0,
                     status="UNVERIFIED",
                     confidence=0.0,
+                    data_confidence=False,
+                    fallback_reason="search_unavailable",
                 )
             results = outcome.results
             if not results:
@@ -102,6 +131,8 @@ class AutonomousVerifier:
                 verifications=[],
                 overall_authenticity_score=0.0,
                 status="UNVERIFIED",
+                data_confidence=False,
+                fallback_reason="no_verifications",
             )
 
         confirmed = sum(1 for v in verifications if v.truth_status == "DOĞRULANDI")
