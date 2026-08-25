@@ -71,12 +71,38 @@ class CanonicalMemory:
             await asyncio.to_thread(os.replace, temp_file, profile_file)
     
     def _resolve_conflicts(self, old: List[Dict], new: List[Dict]) -> List[Dict]:
+        """Preserve provenance and mark conflicting claim evidence explicitly.
+
+        Evidence must never be silently reordered or discarded merely because a
+        confidence field exists at a different nesting level. Exact duplicates
+        are coalesced; conflicting claim verdicts remain visible to reviewers.
         """
-        Çelişkili kanıtları çözümle
-        """
-        # Basit çözüm: Daha yüksek confidence'lı kanıt kazanır
-        all_evidence = old + new
-        return sorted(all_evidence, key=lambda x: x.get('confidence', 0), reverse=True)
+        merged = []
+        seen = set()
+        for item in old + new:
+            fingerprint = json.dumps(item, sort_keys=True, default=str)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                merged.append(item)
+
+        claims = {}
+        for index, item in enumerate(merged):
+            result = item.get("result", {}) if isinstance(item, dict) else {}
+            if not isinstance(result, dict):
+                continue
+            claim = result.get("claim_text")
+            verdict = result.get("truth_status")
+            if claim and verdict:
+                claims.setdefault(claim.strip().casefold(), []).append((index, verdict))
+
+        for entries in claims.values():
+            verdicts = {verdict for _, verdict in entries}
+            if len(verdicts) > 1:
+                conflicting_indexes = [index for index, _ in entries]
+                for index, _ in entries:
+                    merged[index]["conflict_status"] = "CONTRADICTED"
+                    merged[index]["conflicts_with"] = [i for i in conflicting_indexes if i != index]
+        return merged
         
     def get_task_memory(self, task_id: str) -> dict:
         """ Belleği oku, yoksa veya bozuksa boş dict dön. """
