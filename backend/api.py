@@ -701,6 +701,9 @@ async def api_telemetry(client_id: str):
         "x_scraper": False,  # B4: X kazimasi devre disi birakildi
         "instagram_scraper": capability["instagram"],
         "browser_installed": capability["browser"],
+        # P2-MALİYET: oturum boyu tahmini harcama + aktif limit
+        "llm_spend_usd": round(float(getattr(executor.llm_gateway, "spend_usd", 0.0)), 6),
+        "llm_spend_cap_usd": float(getattr(executor.llm_gateway, "spend_cap_usd", 0.0)),
     }
 
 @app.post("/api/experimental/shadow/analyze")

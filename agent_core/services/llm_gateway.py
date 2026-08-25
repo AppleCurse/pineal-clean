@@ -9,6 +9,11 @@ from agent_core.services.response_cache import build_cache_from_env
 
 T = TypeVar('T', bound=BaseModel)
 
+
+class SpendCapExceeded(RuntimeError):
+    """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
+
+
 class LLMGateway:
     MODEL_REGISTRY = {
         "solar_pro4": "upstage/solar-pro4",
@@ -60,8 +65,48 @@ class LLMGateway:
         self.circuit_opened_at = 0.0
         self.live_unlocked = False
         self.total_cost = 0.0
+        # P2-MALİYET: kümülatif harcama ve sert üst limit
+        self.spend_usd = 0.0
+        self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 1.0)
         self._rebuild()
         self.cache = build_cache_from_env()
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    def _account_spend(self, model: str, usage: Any) -> None:
+        """P2-MALİYET: yanıt usage'ından tahmini harcamayı işler.
+        Fiyatı bilinmeyen modellerde uyarı loglanır, harcama işlenmez.
+        """
+        import logging
+        if usage is None:
+            return
+        rates = self.MODEL_PRICING.get(model)
+        if rates is None:
+            logging.warning("SPEND: fiyati bilinmeyen model, harcama takip edilemiyor: %s", model)
+            return
+        try:
+            p_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            c_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        cost = (p_tokens * rates["in"] + c_tokens * rates["out"]) / 1_000_000.0
+        self.spend_usd += cost
+        self.total_cost += cost  # geriye uyumluluk
+
+    def _cap_exceeded(self) -> bool:
+        return self.spend_cap_usd > 0 and self.spend_usd >= self.spend_cap_usd
+
+    def _cap_message(self) -> str:
+        return (
+            f"OPENROUTER_SPEND_CAP_EXCEEDED: tahmini harcama ${self.spend_usd:.4f} "
+            f">= ust limit ${self.spend_cap_usd:.2f} (OPENROUTER_MAX_SPEND_USD). "
+            f"Daha fazla canli LLM cagrisi yapilmadi."
+        )
 
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
@@ -104,6 +149,10 @@ class LLMGateway:
         
         # Eğer local model seçildiyse veya global use_local aktifse
         is_local_request = (model and ("local" in model.lower() or "ollama" in model.lower() or "127.0.0.1" in model.lower())) or self.use_local
+
+        # P2-MALİYET: bütçe aşıldıysa canlı çağrı hiç yapılmaz
+        if not is_local_request and self._cap_exceeded():
+            raise SpendCapExceeded(self._cap_message())
         
         if is_local_request:
             target_client = self.local_client or AsyncOpenAI(base_url=self.local_base_url, api_key="ollama")
@@ -163,27 +212,26 @@ class LLMGateway:
 
         for attempt in range(max_retries):
             try:
+                # P2-MALİYET: döngü içinde de cap kontrolü
+                if not is_local_request and self._cap_exceeded():
+                    raise SpendCapExceeded(self._cap_message())
                 r = await target_client.chat.completions.create(
                     model=selected_model, temperature=temperature,
                     messages=messages,
                     timeout=45.0
                 )
                 self.failure_count = 0
-                
-                # --- COST TRACKING ---
-                if hasattr(r, "usage") and r.usage and not is_local_request:
-                    p_tokens = getattr(r.usage, "prompt_tokens", 0) or 0
-                    c_tokens = getattr(r.usage, "completion_tokens", 0) or 0
-                    rates = self.MODEL_PRICING.get(selected_model, {"in": 0.10, "out": 0.10})
-                    cost_in = (p_tokens / 1_000_000) * rates["in"]
-                    cost_out = (c_tokens / 1_000_000) * rates["out"]
-                    self.total_cost += (cost_in + cost_out)
-                # ---------------------
-                
+
+                # P2-MALİYET: token harcama hesabı
+                if not is_local_request:
+                    self._account_spend(selected_model, getattr(r, "usage", None))
+
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
                 return content
+            except SpendCapExceeded:
+                raise
             except Exception as e:
                 err_str = str(e).lower()
                 is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
