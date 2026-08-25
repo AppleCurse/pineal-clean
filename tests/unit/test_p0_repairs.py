@@ -31,7 +31,7 @@ async def test_real_executor_uses_real_resonance_calculator(tmp_path):
 
     input_data = {
         "user_authentic_vector": {"depth": 0.9, "energy": 0.3},
-        "target_analysis": {"achilles_score": 10},
+        "target_authentic_vector": {"depth": 0.1, "energy": 0.9},
         "target_profile": {},
     }
 

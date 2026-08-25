@@ -32,46 +32,9 @@ class ResonanceCalculator:
                 "Hedef authentic vector'u geçersiz; rezonans hesaplanamaz."
             )
         if not target_vector:
-            target_obj = input_data.get('target_analysis', {})
-            if hasattr(target_obj, 'model_dump'):
-                t_dict = target_obj.model_dump()
-            else:
-                t_dict = target_obj if isinstance(target_obj, dict) else {}
-
-            if 'depth' in t_dict and 'energy' in t_dict:
-                target_vector = {
-                    'depth': float(t_dict['depth']),
-                    'energy': float(t_dict['energy']),
-                }
-            else:
-                # Hedef metinlerinden gerçek enerji ve derinlik çıkarımı
-                target_text = t_dict.get('bio', '') + " " + " ".join(t_dict.get('posts', []))
-                if not target_text.strip():
-                    if 'achilles_score' in t_dict:
-                        achilles = float(t_dict.get('achilles_score', 50))
-                        depth_val = achilles / 100.0
-                        energy_val = 1.0 - depth_val
-                    else:
-                        raise ResonanceCalculationError(
-                            "Hedef için ölçülebilir vektör veya analiz verisi yok; rezonans hesaplanamaz."
-                        )
-                else:
-                    import re
-                    words = re.findall(r'\b\w+\b', target_text.lower())
-                    unique_words = set(words)
-                    ttr = len(unique_words) / len(words) if words else 0.5
-                    sentences = [s for s in re.split(r'[.!?]+', target_text) if s.strip()]
-                    avg_sentence_len = len(words) / max(1, len(sentences))
-                    depth_val = (ttr * 0.6) + (min(avg_sentence_len, 20) / 20 * 0.4)
-                    exclamations = target_text.count('!')
-                    caps = sum(1 for c in target_text if c.isupper())
-                    total_chars = max(1, len(target_text))
-                    energy_val = (exclamations * 0.1) + ((caps / total_chars) * 2.0)
-                
-                target_vector = {
-                    'depth': float(np.clip(depth_val, 0.1, 1.0)),
-                    'energy': float(np.clip(energy_val, 0.1, 1.0)),
-                }
+            raise ResonanceCalculationError(
+                "Hedef authentic vector'u mevcut değil; metin, achilles skoru veya varsayılan değerlerden rezonans türetilemez."
+            )
 
         similarity = self._cosine_similarity(user_vector, target_vector)
 
