@@ -180,6 +180,7 @@ class PinealExecutor:
             TaskStartedEvent, StepCompletedEvent, ErrorHaltEvent, TaskCompletedEvent, Severity
         )
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
+        _task_wall_start = datetime.now(timezone.utc)
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
 
         # Deterministik Takipçi ve Zamanlama Forensiği
@@ -456,7 +457,10 @@ class PinealExecutor:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                run.confidence = 0.90
+                # P0-FIX: hard-code 0.90 yerine ajanın kendi confidence'i; yoksa None bırak
+                run.confidence = getattr(result, "confidence", None)
+                if run.confidence is not None and not isinstance(run.confidence, (int, float)):
+                    run.confidence = None
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
                 self._snapshot(status)
@@ -559,11 +563,16 @@ class PinealExecutor:
             await self.memory.merge_evidence(task_id, status.evidence_chain)
             self._snapshot(status)
             
+            # P0-FIX: Gercek SHA-256 kanit hash'i ve gercek sure (ms)
+            import hashlib, json as _json
+            _chain_bytes = _json.dumps(status.evidence_chain, default=str, sort_keys=True).encode()
+            _real_hash = hashlib.sha256(_chain_bytes).hexdigest()
+            _duration_ms = int((datetime.now(timezone.utc) - _task_wall_start).total_seconds() * 1000)
             self._emit(TaskCompletedEvent(
                 task_id=task_id,
                 agent_name="PinealExecutor",
-                final_result_hash="DONE",
-                duration_ms=0
+                final_result_hash=_real_hash,
+                duration_ms=_duration_ms
             ))
         except InsufficientEvidenceError as e:
             self._log("ERROR", "[" + task_id + "] KANIT KILIDI: " + str(e))
