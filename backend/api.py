@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
@@ -773,30 +773,50 @@ class IntervenePayload(BaseModel):
     client_id: str
     action_type: str
     target_agent: Optional[str] = None
-    parameters: dict = {}
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+
+
+class InterventionRecord(BaseModel):
+    client_id: str
+    action_type: str
+    target_agent: Optional[str] = None
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+    requested_at: str
+    outcome: str
+
 
 @app.post("/api/executor/intervene")
 async def executor_intervene(req: IntervenePayload):
-    """Kullanıcının doğrudan müdahale komutunu PinealExecutor üzerinde çalıştırır"""
+    """Record intervention requests without mutating shared executor safety state."""
     room = get_room(req.client_id)
-    executor = room.get("executor")
-    
-    if req.action_type == "OVERRIDE_CONFIDENCE":
-        executor.uncertainty.evaluate = lambda result, agent_name: type('UncertaintyResult', (), {'confidence': 1.0, 'is_suspicious': False, 'reason': 'Mösyö müdahalesi ile esnetildi'})()
-        broadcast_log(req.client_id, "WARNING", "MÜDAHALE: Güven kısıtlaması kaldırıldı (Override).")
-        return {"status": "overridden", "message": "Güven eşiği Mösyö emriyle 1.0'e sabitlendi."}
-        
-    elif req.action_type == "SKIP_AGENT" and req.target_agent:
-        if req.target_agent in executor.agents:
-            del executor.agents[req.target_agent]
-            broadcast_log(req.client_id, "WARNING", f"MÜDAHALE: Ajan devre dışı bırakıldı [{req.target_agent}].")
-            return {"status": "skipped", "message": f"{req.target_agent} ajan devre dışı."}
+    record = InterventionRecord(
+        client_id=req.client_id,
+        action_type=req.action_type,
+        target_agent=req.target_agent,
+        parameters=req.parameters,
+        reason=req.reason,
+        requested_at=datetime.now().isoformat(),
+        outcome="review_required",
+    )
+    room.setdefault("interventions", []).append(record.model_dump())
 
-    elif req.action_type == "HALT":
-        broadcast_log(req.client_id, "ERROR", "MÜDAHALE: Operasyon Mösyö emriyle DURDURULDU.")
-        return {"status": "halted", "message": "Operasyon durduruldu."}
+    # These actions previously rewrote uncertainty or deleted agents from the
+    # room's shared executor. They are now auditable requests, not bypasses.
+    if req.action_type in {"OVERRIDE_CONFIDENCE", "SKIP_AGENT", "HALT"}:
+        broadcast_log(req.client_id, "WARNING", f"MÜDAHALE KAYDEDİLDİ: {req.action_type}; otomatik uygulanmadı.")
+        return {
+            "status": "review_required",
+            "message": "Talep kaydedildi. Kanıt/güvenlik kuralları otomatik olarak değiştirilmedi.",
+            "intervention": record.model_dump(),
+        }
 
-    return {"status": "acknowledged", "message": "Müdahale emri alındı."}
+    return {
+        "status": "acknowledged",
+        "message": "Müdahale talebi kaydedildi; uygulanmadan önce inceleme gerekir.",
+        "intervention": record.model_dump(),
+    }
 
 class InterpreterPayload(BaseModel):
     client_id: str
