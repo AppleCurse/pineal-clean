@@ -428,10 +428,18 @@ async def run_mission(req: InitiatePayload):
                 
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
         if effective_type == "x":
-            # W5/B4: X kazimasi desteklenmiyor — tarayici bile acilmadan
-            # WS/UI'da ACIK hata logu uretilir; uydurma veri uretilmez.
-            broadcast_log(client_id, "ERROR", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: B4 kararıyla devre dışı bırakıldı; profil analizi boş hedefle sürecek.")
-        if req.url and effective_type != "x":
+            # Never run Pineal on an empty X profile. Preserve the request and
+            # ask the user to authorize a distinct, auditable alternative.
+            room = get_room(client_id)
+            room["pending_alternative_authorization"] = {
+                "url": req.url,
+                "requested_at": datetime.now().isoformat(),
+                "alternatives": ["public_web_search"],
+            }
+            broadcast_log(client_id, "WARNING", "X doğrudan çekilemiyor. Alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
+            broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
+            return
+        if req.url and effective_type != "x": 
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
@@ -765,6 +773,32 @@ async def aspasia_chat(payload: AspasiaChatPayload):
     
     resp = await aspasia.chat(payload.user_message, room, payload.model_override, payload.image_data)
     return resp.model_dump()
+
+class AlternativeAuthorizationPayload(BaseModel):
+    client_id: str
+    alternative: str
+    approved: bool
+
+
+@app.post("/api/scraper/authorize-alternative")
+async def authorize_scraper_alternative(req: AlternativeAuthorizationPayload):
+    room = get_room(req.client_id)
+    pending = room.get("pending_alternative_authorization")
+    if not pending:
+        return {"status": "no_pending_authorization"}
+    if not req.approved or req.alternative not in pending["alternatives"]:
+        room.pop("pending_alternative_authorization", None)
+        return {"status": "declined"}
+    # Authorization is recorded; provider execution is a separate explicit
+    # route and must not fabricate an X profile from unrelated sources.
+    room["authorized_alternatives"] = room.get("authorized_alternatives", []) + [{
+        "alternative": req.alternative,
+        "url": pending["url"],
+        "authorized_at": datetime.now().isoformat(),
+    }]
+    room.pop("pending_alternative_authorization", None)
+    return {"status": "authorized", "alternative": req.alternative}
+
 
 class IntervenePayload(BaseModel):
     client_id: str
