@@ -74,7 +74,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 temperature=0.3,
                 agent_name="friction_detector"
             )
-            return result
+            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
         except Exception as e:
             logger.warning(f"FrictionDetector LLM hatası: {e}")
             return FrictionProfile(

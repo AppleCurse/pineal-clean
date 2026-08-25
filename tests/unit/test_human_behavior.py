@@ -72,7 +72,7 @@ def test_identify_wound_as_bridge():
     
     contradictions = [{'type': 'social_vs_alone', 'weight': 10}]
     res2 = analyzer._identify_wound_as_bridge(contradictions, {})
-    assert res2['type'] == 'yalnizlik_köprüsü'
+    assert res2['type'] == 'gözlemlenebilir_tutarsızlık'
 
 def test_calculate_resonance_potential():
     analyzer = HumanBehaviorAnalyzer()

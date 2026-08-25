@@ -22,6 +22,7 @@ def _realistic_short_passion() -> PassionProfile:
         sentiment_polarity=0.7,
         evidence_quotes=["Estetik her seydir."],
         confidence=0.85,
+        data_confidence=True,
     )
 
 

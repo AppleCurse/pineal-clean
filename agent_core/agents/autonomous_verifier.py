@@ -104,12 +104,15 @@ class AutonomousVerifier:
                 status="UNVERIFIED",
             )
 
-        lies = sum(1 for v in verifications if v.truth_status in ["YALAN", "ÇELİŞKİLİ"])
-        score = max(0.0, 1.0 - (lies / total))
-        status = "VERIFIED" if any(v.truth_status == "DOĞRULANDI" for v in verifications) else "UNVERIFIED"
+        confirmed = sum(1 for v in verifications if v.truth_status == "DOĞRULANDI")
+        conclusive = sum(1 for v in verifications if v.truth_status in {"DOĞRULANDI", "YALAN", "ÇELİŞKİLİ"})
+        # Unknown search results are not positive authenticity evidence.
+        score = confirmed / total
+        status = "VERIFIED" if confirmed else "UNVERIFIED"
 
         return VerifierReport(
             verifications=verifications,
             overall_authenticity_score=score,
             status=status,
+            confidence=conclusive / total,
         )

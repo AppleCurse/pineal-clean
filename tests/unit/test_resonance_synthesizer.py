@@ -10,7 +10,10 @@ async def test_resonance_synthesizer_fallback():
     mock_gateway.query_json_chain = AsyncMock(side_effect=RuntimeError("LLM Hatası"))
     
     agent = ResonanceSynthesizerAgent(llm_gateway=mock_gateway)
-    res = await agent.execute({})
+    res = await agent.execute({
+        "user_profile": {"bio": "tasarımcı"},
+        "passions": {"core_passions": ["mimari"]},
+    })
     assert isinstance(res, AuthenticBridge)
     assert res.confidence == 0.0
     assert res.resonance_score == 0.0

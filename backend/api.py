@@ -380,7 +380,7 @@ class InitiatePayload(BaseModel):
     envies: str
     aggressiveness: float
     evidence_th: int
-    scraper_type: str = "x"
+    scraper_type: str = "instagram"
 
 def _effective_scraper_type(url: str, requested: str) -> str:
     """URL'nin platformuna göre tarayıcı seç (FIX: instagram adresi X tarayıcısına
@@ -436,7 +436,7 @@ async def run_mission(req: InitiatePayload):
                 "requested_at": datetime.now().isoformat(),
                 "alternatives": ["public_web_search"],
             }
-            broadcast_log(client_id, "WARNING", "X doğrudan çekilemiyor. Alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
+            broadcast_log(client_id, "WARNING", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
             broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
             return
         if req.url and effective_type != "x": 
