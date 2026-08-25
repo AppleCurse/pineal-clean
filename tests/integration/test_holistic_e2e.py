@@ -57,7 +57,8 @@ async def test_holistic_360_e2e_pipeline():
                 user_core_frequency="derin tasarim ve estetik arayisi",
                 surface_persona="analitik, olculu ve mesafeli",
                 alignment_score=0.9,
-                authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"]
+                authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"],
+                confidence=0.9
             )
         elif name == "ClaimList":
             from agent_core.agents.autonomous_verifier import Claim
@@ -100,11 +101,12 @@ async def test_holistic_360_e2e_pipeline():
     mock_gateway.query_json_chain = AsyncMock(side_effect=_qjc)
     mock_gateway.query_chain = AsyncMock(return_value="Mocked LLM raw response")
     
-    from agent_core.services.search_engine import SearchResult
+    from agent_core.services.search_engine import SearchOutcome, SearchResult
     executor.search_engine.tavily_key = "mock_tavily_key"
-    executor.search_engine.search = AsyncMock(return_value=[
-        SearchResult(query="dummy", content="Mimar", source_url="http://mock.com")
-    ])
+    executor.search_engine.search = AsyncMock(return_value=SearchOutcome(
+        results=[SearchResult(query="dummy", content="Mimar", source_url="http://mock.com")],
+        status="OK", available=True,
+    ))
 
     executor.llm_gateway = mock_gateway
     for agent in executor.agents.values():

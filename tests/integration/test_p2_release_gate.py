@@ -57,7 +57,8 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
             user_core_frequency="derin tasarim ve estetik arayisi",
             surface_persona="analitik, olculu ve mesafeli",
             alignment_score=0.9,
-            authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"]
+            authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"],
+            confidence=0.9
         )
     elif name == "VerifierReport":
         return VerifierReport(
@@ -111,10 +112,11 @@ async def test_p2_release_gate_e2e_integration():
     executor.search_engine.tavily_key = "mock_tavily_key_for_test"
     
     # Mock search_engine to avoid real network call and empty results
-    from agent_core.services.search_engine import SearchResult
-    executor.search_engine.search = AsyncMock(return_value=[
-        SearchResult(query="dummy", content="Sadece pozitif enerji", source_url="http://mock.com")
-    ])
+    from agent_core.services.search_engine import SearchOutcome, SearchResult
+    executor.search_engine.search = AsyncMock(return_value=SearchOutcome(
+        results=[SearchResult(query="dummy", content="Sadece pozitif enerji", source_url="http://mock.com")],
+        status="OK", available=True,
+    ))
     
     # Input fixture that triggers both user and target routing logic
     task_input = {
