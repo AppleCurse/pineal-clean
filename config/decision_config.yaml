@@ -16,6 +16,11 @@ pipeline:
     - passion_mapper
 
 agents:
+  # The deterministic 7-pillar bundle is the pipeline's evidence foundation.
+  # Do not report a completed profile when this foundation fails.
+  pineal_7pillar:
+    graceful_degradation: false
+
   passion_mapper:
     min_data_score: 0.57
     min_llm_confidence: 0.70

@@ -293,12 +293,39 @@ class PinealExecutor:
             self._log("INFO", f"[{task_id}] 7-PILLAR tamamlandı ({elapsed_ms}ms)")
             self._snapshot(status)
         except Exception as e:
-            self._log("ERROR", f"[{task_id}] 7-PILLAR graceful failure: {e}")
+            error_time = datetime.now(timezone.utc)
+            error_code = type(e).__name__
+            self._log("ERROR", f"[{task_id}] 7-PILLAR failure: {error_code}: {e}")
             status.agent_runs["pineal_7pillar"] = AgentRun(
                 task_id=task_id, agent_name="pineal_7pillar", status="failed",
-                started_at=pillar_start, completed_at=datetime.now(timezone.utc),
+                started_at=pillar_start, completed_at=error_time,
+                error_code=error_code,
                 error_message=str(e)[:250],
             )
+            # Failures are evidence too: retain a serializable record instead
+            # of leaving an unexplained gap in the chain.
+            status.evidence_chain.append({
+                "agent": "pineal_7pillar",
+                "evidence_type": "execution_failure",
+                "result": {"error_code": error_code, "error_message": str(e)[:250]},
+                "timestamp": error_time.isoformat(),
+            })
+            pillar_cfg = self.config.get_agent_config("pineal_7pillar")
+            if not pillar_cfg.graceful_degradation:
+                status.status = PipelineStatus.HALTED_CRITICAL
+                status.halted_reason = "7-pillar evidence foundation failed"
+                status.completed_at = error_time
+                self._emit(ErrorHaltEvent(
+                    task_id=task_id,
+                    agent_name="pineal_7pillar",
+                    error_code=error_code,
+                    error_message=str(e)[:200],
+                    severity=Severity.Critical,
+                ))
+                await self.memory.merge_evidence(task_id, status.evidence_chain)
+                self._snapshot(status)
+                return status
+            self._snapshot(status)
 
         self._emit(TaskStartedEvent(
             task_id=task_id,
