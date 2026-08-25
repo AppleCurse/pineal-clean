@@ -39,7 +39,8 @@ async def test_deferred_agent_low_confidence_is_not_written_as_evidence(executor
     assert run.status == "halted"
     assert run.error_code == "LOW_CONFIDENCE"
     assert "resonance_synthesizer" not in [item["agent"] for item in status.evidence_chain]
-    assert status.status == PipelineStatus.PARTIALLY_COMPLETED
+    # [019] hiçbir ajan kanıt üretmedi -> PARTIAL değil, INSUFFICIENT
+    assert status.status == PipelineStatus.HALTED_INSUFFICIENT_EVIDENCE
 
 
 @pytest.mark.asyncio
@@ -52,4 +53,5 @@ async def test_deferred_agent_invalid_output_is_not_written_as_evidence(executor
     assert run.status == "failed"
     assert run.error_code == "TypeError"
     assert "resonance_synthesizer" not in [item["agent"] for item in status.evidence_chain]
-    assert status.status == PipelineStatus.PARTIALLY_COMPLETED
+    # [019] hiçbir ajan kanıt üretmedi -> PARTIAL değil, INSUFFICIENT
+    assert status.status == PipelineStatus.HALTED_INSUFFICIENT_EVIDENCE

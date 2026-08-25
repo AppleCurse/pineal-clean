@@ -665,6 +665,8 @@ class PinealExecutor:
                 status.agent_runs["shadow_executor"] = AgentRun(
                     task_id=task_id, agent_name="shadow_executor", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    output_summary=shadow_result.model_dump()
+                        if hasattr(shadow_result, "model_dump") else {},
                     confidence=(
                         getattr(shadow_result, "confidence", None)
                         if isinstance(getattr(shadow_result, "confidence", None), (int, float))
@@ -692,6 +694,7 @@ class PinealExecutor:
                 status.agent_runs["osint_investigator"] = AgentRun(
                     task_id=task_id, agent_name="osint_investigator", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    output_summary=status.osint_footprint,
                     confidence=(
                         getattr(osint_result, "confidence", None)
                         if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))

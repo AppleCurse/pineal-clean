@@ -33,7 +33,8 @@ class UncertaintyEngine:
         'bulunamadı', 'bulunamadi', 'veri yok', 'bilgi yok', 'kayıt yok',
         'kayit yok', 'sonuç yok', 'sonuc yok', 'veri bulunamadı',
         'veri bulunamadi', 'bilinmiyor', 'belirsiz', 'tanımlı değil',
-        'tanimli degil', 'yetersiz veri', 'veri yetersiz', 'not found',
+        'tanimli degil', 'yetersiz veri', 'veri yetersiz', 'yetersiz gönderi',
+        'sentez yapılamadı', '< min', 'not found',
         'no data', 'no results', 'no info', 'no evidence', 'unknown',
     )
     NON_EVIDENCE_EXACT = frozenset({

@@ -42,6 +42,19 @@ def test_placeholder_strings_are_zero_evidence():
     engine = UncertaintyEngine()
     for marker in ("bilinmiyor", "veri yok", "n/a", "-", "unknown", "sonuç yok"):
         assert engine._score_field_value(marker, empty_list_penalty=0.12) == 0.0, marker
+    # 7-pillar deterministik yetersiz-veri notları da kanıt DEĞİLDİR
+    for note in (
+        "SEISMOS: 0 gönderi < min 5.",
+        "VOID: 0 token < min 40.",
+        "GRAVITY: Yetersiz gönderi veya meta veri.",
+        "KEY: Tüm motorlar yetersiz veri döndü — sentez yapılamadı.",
+    ):
+        assert engine._score_field_value(note, empty_list_penalty=0.12) == 0.0, note
+    # Gerçek tamamlanma notu kanıttır
+    assert engine._score_field_value(
+        "KEY: Sentez tamamlandı · güven=0.80 · 6/6 motor aktif.",
+        empty_list_penalty=0.12,
+    ) == 1.0
     # Uzunluk hâlâ skor üretmez
     assert engine._score_field_value("a", empty_list_penalty=0.12) == 1.0
     assert engine._score_field_value("x" * 200, empty_list_penalty=0.12) == 1.0
