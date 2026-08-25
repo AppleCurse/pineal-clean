@@ -18,6 +18,15 @@ class LLMGateway:
         "deepseek_v4_pro": "deepseek/deepseek-v4-pro",
         "gemini_3_7_flash": "google/gemini-3.7-flash"
     }
+
+    MODEL_PRICING = {
+        "upstage/solar-pro4": {"in": 0.03, "out": 0.12},
+        "inclusionai/ling-3.0-flash": {"in": 0.021, "out": 0.063},
+        "deepseek/deepseek-v4-flash": {"in": 0.14, "out": 0.28},
+        "z-ai/glm-5.2": {"in": 0.10, "out": 0.10},
+        "deepseek/deepseek-v4-pro": {"in": 0.50, "out": 1.00},
+        "google/gemini-3.7-flash": {"in": 0.375, "out": 1.875}
+    }
     
     TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["solar_pro4"])
     TIER_2_MODEL = MODEL_REGISTRY["ling_3_flash"]
@@ -50,6 +59,7 @@ class LLMGateway:
         self.circuit_open = False
         self.circuit_opened_at = 0.0
         self.live_unlocked = False
+        self.total_cost = 0.0
         self._rebuild()
         self.cache = build_cache_from_env()
 
@@ -159,6 +169,17 @@ class LLMGateway:
                     timeout=45.0
                 )
                 self.failure_count = 0
+                
+                # --- COST TRACKING ---
+                if hasattr(r, "usage") and r.usage and not is_local_request:
+                    p_tokens = getattr(r.usage, "prompt_tokens", 0) or 0
+                    c_tokens = getattr(r.usage, "completion_tokens", 0) or 0
+                    rates = self.MODEL_PRICING.get(selected_model, {"in": 0.10, "out": 0.10})
+                    cost_in = (p_tokens / 1_000_000) * rates["in"]
+                    cost_out = (c_tokens / 1_000_000) * rates["out"]
+                    self.total_cost += (cost_in + cost_out)
+                # ---------------------
+                
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)

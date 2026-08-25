@@ -112,10 +112,15 @@ class PinealExecutor:
             saved_cost_str = f"${saved_cost:.3f}"
         else:
             saved_cost_str = "$0.000"
+            
+        real_cost = getattr(self.llm_gateway, "total_cost", 0.0)
+        if not isinstance(real_cost, (int, float)):
+            real_cost = 0.0
         
         status.telemetry = {
             "cache_hit_rate": hit_rate,
             "saved_llm_cost": saved_cost_str,
+            "total_llm_cost": f"${real_cost:.5f}",
             "decision_weight_updates": len(status.agent_runs)
         }
         
