@@ -46,20 +46,29 @@ class CanonicalMemory:
             if os.path.exists(profile_file):
                 async with aiofiles.open(profile_file, 'r') as f:
                     content = await f.read()
-                    existing = json.loads(content)
-            
+                try:
+                    existing = json.loads(content) if content.strip() else {}
+                except json.JSONDecodeError:
+                    # Preserve forensic material rather than silently overwriting it.
+                    corrupt_path = f"{profile_file}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+                    await asyncio.to_thread(os.replace, profile_file, corrupt_path)
+                    existing = {}
+
             # Yeni kanıtları ekle (Çelişki kontrolü ile)
             merged = self._resolve_conflicts(existing.get('evidence', []), evidence_chain)
-            
-            # Kaydet
-            async with aiofiles.open(profile_file, 'w') as f:
-                content = json.dumps({
-                    'task_id': task_id,
-                    'last_updated': datetime.now(timezone.utc).isoformat(),
-                    'evidence': merged,
-                    'confidence': self._calculate_overall_confidence(merged)
-                }, indent=2)
-                await f.write(content)
+            payload = json.dumps({
+                'task_id': task_id,
+                'last_updated': datetime.now(timezone.utc).isoformat(),
+                'evidence': merged,
+                'confidence': self._calculate_overall_confidence(merged)
+            }, indent=2)
+
+            # Write then atomically replace so interrupted writes do not leave an
+            # empty canonical memory file.
+            temp_file = f"{profile_file}.tmp"
+            async with aiofiles.open(temp_file, 'w') as f:
+                await f.write(payload)
+            await asyncio.to_thread(os.replace, temp_file, profile_file)
     
     def _resolve_conflicts(self, old: List[Dict], new: List[Dict]) -> List[Dict]:
         """
