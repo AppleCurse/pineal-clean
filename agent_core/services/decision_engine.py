@@ -19,18 +19,21 @@ class DecisionEngine:
         Determine final pipeline status based on failed/halted agent runs.
         """
         failed_runs = {name: run for name, run in agent_runs.items() if run.status in ("failed", "halted")}
-        
-        if not failed_runs:
-            return PipelineStatus.COMPLETED
-        
         critical_failures = [
-            agent_name for agent_name in failed_runs.keys()
+            agent_name for agent_name in failed_runs
             if agent_name in self.config.critical_agents or not self.config.get_agent_config(agent_name).graceful_degradation
         ]
-        
         if critical_failures:
-            logger.error(f"❌ Pipeline halted due to critical failures: {', '.join(critical_failures)}")
+            logger.error(f"Pipeline halted due to critical failures: {', '.join(critical_failures)}")
             return PipelineStatus.HALTED_CRITICAL
-        else:
-            logger.warning(f"⚠️  Pipeline partially completed. Failed non-critical agents: {', '.join(failed_runs.keys())}")
+
+        degraded_runs = {
+            name: run for name, run in agent_runs.items()
+            if run.status == "unavailable"
+            or any(str(w).lower() in {"data_unavailable", "provider_credentials_unavailable", "llm_unavailable"} for w in getattr(run, "warnings", []))
+        }
+        if failed_runs or degraded_runs:
+            affected = ", ".join(sorted(set(failed_runs) | set(degraded_runs)))
+            logger.warning(f"Pipeline partially completed. Unavailable/failed agents: {affected}")
             return PipelineStatus.PARTIALLY_COMPLETED
+        return PipelineStatus.COMPLETED
