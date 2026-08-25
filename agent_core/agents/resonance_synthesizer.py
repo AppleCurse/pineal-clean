@@ -22,6 +22,13 @@ class ResonanceSynthesizerAgent:
         cognitive_data = payload.get("cognitive", {})
         sacred_rules = payload.get("sacred_rules", "")
 
+        if not any((passions_data, friction_data, cognitive_data)):
+            return AuthenticBridge(
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="target_context_unavailable",
+            )
+
         user_bio = user_profile.get("bio", "")
         user_posts = user_profile.get("posts", [])
         if not user_bio and not user_posts:
@@ -57,7 +64,7 @@ Aşağıdaki JSON formatında yanıt ver:
 {{
   "shared_passions": ["Her iki tarafın da ortak ilgi duyduğu veya rezonans kurabileceği 1-3 konu"],
   "complementary_perspectives": ["Birbirini zenginleştirebilecek farklı bakış açıları"],
-  "resonance_score": 0.85, // 0.0 ile 1.0 arası genel sahici uyum skoru
+  "resonance_score": 0.0, // 0.0 ile 1.0 arası; yalnız sağlanan kanıttan türet
   "authentic_opening_topic": "İletişimin başlayacağı en doğal ve derinlikli konu başlığı",
   "conversation_starter_rationale": "Neden bu konunun seçildiğinin mantıksal ve saygılı açıklaması",
   "suggested_opening_message": "Doğrudan karşı tarafa gönderilebilecek, samimi, merak uyandırıcı ve saygılı mesaj taslağı",
