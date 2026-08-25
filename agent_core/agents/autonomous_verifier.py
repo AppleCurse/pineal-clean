@@ -68,7 +68,15 @@ class AutonomousVerifier:
             if name:
                 query = f"{name} {query}"
 
-            results = await self.search_engine.search(query, num_results=2)
+            outcome = await self.search_engine.search(query, num_results=2)
+            if not outcome.available:
+                return VerifierReport(
+                    verifications=verifications,
+                    overall_authenticity_score=0.0,
+                    status="UNVERIFIED",
+                    confidence=0.0,
+                )
+            results = outcome.results
             if not results:
                 verifications.append(VerificationResult(
                     claim_text=claim.claim_text,

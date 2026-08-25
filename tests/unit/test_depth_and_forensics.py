@@ -77,6 +77,7 @@ async def test_search_engine_fallback_duckduckgo(monkeypatch):
         return [SearchResult(query=query, content="Sos Music Production Records", source_url="https://sosmusic.com", provider="duckduckgo")]
     monkeypatch.setattr(engine, "_search_duckduckgo", fake_ddg)
     
-    res = await engine.search("Sos Music")
-    assert len(res) == 1
-    assert res[0].provider == "duckduckgo"
+    outcome = await engine.search("Sos Music")
+    assert outcome.status == "OK"
+    assert len(outcome.results) == 1
+    assert outcome.results[0].provider == "duckduckgo"
