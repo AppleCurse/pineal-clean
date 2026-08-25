@@ -14,8 +14,8 @@ class VerificationResult(BaseModel):
 class VerifierReport(BaseModel):
     verifications: List[VerificationResult] = []
     overall_authenticity_score: float = 0.0
-    status: str = "VERIFIED"
-    confidence: float = 0.85
+    status: str = "UNVERIFIED"
+    confidence: float = 0.0
 
     model_config = ConfigDict(extra="forbid")
 
@@ -34,7 +34,7 @@ class AutonomousVerifier:
                 verifications=[],
                 overall_authenticity_score=0.0,
                 status="UNVERIFIED",
-                confidence=0.85,
+                confidence=0.0,
             )
 
         claim_prompt = (
@@ -56,9 +56,9 @@ class AutonomousVerifier:
         if not claims_list:
             return VerifierReport(
                 verifications=[],
-                overall_authenticity_score=1.0,
+                overall_authenticity_score=0.0,
                 status="UNVERIFIED",
-                confidence=0.85,
+                confidence=0.0,
             )
 
         verifications = []
