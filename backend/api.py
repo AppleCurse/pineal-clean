@@ -520,15 +520,12 @@ async def run_mission(req: InitiatePayload):
                             data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
                             payload["target_profile"].update({k: v for k, v in data.items() if v})
                     finally:
-                        if page:
-                            try: await page.close()
-                            except: pass
-                        if ctx:
-                            try: await ctx.close()
-                            except: pass
-                        if browser:
-                            try: await browser.close()
-                            except: pass
+                        for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
+                            if resource:
+                                try:
+                                    await resource.close()
+                                except Exception as cleanup_error:
+                                    broadcast_log(client_id, "WARNING", f"SCRAPER CLEANUP: {resource_name} kapanamadı: {str(cleanup_error)[:80]}")
                         
                 broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:

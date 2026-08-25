@@ -337,33 +337,33 @@ class HumanBehaviorAnalyzer:
         primary = max(contradictions, key=sort_key)
         wound_types = {
             "visual_linguistic_mismatch": {
-                "type": "yalnizlik_köprüsü",
-                "defense": "kalabalik_maskesi",
-                "approach": "bosluk_rezonansi",
+                "type": "gözlemlenebilir_tutarsızlık",
+                "defense": "yorumlanmadı",
+                "approach": "kanıtla_sınırlı_iletişim",
             },
             "linguistic_contradiction": {
-                "type": "bagimsizlik_celiskisi",
-                "defense": "kontrol_mekanizmasi",
-                "approach": "guven_insaati",
+                "type": "gözlemlenebilir_tutarsızlık",
+                "defense": "yorumlanmadı",
+                "approach": "kanıtla_sınırlı_iletişim",
             },
             "social_vs_alone": {
-                "type": "yalnizlik_köprüsü",
-                "defense": "kalabalik_maskesi",
-                "approach": "bosluk_rezonansi",
+                "type": "gözlemlenebilir_tutarsızlık",
+                "defense": "yorumlanmadı",
+                "approach": "kanıtla_sınırlı_iletişim",
             },
             "independent_vs_needy": {
-                "type": "bagimsizlik_celiskisi",
-                "defense": "kontrol_mekanizmasi",
-                "approach": "guven_insaati",
+                "type": "gözlemlenebilir_tutarsızlık",
+                "defense": "yorumlanmadı",
+                "approach": "kanıtla_sınırlı_iletişim",
             },
             "happy_vs_tired": {
-                "type": "tukenmislik_yarasi",
-                "defense": "pozitif_maske",
-                "approach": "izin_verme_alani",
+                "type": "gözlemlenebilir_tutarsızlık",
+                "defense": "yorumlanmadı",
+                "approach": "kanıtla_sınırlı_iletişim",
             },
         }
         return wound_types.get(
-            primary.get("type"), {"type": "tukenmislik_yarasi", "defense": "pozitif_maske", "approach": "izin_verme_alani"}
+            primary.get("type"), {"type": "gözlemlenebilir_tutarsızlık", "defense": "yorumlanmadı", "approach": "kanıtla_sınırlı_iletişim"}
         )
 
     def _calculate_resonance_potential(

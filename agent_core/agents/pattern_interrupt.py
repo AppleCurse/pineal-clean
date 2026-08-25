@@ -133,8 +133,19 @@ class PatternInterrupt:
             return "çelişki"
         return "sessiz sinyal"
         
-    def _extract_temporal_signal(self, analysis: Dict) -> str:
-        return "gece vakti"
-        
-    def _extract_cultural_reference(self, analysis: Dict) -> str:
-        return "paylaşım"
+    def _extract_temporal_signal(self, analysis: Dict) -> str | None:
+        timestamps = analysis.get("evidence_timestamps", []) or []
+        if not timestamps:
+            return None
+        from agent_core.services.timing_forensics import analyze_timing
+        timing = analyze_timing(timestamps)
+        if not timing:
+            return None
+        return f"tepe saat {timing.get('peak_hour', '--')}"
+
+    def _extract_cultural_reference(self, analysis: Dict) -> str | None:
+        quotes = analysis.get("evidence_quotes", []) or []
+        for quote in quotes:
+            if isinstance(quote, str) and quote.strip():
+                return quote.strip()[:80]
+        return None

@@ -101,7 +101,7 @@ impl AgentNode for ResonanceCalculator {
                     task_id,
                     agent_name: self.name().to_string(),
                     step_name: "Uncertainty_Check_Passed".to_string(),
-                    output_hash: "pass_hash".to_string(),
+                    output_hash: format!("{}:{}:uncertainty_pass", task_id, self.name()),
                 });
             }
             Err(e) => {
