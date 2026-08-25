@@ -26,11 +26,13 @@ class CognitiveProfilerAgent:
 
         if not bio and not posts and not visual_evidence:
             return CognitiveStyle(
-                communication_tone="dengeli",
-                complexity_level="orta",
+                communication_tone="",
+                complexity_level="",
                 humor_style=None,
-                social_orientation="bağımsız",
-                confidence=0.2
+                social_orientation="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_target_data"
             )
 
         prompt = f"""
@@ -45,13 +47,15 @@ Son Paylaşımlar / Metinler:
 
 {visual_text}
 
+Confidence kuralı: confidence alanını yalnızca verilen doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
+
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{
   "communication_tone": "doğrudan | analitik | samimi | mesafeli | metaforik",
   "complexity_level": "sade | teknik | kavramsal",
   "humor_style": "ironi | hiciv | kuru mizah | yok",
   "social_orientation": "toplulukçu | bağımsız | gözlemci",
-  "confidence": 0.85
+  "confidence": 0.0
 }}
 """
         try:
@@ -59,15 +63,18 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 prompt=prompt,
                 schema=CognitiveStyle,
                 task="depth",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="cognitive_profiler"
             )
             return result
         except Exception as e:
             logger.warning(f"CognitiveProfiler LLM hatası: {e}")
             return CognitiveStyle(
-                communication_tone="dengeli",
-                complexity_level="orta",
+                communication_tone="",
+                complexity_level="",
                 humor_style=None,
-                social_orientation="bağımsız",
-                confidence=0.3
+                social_orientation="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable"
             )

@@ -2,6 +2,7 @@ import json
 import aiofiles
 import os
 import asyncio
+import re
 from collections import defaultdict
 from typing import List, Dict
 from datetime import datetime, timezone
@@ -27,10 +28,17 @@ class CanonicalMemory:
         os.makedirs(storage_path, exist_ok=True)
         self._locks = defaultdict(asyncio.Lock)
     
+    @staticmethod
+    def _validate_task_id(task_id: str):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", task_id):
+            raise ValueError(f"Geçersiz task_id formatı: {task_id}")
+
+    
     async def merge_evidence(self, task_id: str, evidence_chain: List[Dict]):
         """
         Kanıtları birleştir, çelişkileri çöz
         """
+        self._validate_task_id(task_id)
         profile_file = os.path.join(self.storage_path, f"{task_id}.json")
         
         async with self._locks[task_id]:
@@ -38,31 +46,67 @@ class CanonicalMemory:
             if os.path.exists(profile_file):
                 async with aiofiles.open(profile_file, 'r') as f:
                     content = await f.read()
-                    existing = json.loads(content)
-            
+                try:
+                    existing = json.loads(content) if content.strip() else {}
+                except json.JSONDecodeError:
+                    # Preserve forensic material rather than silently overwriting it.
+                    corrupt_path = f"{profile_file}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+                    await asyncio.to_thread(os.replace, profile_file, corrupt_path)
+                    existing = {}
+
             # Yeni kanıtları ekle (Çelişki kontrolü ile)
             merged = self._resolve_conflicts(existing.get('evidence', []), evidence_chain)
-            
-            # Kaydet
-            async with aiofiles.open(profile_file, 'w') as f:
-                content = json.dumps({
-                    'task_id': task_id,
-                    'last_updated': datetime.now(timezone.utc).isoformat(),
-                    'evidence': merged,
-                    'confidence': self._calculate_overall_confidence(merged)
-                }, indent=2)
-                await f.write(content)
+            payload = json.dumps({
+                'task_id': task_id,
+                'last_updated': datetime.now(timezone.utc).isoformat(),
+                'evidence': merged,
+                'confidence': self._calculate_overall_confidence(merged)
+            }, indent=2)
+
+            # Write then atomically replace so interrupted writes do not leave an
+            # empty canonical memory file.
+            temp_file = f"{profile_file}.tmp"
+            async with aiofiles.open(temp_file, 'w') as f:
+                await f.write(payload)
+            await asyncio.to_thread(os.replace, temp_file, profile_file)
     
     def _resolve_conflicts(self, old: List[Dict], new: List[Dict]) -> List[Dict]:
+        """Preserve provenance and mark conflicting claim evidence explicitly.
+
+        Evidence must never be silently reordered or discarded merely because a
+        confidence field exists at a different nesting level. Exact duplicates
+        are coalesced; conflicting claim verdicts remain visible to reviewers.
         """
-        Çelişkili kanıtları çözümle
-        """
-        # Basit çözüm: Daha yüksek confidence'lı kanıt kazanır
-        all_evidence = old + new
-        return sorted(all_evidence, key=lambda x: x.get('confidence', 0), reverse=True)
+        merged = []
+        seen = set()
+        for item in old + new:
+            fingerprint = json.dumps(item, sort_keys=True, default=str)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                merged.append(item)
+
+        claims = {}
+        for index, item in enumerate(merged):
+            result = item.get("result", {}) if isinstance(item, dict) else {}
+            if not isinstance(result, dict):
+                continue
+            claim = result.get("claim_text")
+            verdict = result.get("truth_status")
+            if claim and verdict:
+                claims.setdefault(claim.strip().casefold(), []).append((index, verdict))
+
+        for entries in claims.values():
+            verdicts = {verdict for _, verdict in entries}
+            if len(verdicts) > 1:
+                conflicting_indexes = [index for index, _ in entries]
+                for index, _ in entries:
+                    merged[index]["conflict_status"] = "CONTRADICTED"
+                    merged[index]["conflicts_with"] = [i for i in conflicting_indexes if i != index]
+        return merged
         
     def get_task_memory(self, task_id: str) -> dict:
         """ Belleği oku, yoksa veya bozuksa boş dict dön. """
+        self._validate_task_id(task_id)
         profile_file = os.path.join(self.storage_path, f"{task_id}.json")
         if not os.path.exists(profile_file):
             return {}

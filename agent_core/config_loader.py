@@ -11,7 +11,6 @@ class AgentThresholds:
     graceful_degradation: bool = True
     field_weights: Dict[str, float] = field(default_factory=dict)
     empty_list_penalty: float = 0.1
-    semantic_richness_weight: float = 0.2
 
 @dataclass
 class DecisionConfig:
@@ -53,8 +52,7 @@ class DecisionConfig:
                 min_llm_confidence=config_data.get("min_llm_confidence", default_cfg.get("min_llm_confidence", 0.65)),
                 graceful_degradation=config_data.get("graceful_degradation", default_cfg.get("graceful_degradation", True)),
                 field_weights=config_data.get("field_weights", {}),
-                empty_list_penalty=config_data.get("empty_list_penalty", 0.1),
-                semantic_richness_weight=config_data.get("semantic_richness_weight", 0.2)
+                empty_list_penalty=config_data.get("empty_list_penalty", 0.1)
             )
         
         return cls(

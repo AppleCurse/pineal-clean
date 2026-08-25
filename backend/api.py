@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
@@ -132,6 +132,34 @@ def rate_limit(key: str, bucket: str) -> bool:
     return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
+
+# W5: tarayici yetenegi probu (60sn cache). Telemetri artik import basarisi
+# degil, GERCEK capability raporlar (x_scraper / instagram_scraper / browser_installed).
+_telemetry_capability = {"ts": 0.0, "value": None}
+_telemetry_capability_lock = asyncio.Lock()
+
+async def _scraper_capability() -> dict:
+    now = time.monotonic()
+    cached = _telemetry_capability["value"]
+    if cached is not None and now - _telemetry_capability["ts"] < 60.0:
+        return cached
+    async with _telemetry_capability_lock:
+        cached = _telemetry_capability["value"]
+        if cached is not None and time.monotonic() - _telemetry_capability["ts"] < 60.0:
+            return cached
+        result = {"instagram": False, "browser": False}
+        try:
+            if InstagramGhostScraper is not None:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    exe = p.chromium.executable_path
+                    result["browser"] = bool(exe and os.path.exists(exe))
+                    result["instagram"] = result["browser"]
+        except Exception:
+            result = {"instagram": False, "browser": False}
+        _telemetry_capability["ts"] = time.monotonic()
+        _telemetry_capability["value"] = result
+        return result
 
 def get_room(client_id: str) -> dict:
     if client_id not in app.state.rooms:
@@ -399,7 +427,19 @@ async def run_mission(req: InitiatePayload):
                 broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
-        if req.url:
+        if effective_type == "x":
+            # Never run Pineal on an empty X profile. Preserve the request and
+            # ask the user to authorize a distinct, auditable alternative.
+            room = get_room(client_id)
+            room["pending_alternative_authorization"] = {
+                "url": req.url,
+                "requested_at": datetime.now().isoformat(),
+                "alternatives": ["public_web_search"],
+            }
+            broadcast_log(client_id, "WARNING", "X doğrudan çekilemiyor. Alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
+            broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
+            return
+        if req.url and effective_type != "x": 
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
@@ -488,15 +528,12 @@ async def run_mission(req: InitiatePayload):
                             data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
                             payload["target_profile"].update({k: v for k, v in data.items() if v})
                     finally:
-                        if page:
-                            try: await page.close()
-                            except: pass
-                        if ctx:
-                            try: await ctx.close()
-                            except: pass
-                        if browser:
-                            try: await browser.close()
-                            except: pass
+                        for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
+                            if resource:
+                                try:
+                                    await resource.close()
+                                except Exception as cleanup_error:
+                                    broadcast_log(client_id, "WARNING", f"SCRAPER CLEANUP: {resource_name} kapanamadı: {str(cleanup_error)[:80]}")
                         
                 broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:
@@ -550,6 +587,18 @@ def broadcast_result(client_id, res):
         "reading": find(res.evidence_chain, "human_behavior"),
         "reso": find(res.evidence_chain, "resonance_calc"),
         "hook": find(res.evidence_chain, "pattern_interrupt"),
+        # W4: zincir durumu final result'ta da korunur; UI snapshot bilgisini
+        # kaybetmesin diye planned/completed/runs buraya da girer.
+        "planned_agents": getattr(res, "planned_agents", []) or [],
+        "completed_agents": getattr(res, "completed_agents", []) or [],
+        "runs": {
+            name: {
+                "status": getattr(run, "status", None),
+                "confidence": getattr(run, "confidence", None),
+                "error_message": getattr(run, "error_message", None),
+            }
+            for name, run in (getattr(res, "agent_runs", None) or {}).items()
+        },
         "follower_audit": _dump_field(getattr(res, "follower_audit", None)),
         "timing_forensics": _dump_field(getattr(res, "timing_forensics", None)),
         "depth_report": _dump_field(getattr(res, "depth_report", None)),
@@ -645,12 +694,21 @@ async def api_override(req: OverridePayload):
 async def api_telemetry(client_id: str):
     executor = get_executor(client_id)
     vault = get_vault(client_id)
+    capability = await _scraper_capability()
     return {
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
-        "scraper": scrape_readonly is not None,
+        # geriye uyumlu anahtar; artik import basarisi degil, GERCEK yetenek
+        "scraper": capability["instagram"],
         "vault": "x_cookie" in vault or bool(vault.get("or_key")),
-        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None))
+        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
+        # W5: gercek capability raporu
+        "x_scraper": False,  # B4: X kazimasi devre disi birakildi
+        "instagram_scraper": capability["instagram"],
+        "browser_installed": capability["browser"],
+        # P2-MALİYET: oturum boyu tahmini harcama + aktif limit
+        "llm_spend_usd": round(float(getattr(executor.llm_gateway, "spend_usd", 0.0)), 6),
+        "llm_spend_cap_usd": float(getattr(executor.llm_gateway, "spend_cap_usd", 0.0)),
     }
 
 @app.post("/api/experimental/shadow/analyze")
@@ -716,34 +774,80 @@ async def aspasia_chat(payload: AspasiaChatPayload):
     resp = await aspasia.chat(payload.user_message, room, payload.model_override, payload.image_data)
     return resp.model_dump()
 
+class AlternativeAuthorizationPayload(BaseModel):
+    client_id: str
+    alternative: str
+    approved: bool
+
+
+@app.post("/api/scraper/authorize-alternative")
+async def authorize_scraper_alternative(req: AlternativeAuthorizationPayload):
+    room = get_room(req.client_id)
+    pending = room.get("pending_alternative_authorization")
+    if not pending:
+        return {"status": "no_pending_authorization"}
+    if not req.approved or req.alternative not in pending["alternatives"]:
+        room.pop("pending_alternative_authorization", None)
+        return {"status": "declined"}
+    # Authorization is recorded; provider execution is a separate explicit
+    # route and must not fabricate an X profile from unrelated sources.
+    room["authorized_alternatives"] = room.get("authorized_alternatives", []) + [{
+        "alternative": req.alternative,
+        "url": pending["url"],
+        "authorized_at": datetime.now().isoformat(),
+    }]
+    room.pop("pending_alternative_authorization", None)
+    return {"status": "authorized", "alternative": req.alternative}
+
+
 class IntervenePayload(BaseModel):
     client_id: str
     action_type: str
     target_agent: Optional[str] = None
-    parameters: dict = {}
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+
+
+class InterventionRecord(BaseModel):
+    client_id: str
+    action_type: str
+    target_agent: Optional[str] = None
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+    requested_at: str
+    outcome: str
+
 
 @app.post("/api/executor/intervene")
 async def executor_intervene(req: IntervenePayload):
-    """Kullanıcının doğrudan müdahale komutunu PinealExecutor üzerinde çalıştırır"""
+    """Record intervention requests without mutating shared executor safety state."""
     room = get_room(req.client_id)
-    executor = room.get("executor")
-    
-    if req.action_type == "OVERRIDE_CONFIDENCE":
-        executor.uncertainty.evaluate = lambda result, agent_name: type('UncertaintyResult', (), {'confidence': 1.0, 'is_suspicious': False, 'reason': 'Mösyö müdahalesi ile esnetildi'})()
-        broadcast_log(req.client_id, "WARNING", "MÜDAHALE: Güven kısıtlaması kaldırıldı (Override).")
-        return {"status": "overridden", "message": "Güven eşiği Mösyö emriyle 1.0'e sabitlendi."}
-        
-    elif req.action_type == "SKIP_AGENT" and req.target_agent:
-        if req.target_agent in executor.agents:
-            del executor.agents[req.target_agent]
-            broadcast_log(req.client_id, "WARNING", f"MÜDAHALE: Ajan devre dışı bırakıldı [{req.target_agent}].")
-            return {"status": "skipped", "message": f"{req.target_agent} ajan devre dışı."}
+    record = InterventionRecord(
+        client_id=req.client_id,
+        action_type=req.action_type,
+        target_agent=req.target_agent,
+        parameters=req.parameters,
+        reason=req.reason,
+        requested_at=datetime.now().isoformat(),
+        outcome="review_required",
+    )
+    room.setdefault("interventions", []).append(record.model_dump())
 
-    elif req.action_type == "HALT":
-        broadcast_log(req.client_id, "ERROR", "MÜDAHALE: Operasyon Mösyö emriyle DURDURULDU.")
-        return {"status": "halted", "message": "Operasyon durduruldu."}
+    # These actions previously rewrote uncertainty or deleted agents from the
+    # room's shared executor. They are now auditable requests, not bypasses.
+    if req.action_type in {"OVERRIDE_CONFIDENCE", "SKIP_AGENT", "HALT"}:
+        broadcast_log(req.client_id, "WARNING", f"MÜDAHALE KAYDEDİLDİ: {req.action_type}; otomatik uygulanmadı.")
+        return {
+            "status": "review_required",
+            "message": "Talep kaydedildi. Kanıt/güvenlik kuralları otomatik olarak değiştirilmedi.",
+            "intervention": record.model_dump(),
+        }
 
-    return {"status": "acknowledged", "message": "Müdahale emri alındı."}
+    return {
+        "status": "acknowledged",
+        "message": "Müdahale talebi kaydedildi; uygulanmadan önce inceleme gerekir.",
+        "intervention": record.model_dump(),
+    }
 
 class InterpreterPayload(BaseModel):
     client_id: str
@@ -753,6 +857,11 @@ class InterpreterPayload(BaseModel):
 @app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
+    import os
+    if os.getenv("ENABLE_INTERPRETER", "false").lower() != "true":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Interpreter endpoint is disabled by default for security.")
+        
     room = get_room(req.client_id)
     executor = room.get("executor")
     interpreter_agent = executor.agents.get("interpreter")

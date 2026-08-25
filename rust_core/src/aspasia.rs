@@ -61,7 +61,7 @@ impl AspasiaEngine {
     /// Python llm_gateway.py'yi çağrarak gerçek LLM yanıtı alır
     async fn call_llm_for_natural_language(&self, summary: &ExecutiveSummary) -> Result<String, String> {
         // API key boş ise fallback mesaj dön
-        if self.api_key.is_empty() || self.api_key == "dummy_key" {
+        if self.api_key.is_empty() {
             return Ok(format!("Mösyö, LLM API anahtarı yapılandırılmamış. Sistem sağlığı %{}. Durum: '{}'.", 
                 summary.system_health, summary.status_message));
         }
@@ -152,9 +152,9 @@ mod tests {
     use tokio;
 
     #[tokio::test]
-    async fn test_aspasia_with_dummy_key() {
+    async fn test_aspasia_with_missing_key() {
         let chief = ChiefEngine::new(100);
-        let mut aspasia = AspasiaEngine::new(chief, "dummy_key".to_string());
+        let mut aspasia = AspasiaEngine::new(chief, "".to_string());
         
         let task_id = Uuid::new_v4();
         

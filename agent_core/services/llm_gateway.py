@@ -9,6 +9,11 @@ from agent_core.services.response_cache import build_cache_from_env
 
 T = TypeVar('T', bound=BaseModel)
 
+
+class SpendCapExceeded(RuntimeError):
+    """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
+
+
 class LLMGateway:
     MODEL_REGISTRY = {
         "solar_pro4": "upstage/solar-pro4",
@@ -17,6 +22,15 @@ class LLMGateway:
         "glm_5_2": "z-ai/glm-5.2",
         "deepseek_v4_pro": "deepseek/deepseek-v4-pro",
         "gemini_3_7_flash": "google/gemini-3.7-flash"
+    }
+
+    MODEL_PRICING = {
+        "upstage/solar-pro4": {"in": 0.03, "out": 0.12},
+        "inclusionai/ling-3.0-flash": {"in": 0.021, "out": 0.063},
+        "deepseek/deepseek-v4-flash": {"in": 0.14, "out": 0.28},
+        "z-ai/glm-5.2": {"in": 0.10, "out": 0.10},
+        "deepseek/deepseek-v4-pro": {"in": 0.50, "out": 1.00},
+        "google/gemini-3.7-flash": {"in": 0.375, "out": 1.875}
     }
     
     TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["solar_pro4"])
@@ -29,6 +43,16 @@ class LLMGateway:
         "dialogue": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_flash"]],
         "fast": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
     }
+    # Agent policies make specialist selection explicit while retaining a
+    # bounded, capability-compatible failover chain.
+    AGENT_CHAINS = {
+        "cognitive_profiler": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_pro"], MODEL_REGISTRY["glm_5_2"]],
+        "friction_detector": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
+        "passion_mapper": [MODEL_REGISTRY["deepseek_v4_pro"], MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["glm_5_2"]],
+        "resonance_synthesizer": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"]],
+        "autonomous_verifier": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["ling_3_flash"]],
+    }
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
@@ -38,6 +62,15 @@ class LLMGateway:
         if os.getenv(env_var):
             return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
         return self.CHAINS.get(task.lower(), [self.TIER_1_MODEL, self.TIER_2_MODEL])
+
+    def get_agent_chain(self, agent_name: str | None, task: str) -> List[str]:
+        if agent_name:
+            env_var = f"OPENROUTER_AGENT_CHAIN_{agent_name.upper()}"
+            if os.getenv(env_var):
+                return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+            if agent_name in self.AGENT_CHAINS:
+                return self.AGENT_CHAINS[agent_name]
+        return self.get_chain(task)
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -50,8 +83,49 @@ class LLMGateway:
         self.circuit_open = False
         self.circuit_opened_at = 0.0
         self.live_unlocked = False
+        self.total_cost = 0.0
+        # P2-MALİYET: kümülatif harcama ve sert üst limit
+        self.spend_usd = 0.0
+        self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 1.0)
         self._rebuild()
         self.cache = build_cache_from_env()
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    def _account_spend(self, model: str, usage: Any) -> None:
+        """P2-MALİYET: yanıt usage'ından tahmini harcamayı işler.
+        Fiyatı bilinmeyen modellerde uyarı loglanır, harcama işlenmez.
+        """
+        import logging
+        if usage is None:
+            return
+        rates = self.MODEL_PRICING.get(model)
+        if rates is None:
+            logging.warning("SPEND: fiyati bilinmeyen model, harcama takip edilemiyor: %s", model)
+            return
+        try:
+            p_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            c_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        cost = (p_tokens * rates["in"] + c_tokens * rates["out"]) / 1_000_000.0
+        self.spend_usd += cost
+        self.total_cost += cost  # geriye uyumluluk
+
+    def _cap_exceeded(self) -> bool:
+        return self.spend_cap_usd > 0 and self.spend_usd >= self.spend_cap_usd
+
+    def _cap_message(self) -> str:
+        return (
+            f"OPENROUTER_SPEND_CAP_EXCEEDED: tahmini harcama ${self.spend_usd:.4f} "
+            f">= ust limit ${self.spend_cap_usd:.2f} (OPENROUTER_MAX_SPEND_USD). "
+            f"Daha fazla canli LLM cagrisi yapilmadi."
+        )
 
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
@@ -94,6 +168,10 @@ class LLMGateway:
         
         # Eğer local model seçildiyse veya global use_local aktifse
         is_local_request = (model and ("local" in model.lower() or "ollama" in model.lower() or "127.0.0.1" in model.lower())) or self.use_local
+
+        # P2-MALİYET: bütçe aşıldıysa canlı çağrı hiç yapılmaz
+        if not is_local_request and self._cap_exceeded():
+            raise SpendCapExceeded(self._cap_message())
         
         if is_local_request:
             target_client = self.local_client or AsyncOpenAI(base_url=self.local_base_url, api_key="ollama")
@@ -153,27 +231,44 @@ class LLMGateway:
 
         for attempt in range(max_retries):
             try:
+                # P2-MALİYET: döngü içinde de cap kontrolü
+                if not is_local_request and self._cap_exceeded():
+                    raise SpendCapExceeded(self._cap_message())
                 r = await target_client.chat.completions.create(
                     model=selected_model, temperature=temperature,
                     messages=messages,
                     timeout=45.0
                 )
                 self.failure_count = 0
+
+                # P2-MALİYET: token harcama hesabı
+                if not is_local_request:
+                    self._account_spend(selected_model, getattr(r, "usage", None))
+
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
                 return content
+            except SpendCapExceeded:
+                raise
             except Exception as e:
                 err_str = str(e).lower()
                 is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
                 
-                # Eğer yerel LLM (Ollama) bağlantısı koptuysa ve OpenRouter anahtarımız varsa otomatik buluta geç
-                if is_local_request and is_conn_error and self.client:
-                    logging.warning(f"Yerel model ({selected_model}) bağlantısı kurulamadı. OpenRouter bulut modeline ({self.TIER_1_MODEL}) geçiliyor...")
-                    target_client = self.client
-                    selected_model = self.TIER_1_MODEL
-                    is_local_request = False
-                    continue
+                # Provider boundary is explicit: local requests do not silently
+                # become paid cloud requests. Opt-in is required for any switch.
+                if is_local_request and is_conn_error:
+                    if os.getenv("ALLOW_LOCAL_TO_CLOUD_FALLBACK", "false").lower() != "true":
+                        raise RuntimeError(
+                            "LOCAL_PROVIDER_UNAVAILABLE: Yerel model erişilemedi; "
+                            "bulut fallback'i açıkça yetkilendirilmedi."
+                        ) from e
+                    if self.client:
+                        logging.warning(f"Yetkili provider fallback: local {selected_model} → cloud {self.TIER_1_MODEL}")
+                        target_client = self.client
+                        selected_model = self.TIER_1_MODEL
+                        is_local_request = False
+                        continue
 
                 is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
                 if is_auth_error:
@@ -351,7 +446,8 @@ class LLMGateway:
         schema: Type[T],
         task: str = "depth",
         temperature: float = 0.7,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        agent_name: Optional[str] = None,
     ) -> T:
         """Görev bazlı model zinciri ile şemalı JSON sorgusu yapar.
 
@@ -359,7 +455,7 @@ class LLMGateway:
         AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
         """
         import logging
-        chain = self.get_chain(task)
+        chain = self.get_agent_chain(agent_name, task)
         last_exception = None
 
         for model in chain:

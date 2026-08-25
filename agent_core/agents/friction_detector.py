@@ -36,7 +36,9 @@ Görsel İnceleme Kanıtları (Multimodal Vision):
                 stress_triggers=[],
                 boundary_signals=[],
                 evidence_quotes=[],
-                confidence=0.2
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_target_data"
             )
 
         prompt = f"""
@@ -53,25 +55,25 @@ Son Paylaşımlar / Metinler:
 
 {visual_text}
 
+Confidence kuralı: confidence alanını yalnızca verilen doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
+
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{
   "sensitivities": ["Kişinin hoşlanmadığı, mesafeli durduğu veya hassas olduğu somut konular"],
   "stress_triggers": ["Onu yoran, tepkisini çeken durumlar"],
   "boundary_signals": ["İletişimde aşılmaması gereken kişisel sınırlar"],
   "evidence_quotes": ["Metinden veya fotoğraflardan doğrudan alıntılanan somut kanıtlar"],
-  "confidence": 0.85
+  "confidence": 0.0
 }}
-Not: Profilde belirgin bir sürtüşme veya çatışma yoksa listeleri boş ([]) bırakabilirsin, ancak analiz güvenilirliğini ifade etmek için "confidence": 0.85 olarak dön.
 """
         try:
             result = await self.llm_gateway.query_json_chain(
                 prompt=prompt,
                 schema=FrictionProfile,
                 task="depth",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="friction_detector"
             )
-            if hasattr(result, "confidence") and (result.confidence is None or result.confidence < 0.6):
-                result.confidence = 0.85
             return result
         except Exception as e:
             logger.warning(f"FrictionDetector LLM hatası: {e}")
@@ -80,5 +82,7 @@ Not: Profilde belirgin bir sürtüşme veya çatışma yoksa listeleri boş ([])
                 stress_triggers=[],
                 boundary_signals=[],
                 evidence_quotes=[],
-                confidence=0.85
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable"
             )

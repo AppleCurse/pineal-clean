@@ -43,7 +43,11 @@ async def test_query_chain_fallback_on_server_error():
     gw.query = AsyncMock(side_effect=mock_query)
 
     res = await gw.query_chain("test prompt", task="depth")
+<<<<<<< HEAD
     assert res == "OK from z-ai/glm-5.2"
+=======
+    assert "OK from z-ai/glm-5.2" in res
+>>>>>>> 74e51a3a92ece8ec9976b976955db1b4db106554
     assert call_count == 2
 
 @pytest.mark.asyncio

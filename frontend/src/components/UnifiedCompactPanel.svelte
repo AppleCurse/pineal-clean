@@ -172,9 +172,9 @@
   // ==========================================
   // TELEMETRY METRICS & AGENT CHAIN
   // ==========================================
-  let ritualMatchScore = 0;
-  let playlistResonance = 0;
-  let envyIntensity = 0;
+  let resonanceScore = 0;
+  let resonanceApproach = '';
+  let redFlags: string[] = [];
 
   const agentList = [
     { id: "mirror_truth", name: "MIRROR TRUTH", color: "#10b981" },
@@ -240,9 +240,10 @@
       keyMatrix = $taskStatus.key_matrix ?? null;
 
       if ($taskStatus.reso) {
-        ritualMatchScore = ($taskStatus.reso.ritual_match_score || 0) * 100;
-        playlistResonance = ($taskStatus.reso.playlist_resonance || 0) * 100;
-        envyIntensity = ($taskStatus.reso.envy_intensity || 0) * 100;
+        // W3: yalniz ResonanceProfile'da GERCEKTEN bulunan alanlar okunur.
+        resonanceScore = ($taskStatus.reso.compatibility_score ?? 0) * 100;
+        resonanceApproach = $taskStatus.reso.recommended_approach ?? '';
+        redFlags = $taskStatus.reso.red_flags ?? [];
       }
       if ($taskStatus.runs) {
         runs = $taskStatus.runs;
@@ -275,21 +276,28 @@
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 8px;">
-        {#each [
-          { label: t[$currentLang].ritualMatch, val: ritualMatchScore, col: '#10b981' },
-          { label: t[$currentLang].playlistResonance, val: playlistResonance, col: '#06b6d4' },
-          { label: t[$currentLang].envyIntensity, val: envyIntensity, col: '#f59e0b' }
-        ] as g}
-          <div class="screen-card" style="padding: 8px 10px;">
-            <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-bottom: 4px;">
-              <span>{g.label}</span>
-              <strong style="color: var(--text-main); font-size: 11px;">%{g.val.toFixed(0)}</strong>
-            </div>
-            <div style="height: 6px; background: #1f140e; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17;">
-              <div style="height: 100%; width: {Math.max(5, g.val)}%; background: {g.col}; transition: width 0.4s ease;"></div>
-            </div>
+        <div class="screen-card" style="padding: 8px 10px;">
+          <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-bottom: 4px;">
+            <span>{t[$currentLang].resonanceScoreLabel}</span>
+            <strong style="color: var(--text-main); font-size: 11px;">%{resonanceScore.toFixed(0)}</strong>
           </div>
-        {/each}
+          <div style="height: 6px; background: #1f140e; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17;">
+            <div style="height: 100%; width: {Math.max(5, resonanceScore)}%; background: #10b981; transition: width 0.4s ease;"></div>
+          </div>
+          {#if resonanceApproach}
+            <div style="font-size: 9px; color: var(--text-muted); margin-top: 6px; line-height: 1.35;">
+              <b style="color: var(--text-dim);">{t[$currentLang].approachLabel}:</b> {resonanceApproach}
+            </div>
+          {/if}
+          {#if redFlags.length}
+            <div style="font-size: 8px; color: #f87171; margin-top: 5px; line-height: 1.4;">
+              <b>{t[$currentLang].redFlagsLabel}:</b>
+              {#each redFlags as flag}
+                <span style="display: inline-block; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); padding: 1px 5px; border-radius: 3px; margin: 2px 3px 0 0;">{flag}</span>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
 
@@ -604,17 +612,17 @@
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
         <!-- 1. 🔍 TAKİPÇİ VE BOT DENETİMİ -->
         {#if followerAudit}
-          <div class="screen-card" style="border-color: {followerAudit.verdict === 'healthy' ? 'rgba(16,185,129,0.5)' : followerAudit.verdict === 'inflated' ? 'rgba(239,68,68,0.5)' : 'rgba(245,158,11,0.5)'};">
+          <div class="screen-card" style="border-color: {followerAudit.verdict_code === 'healthy' ? 'rgba(16,185,129,0.5)' : followerAudit.verdict_code === 'inflated' ? 'rgba(239,68,68,0.5)' : 'rgba(245,158,11,0.5)'};">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
               <span class="font-cinzel" style="font-size: 10px; font-weight: 700; color: var(--gold);">
                 {t[$currentLang].followerAuditTitle}
               </span>
-              <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {followerAudit.verdict === 'healthy' ? 'background: #10b981; color: #000;' : followerAudit.verdict === 'inflated' ? 'background: #ef4444; color: #fff;' : 'background: #f59e0b; color: #000;'}">
-                {followerAudit.verdict === 'healthy' ? 'SAĞLIKLI' : followerAudit.verdict === 'inflated' ? 'ŞİŞİRME' : 'ŞÜPHELİ'}
+              <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {followerAudit.verdict_code === 'healthy' ? 'background: #10b981; color: #000;' : followerAudit.verdict_code === 'inflated' ? 'background: #ef4444; color: #fff;' : 'background: #f59e0b; color: #000;'}">
+                {followerAudit.verdict_code === 'healthy' ? t[$currentLang].verdictHealthy : followerAudit.verdict_code === 'inflated' ? t[$currentLang].verdictInflated : followerAudit.verdict_code === 'suspicious' ? t[$currentLang].verdictSuspicious : t[$currentLang].verdictInsufficient}
               </span>
             </div>
             <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">
-              <b>{t[$currentLang].botProbLabel}:</b> %{((followerAudit.bot_probability || 0) * 100).toFixed(0)} | 
+              <b>{t[$currentLang].engagementRateLabel}:</b> %{followerAudit.engagement_rate !== undefined && followerAudit.engagement_rate !== null ? followerAudit.engagement_rate : '--'} ({followerAudit.expected_rate_range || 'N/A'}) | 
               <b>Takipçi:</b> {followerAudit.follower_count || 0}
             </div>
             {#if followerAudit.evidence?.length}
@@ -635,16 +643,16 @@
                 {t[$currentLang].timingForensicsTitle}
               </span>
               <span style="font-size: 9px; font-weight: 700; color: #67e8f9;">
-                UTC {timingForensics.peak_utc_hour !== undefined ? timingForensics.peak_utc_hour : '--'}:00
+                UTC {timingForensics.peak_hour ?? '--'}
               </span>
             </div>
             <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">
-              <b>{t[$currentLang].nightOwlScoreLabel}:</b> %{((timingForensics.night_owl_score || 0) * 100).toFixed(0)} | 
-              <b>{t[$currentLang].tzShiftLabel}:</b> {timingForensics.tz_offset_hours_likely >= 0 ? '+' : ''}{timingForensics.tz_offset_hours_likely || 0}sa
+              <b>{t[$currentLang].nightOwlScoreLabel}:</b> %{((timingForensics.night_share || 0) * 100).toFixed(0)} | 
+              <b>{t[$currentLang].tzShiftLabel}:</b> {timingForensics.median_drift_hours >= 0 ? '+' : ''}{timingForensics.median_drift_hours ?? 0}sa
             </div>
-            {#if timingForensics.pattern_label}
+            {#if timingForensics.machine_note}
               <div style="font-size: 8px; color: var(--text-muted); line-height: 1.3; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 4px;">
-                ⏱️ {timingForensics.pattern_label}
+                ⏱️ {timingForensics.machine_note}
               </div>
             {/if}
           </div>

@@ -12,6 +12,14 @@ class SearchResult(BaseModel):
     provider: str = "unknown"
     model_config = ConfigDict(extra="forbid")
 
+class SearchOutcome(BaseModel):
+    """Provider availability is distinct from a legitimate empty search."""
+    results: List[SearchResult] = []
+    status: str = "NO_RESULTS"  # OK, PARTIAL, NO_RESULTS, UNAVAILABLE
+    error: Optional[str] = None
+    available: bool = True
+    model_config = ConfigDict(extra="forbid")
+
 class SearchEngine:
     """
     3 Kaynaklı Eşzamanlı Arama ve Doğrulama Motoru (Tavily + SerpAPI + Exa + DuckDuckGo).
@@ -29,7 +37,7 @@ class SearchEngine:
         if exa is not None:
             self.exa_key = exa if exa != "" else None
 
-    async def search(self, query: str, num_results: int = 5) -> List[SearchResult]:
+    async def search(self, query: str, num_results: int = 5) -> SearchOutcome:
         tasks = []
         if self.tavily_key:
             tasks.append(self._search_tavily(query, num_results))
@@ -45,6 +53,7 @@ class SearchEngine:
         results_lists = await asyncio.gather(*tasks, return_exceptions=True)
         
         merged: List[SearchResult] = []
+        errors = []
         seen_urls = set()
         for res in results_lists:
             if isinstance(res, list):
@@ -52,14 +61,45 @@ class SearchEngine:
                     if item.source_url not in seen_urls:
                         seen_urls.add(item.source_url)
                         merged.append(item)
-        return merged[:num_results * 2]
+            elif isinstance(res, BaseException):
+                errors.append(self._error_code(res))
+
+        if merged:
+            return SearchOutcome(
+                results=merged[:num_results * 2],
+                status="PARTIAL" if errors else "OK",
+                error=",".join(sorted(set(errors))) or None,
+                available=True,
+            )
+        if errors:
+            return SearchOutcome(results=[], status="UNAVAILABLE", error=",".join(sorted(set(errors))), available=False)
+        return SearchOutcome(results=[], status="NO_RESULTS", available=True)
+
+    @staticmethod
+    def _error_code(error: BaseException) -> str:
+        if isinstance(error, httpx.TimeoutException):
+            return "TIMEOUT"
+        if isinstance(error, httpx.HTTPStatusError):
+            code = error.response.status_code
+            if code in (401, 403):
+                return "AUTH_FAILED"
+            if code == 429:
+                return "RATE_LIMITED"
+            return "PROVIDER_ERROR"
+        if isinstance(error, httpx.RequestError):
+            return "NETWORK_ERROR"
+        return "PROVIDER_ERROR"
 
     async def _search_tavily(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://api.tavily.com/search"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         payload = {"api_key": self.tavily_key, "query": query, "max_results": num_results}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.post(url, json=payload)
+                res.raise_for_status()
                 if res.status_code == 200:
                     data = res.json()
                     return [
@@ -67,15 +107,19 @@ class SearchEngine:
                         for r in data.get("results", [])
                     ]
         except Exception:
-            pass
+            raise
         return []
 
     async def _search_serpapi(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://serpapi.com/search"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         params = {"api_key": self.serpapi_key, "q": query, "num": num_results, "engine": "google"}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.get(url, params=params)
+                res.raise_for_status()
                 if res.status_code == 200:
                     data = res.json()
                     return [
@@ -83,16 +127,20 @@ class SearchEngine:
                         for r in data.get("organic_results", [])
                     ]
         except Exception:
-            pass
+            raise
         return []
 
     async def _search_exa(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://api.exa.ai/search"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         headers = {"x-api-key": self.exa_key, "Content-Type": "application/json"}
         payload = {"query": query, "numResults": num_results}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.post(url, headers=headers, json=payload)
+                res.raise_for_status()
                 if res.status_code == 200:
                     data = res.json()
                     return [
@@ -100,16 +148,20 @@ class SearchEngine:
                         for r in data.get("results", [])
                     ]
         except Exception:
-            pass
+            raise
         return []
 
     async def _search_duckduckgo(self, query: str, num_results: int) -> List[SearchResult]:
         url = "https://html.duckduckgo.com/html/"
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(url):
+            return []
         data = {"q": query}
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 res = await client.post(url, data=data, headers=headers)
+                res.raise_for_status()
                 if res.status_code == 200:
                     html = res.text
                     results = []
@@ -120,5 +172,5 @@ class SearchEngine:
                         results.append(SearchResult(query=query, content=snippet.strip(), source_url=raw_url.strip(), provider="duckduckgo"))
                     return results
         except Exception:
-            pass
+            raise
         return []

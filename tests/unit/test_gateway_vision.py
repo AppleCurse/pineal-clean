@@ -58,9 +58,9 @@ async def test_explicit_model_wins_over_vision_default(monkeypatch):
     fake = _FakeCompletions()
     gw.client = type("C", (), {"chat": type("CH", (), {"completions": fake})()})()
 
-    await gw.query("prompt", model="meta-llama/llama-3.3-70b-instruct",
+    await gw.query("prompt", model="deepseek/deepseek-v4-flash",
                    images=["data:image/png;base64,BB"])
-    assert fake.captured["model"] == "meta-llama/llama-3.3-70b-instruct"
+    assert fake.captured["model"] == "deepseek/deepseek-v4-flash"
 
 
 @pytest.mark.asyncio

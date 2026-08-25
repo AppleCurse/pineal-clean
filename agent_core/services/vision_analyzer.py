@@ -16,6 +16,8 @@ class VisualEvidence(BaseModel):
     activity_signals: List[str] = []         # Gece çalışması, yalnız yürüyüş, müzik kaydı vb.
     visual_evidence_summary: str = ""        # 2-3 cümlelik somut görsel özet
     confidence: float = 1.0
+    data_confidence: bool = True
+    fallback_reason: str = ""
 
     model_config = ConfigDict(extra="allow")
 
@@ -28,25 +30,23 @@ class VisionAnalyzer:
     def __init__(self, llm_gateway: Optional[LLMGateway] = None):
         self.llm_gateway = llm_gateway or LLMGateway()
 
-    async def _download_and_encode_image(self, image_url: str, client: Optional[httpx.AsyncClient] = None) -> Optional[str]:
+    async def _download_and_encode_image(self, image_url: str) -> Optional[str]:
         """Görseli indirip base64 formatına çevirir."""
         if not image_url or not image_url.startswith("http"):
             return None
-
-        async def fetch(c: httpx.AsyncClient):
-            resp = await c.get(image_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            })
-            if resp.status_code == 200:
-                return base64.b64encode(resp.content).decode("utf-8")
+            
+        from agent_core.utils.security import is_safe_url
+        if not is_safe_url(image_url):
+            logger.warning(f"SSRF Güvenlik Koruması: Bu URL'ye erişim yasaktır: {image_url}")
             return None
-
+            
         try:
-            if client is None:
-                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as new_client:
-                    return await fetch(new_client)
-            else:
-                return await fetch(client)
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                resp = await client.get(image_url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                })
+                if resp.status_code == 200:
+                    return base64.b64encode(resp.content).decode("utf-8")
         except Exception as e:
             logger.warning(f"Görsel indirilemedi ({image_url[:40]}...): {e}")
         return None
@@ -63,13 +63,14 @@ class VisionAnalyzer:
                 aesthetic_style="Görsel bulunamadı",
                 activity_signals=[],
                 visual_evidence_summary="İncelenecek fotoğraf verisi yok.",
-                confidence=0.2
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_urls"
             )
 
         # Parallel image download
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            tasks = [self._download_and_encode_image(url, client) for url in valid_urls]
-            results = await asyncio.gather(*tasks)
+        tasks = [self._download_and_encode_image(url) for url in valid_urls]
+        results = await asyncio.gather(*tasks)
 
         encoded_images = [b64 for b64 in results if b64]
 
@@ -80,7 +81,9 @@ class VisionAnalyzer:
                 aesthetic_style="Görseller indirilemedi",
                 activity_signals=[],
                 visual_evidence_summary="Fotoğraflar erişim kısıtlaması nedeniyle indirilemedi.",
-                confidence=0.3
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="download_failed"
             )
 
         # Multimodal Vision Prompt
@@ -120,5 +123,7 @@ Aşağıdaki JSON şemasına tam uygun yanıt ver:
             aesthetic_style="UNAVAILABLE",
             activity_signals=[],
             visual_evidence_summary="NO_EVIDENCE",
-            confidence=0.0
+            confidence=0.0,
+            data_confidence=False,
+            fallback_reason="llm_unavailable"
         )
