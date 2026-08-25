@@ -71,7 +71,8 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 prompt=prompt,
                 schema=FrictionProfile,
                 task="depth",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="friction_detector"
             )
             return result
         except Exception as e:

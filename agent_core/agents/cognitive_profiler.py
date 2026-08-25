@@ -63,7 +63,8 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 prompt=prompt,
                 schema=CognitiveStyle,
                 task="depth",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="cognitive_profiler"
             )
             return result
         except Exception as e:

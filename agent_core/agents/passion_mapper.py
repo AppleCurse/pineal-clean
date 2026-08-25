@@ -73,7 +73,8 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 prompt=prompt,
                 schema=PassionProfile,
                 task="depth",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="passion_mapper"
             )
             return result
         except Exception as e:

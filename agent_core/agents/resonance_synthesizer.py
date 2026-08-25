@@ -63,7 +63,8 @@ Aşağıdaki JSON formatında yanıt ver:
                 prompt=prompt,
                 schema=AuthenticBridge,
                 task="dialogue",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="resonance_synthesizer"
             )
             return result
         except Exception as e:

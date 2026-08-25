@@ -43,6 +43,16 @@ class LLMGateway:
         "dialogue": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_flash"]],
         "fast": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
     }
+    # Agent policies make specialist selection explicit while retaining a
+    # bounded, capability-compatible failover chain.
+    AGENT_CHAINS = {
+        "cognitive_profiler": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_pro"], MODEL_REGISTRY["glm_5_2"]],
+        "friction_detector": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
+        "passion_mapper": [MODEL_REGISTRY["deepseek_v4_pro"], MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["glm_5_2"]],
+        "resonance_synthesizer": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"]],
+        "autonomous_verifier": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["ling_3_flash"]],
+    }
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
@@ -52,6 +62,15 @@ class LLMGateway:
         if os.getenv(env_var):
             return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
         return self.CHAINS.get(task.lower(), [self.TIER_1_MODEL, self.TIER_2_MODEL])
+
+    def get_agent_chain(self, agent_name: str | None, task: str) -> List[str]:
+        if agent_name:
+            env_var = f"OPENROUTER_AGENT_CHAIN_{agent_name.upper()}"
+            if os.getenv(env_var):
+                return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+            if agent_name in self.AGENT_CHAINS:
+                return self.AGENT_CHAINS[agent_name]
+        return self.get_chain(task)
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -420,7 +439,8 @@ class LLMGateway:
         schema: Type[T],
         task: str = "depth",
         temperature: float = 0.7,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        agent_name: Optional[str] = None,
     ) -> T:
         """Görev bazlı model zinciri ile şemalı JSON sorgusu yapar.
 
@@ -428,7 +448,7 @@ class LLMGateway:
         AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
         """
         import logging
-        chain = self.get_chain(task)
+        chain = self.get_agent_chain(agent_name, task)
         last_exception = None
 
         for model in chain:
