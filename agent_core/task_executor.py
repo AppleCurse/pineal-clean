@@ -167,13 +167,34 @@ class PinealExecutor:
         paths = [p for p in results if p is not None]
         return paths
 
-    async def _deep_research(self, input_data, suspicious, agent_name):
+    async def _deep_research(self, original_result: BaseModel, check, agent_name: str) -> VerifiedNote:
+        """Request a separate review without changing the originating agent output."""
         prompt = (
-            "Onceki analiz supheli bulundu. Kanit: " + suspicious.model_dump_json() +
-            "\nKurallar: 1) Emin degilsen 'bilmiyorum' de 2) Tahmin uretme 3) Sadece veride olanlari analiz et. Yeniden analiz et."
+            f"{agent_name} ajaninin onceki analizi supheli bulundu.\n"
+            f"Suphe nedeni: {check.reason}\n"
+            "Orijinal ajan ciktisi (degistirilemez kayit): " + original_result.model_dump_json() +
+            "\nKurallar: 1) Emin degilsen 'bilmiyorum' de 2) Tahmin uretme "
+            "3) Sadece verilen veriyi degerlendir 4) Orijinal analizi yeniden yazma; "
+            "yalnizca dogrulama/degerlendirme notu ver."
         )
         verified = await self.llm_gateway.query(prompt, temperature=0.1, tier=1)
         return VerifiedNote(note=verified)
+
+    @staticmethod
+    def _evidence_record(agent_name: str, result: BaseModel, *, evidence_type: str,
+                         uncertainty=None, source_agent: str | None = None) -> dict:
+        """Build an auditable evidence entry while retaining its provenance."""
+        record = {
+            "agent": agent_name,
+            "result": result.model_dump(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "evidence_type": evidence_type,
+        }
+        if source_agent is not None:
+            record["source_agent"] = source_agent
+        if uncertainty is not None:
+            record["uncertainty"] = uncertainty.model_dump()
+        return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
         from agent_core.schemas.telemetry import (
@@ -372,11 +393,13 @@ class PinealExecutor:
                         self._snapshot(status)
                         continue
 
+                research_note = None
                 if check.is_suspicious:
-                    # Should be covered above, but just in case for deep research
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
                     try:
-                        result = await self._deep_research(input_data, result, agent_name)
+                        # Preserve `result`: downstream dependencies must receive the
+                        # actual typed agent output, never a generic research note.
+                        research_note = await self._deep_research(result, check, agent_name)
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -399,8 +422,21 @@ class PinealExecutor:
                 elif agent_name == "cognitive_profiler":
                     input_data["cognitive"] = result.model_dump()
 
-                status.evidence_chain.append({"agent": agent_name, "result": result.model_dump(), "timestamp": datetime.now(timezone.utc).isoformat()})
-                
+                status.evidence_chain.append(self._evidence_record(
+                    agent_name,
+                    result,
+                    evidence_type="agent_output",
+                    uncertainty=check,
+                ))
+                if research_note is not None:
+                    status.evidence_chain.append(self._evidence_record(
+                        "deep_research",
+                        research_note,
+                        evidence_type="verification_note",
+                        source_agent=agent_name,
+                        uncertainty=check,
+                    ))
+
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
@@ -498,10 +534,11 @@ class PinealExecutor:
                     self._snapshot(status)
                     continue
 
+                research_note = None
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
                     try:
-                        result = await self._deep_research(input_data, result, agent_name)
+                        research_note = await self._deep_research(result, check, agent_name)
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -512,7 +549,20 @@ class PinealExecutor:
                         self._snapshot(status)
                         continue
 
-                status.evidence_chain.append({"agent": agent_name, "result": result.model_dump(), "timestamp": datetime.now(timezone.utc).isoformat()})
+                status.evidence_chain.append(self._evidence_record(
+                    agent_name,
+                    result,
+                    evidence_type="agent_output",
+                    uncertainty=check,
+                ))
+                if research_note is not None:
+                    status.evidence_chain.append(self._evidence_record(
+                        "deep_research",
+                        research_note,
+                        evidence_type="verification_note",
+                        source_agent=agent_name,
+                        uncertainty=check,
+                    ))
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()

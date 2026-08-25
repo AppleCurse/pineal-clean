@@ -6,13 +6,18 @@ from agent_core.agents.mirror_truth import MirrorReflection
 from agent_core.agents.human_behavior import DigitalColdReading, MicroSignal
 from agent_core.agents.autonomous_verifier import VerifierReport, VerificationResult
 from agent_core.agents.pattern_interrupt import GeneratedMessage
+from agent_core.services.uncertainty_engine import UncertaintyReport
+from agent_core.services.canonical_memory import CanonicalMemory
 
 @pytest.mark.asyncio
-async def test_real_resonance_calculator_execution_in_executor():
+async def test_real_resonance_calculator_execution_in_executor(tmp_path):
     executor = PinealExecutor()
+    executor.memory = CanonicalMemory(str(tmp_path))
     assert isinstance(executor.agents["resonance_calc"], ResonanceCalculator)
     
-    executor.uncertainty.evaluate = MagicMock(return_value=MagicMock(confidence=0.95, is_suspicious=False))
+    executor.uncertainty.evaluate = MagicMock(
+        return_value=UncertaintyReport(confidence=0.95, is_suspicious=False, reason="test")
+    )
     
     mock_mirror_res = MirrorReflection(
         user_core_frequency="derin",
