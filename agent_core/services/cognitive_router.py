@@ -27,8 +27,9 @@ class CognitiveRouter:
         
         # Hedef varsa 360 derece analiz et
         if has_target:
-            agents.append('osint_investigator')
-            reasoning.append("Derin Web ve OSINT Taraması")
+            # OSINT is a forensic stamp executed once by PinealExecutor after
+            # the routed analysis. Keeping it out of this route prevents a
+            # second provider call and AgentRun overwrite.
 
             agents.append('autonomous_verifier')
             reasoning.append("Otonom Teyit (Arama & Kanıt)")
