@@ -70,8 +70,10 @@ Aşağıdaki JSON formatında yanıt ver:
                 shared_passions=[],
                 complementary_perspectives=[],
                 resonance_score=0.0,
-                authentic_opening_topic="UNKNOWN",
-                conversation_starter_rationale="NO_EVIDENCE",
-                suggested_opening_message="UNAVAILABLE",
-                confidence=0.0
+                authentic_opening_topic="",
+                conversation_starter_rationale="",
+                suggested_opening_message="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
             )

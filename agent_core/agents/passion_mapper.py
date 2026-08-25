@@ -37,7 +37,9 @@ Görsel İnceleme Kanıtları (Multimodal Vision):
                 flow_triggers=[],
                 sentiment_polarity=0.0,
                 evidence_quotes=[],
-                confidence=0.2
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_target_data",
             )
 
         prompt = f"""
@@ -80,5 +82,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 flow_triggers=[],
                 sentiment_polarity=0.0,
                 evidence_quotes=[],
-                confidence=0.0
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
             )

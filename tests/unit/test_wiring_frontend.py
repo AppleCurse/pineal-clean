@@ -38,6 +38,8 @@ def test_frontend_reads_only_real_resonance_fields():
 
 
 def test_i18n_uses_real_labels_only():
+    assert "verdictHealthy" in I18N_SRC
+    assert "verdictInflated" in I18N_SRC
     assert "engagementRateLabel" in I18N_SRC
     assert "resonanceScoreLabel" in I18N_SRC
     assert "approachLabel" in I18N_SRC

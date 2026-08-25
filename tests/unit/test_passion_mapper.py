@@ -10,7 +10,9 @@ async def test_passion_mapper_empty_data():
     res = await agent.execute({})
     assert isinstance(res, PassionProfile)
     assert res.core_passions == []
-    assert res.confidence == 0.2
+    assert res.confidence == 0.0
+    assert res.data_confidence is False
+    assert res.fallback_reason == "no_target_data"
 
 @pytest.mark.asyncio
 async def test_passion_mapper_with_data():

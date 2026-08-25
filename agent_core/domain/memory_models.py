@@ -29,6 +29,8 @@ class PassionProfile(BaseModel):
     sentiment_polarity: float = 0.0  # -1.0 (karamsar) ile +1.0 (coşkulu) arası
     evidence_quotes: List[str] = []
     confidence: float = 1.0
+    data_confidence: bool = True
+    fallback_reason: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -61,6 +63,8 @@ class AuthenticBridge(BaseModel):
     conversation_starter_rationale: str = ""
     suggested_opening_message: str = ""
     confidence: float = 1.0
+    data_confidence: bool = True
+    fallback_reason: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
 

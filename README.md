@@ -110,6 +110,7 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | `OPENROUTER_API_KEY` | LLM anahtarı. Yoksa pipeline ilk LLM'li ajanda durur (halüsinasyon önleme, tasarımdır). |
 | `OPENROUTER_TIER_1_MODEL` | Birincil LLM modeli (varsayılan `upstage/solar-pro4`). |
 | `OPENROUTER_TIER_2_MODEL` | Hızlı ikincil model (varsayılan `inclusionai/ling-3.0-flash`). |
+| `OPENROUTER_MAX_SPEND_USD` | Oturum harcama tavanı (0=kapalı). Aşılırsa `SpendCapExceeded` ve canlı çağrı durur. |
 | `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
 | `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` | AutonomousVerifier web araması (Tavily/SerpAPI/Exa; yoksa DuckDuckGo yedeği). |
@@ -121,7 +122,7 @@ Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 
 ## 6. Testler
 ```bash
-pytest                          # 218 test (bu revizyon itibarıyla): unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+pytest                          # 223 test (bu revizyon itibarıyla): unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
                                 # Güncel sayı için: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build
 ```
