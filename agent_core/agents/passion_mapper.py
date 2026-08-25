@@ -56,6 +56,8 @@ Son Paylaşımlar / Metinler:
 
 {visual_text}
 
+Confidence kuralı: confidence alanını yalnızca verilen doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
+
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{
   "core_passions": ["Kişinin somut paylaşımlarından ve fotoğraflarından kanıtlanan 1-3 ana tutku alanı"],
@@ -63,7 +65,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
   "flow_triggers": ["Onu üretken veya coşkulu kılan somut tetikleyiciler"],
   "sentiment_polarity": 0.6, // -1.0 (karamsar) ile +1.0 (coşkulu) arası float
   "evidence_quotes": ["Metinden veya görsel kanıttan doğrudan alıntılanan somut detaylar"],
-  "confidence": 0.90
+  "confidence": 0.0
 }}
 """
         try:

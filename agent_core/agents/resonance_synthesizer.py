@@ -45,6 +45,8 @@ ve karşı tarafın sınırlarına saygı duyan, sahici ve derinlikli bir ilk so
 Özel İletişim Kuralları:
 "{sacred_rules}"
 
+Confidence kuralı: confidence alanını yalnızca sağlanan profile ait doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
+
 Aşağıdaki JSON formatında yanıt ver:
 {{
   "shared_passions": ["Her iki tarafın da ortak ilgi duyduğu veya rezonans kurabileceği 1-3 konu"],
@@ -53,7 +55,7 @@ Aşağıdaki JSON formatında yanıt ver:
   "authentic_opening_topic": "İletişimin başlayacağı en doğal ve derinlikli konu başlığı",
   "conversation_starter_rationale": "Neden bu konunun seçildiğinin mantıksal ve saygılı açıklaması",
   "suggested_opening_message": "Doğrudan karşı tarafa gönderilebilecek, samimi, merak uyandırıcı ve saygılı mesaj taslağı",
-  "confidence": 0.90
+  "confidence": 0.0
 }}
 """
         try:
