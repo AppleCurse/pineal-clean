@@ -255,13 +255,20 @@ class LLMGateway:
                 err_str = str(e).lower()
                 is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
                 
-                # Eğer yerel LLM (Ollama) bağlantısı koptuysa ve OpenRouter anahtarımız varsa otomatik buluta geç
-                if is_local_request and is_conn_error and self.client:
-                    logging.warning(f"Yerel model ({selected_model}) bağlantısı kurulamadı. OpenRouter bulut modeline ({self.TIER_1_MODEL}) geçiliyor...")
-                    target_client = self.client
-                    selected_model = self.TIER_1_MODEL
-                    is_local_request = False
-                    continue
+                # Provider boundary is explicit: local requests do not silently
+                # become paid cloud requests. Opt-in is required for any switch.
+                if is_local_request and is_conn_error:
+                    if os.getenv("ALLOW_LOCAL_TO_CLOUD_FALLBACK", "false").lower() != "true":
+                        raise RuntimeError(
+                            "LOCAL_PROVIDER_UNAVAILABLE: Yerel model erişilemedi; "
+                            "bulut fallback'i açıkça yetkilendirilmedi."
+                        ) from e
+                    if self.client:
+                        logging.warning(f"Yetkili provider fallback: local {selected_model} → cloud {self.TIER_1_MODEL}")
+                        target_client = self.client
+                        selected_model = self.TIER_1_MODEL
+                        is_local_request = False
+                        continue
 
                 is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
                 if is_auth_error:
