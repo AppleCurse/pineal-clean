@@ -14,12 +14,13 @@ def _hermetic_guard(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_osint_empty_username():
-    """Kullanıcı adı boş olduğunda doğrudan confidence=1.0 ile erken dönüş yapılmalıdır."""
+    """Kullanıcı adı yoksa veri yokluğu açıkça belirtilmelidir."""
     agent = OsintInvestigatorAgent()
     payload = {"target_profile": {"username": "", "bio": "Bir gezgin"}}
     res = await agent.execute(payload)
     assert isinstance(res, OsintProfile)
-    assert res.confidence == 1.0
+    assert res.confidence == 0.0
+    assert res.error_code == "NO_TARGET_IDENTITY"
     assert res.connected_emails == []
     assert res.associated_platforms == []
 
@@ -98,7 +99,7 @@ async def test_osint_with_api_key_simulation(mock_get, monkeypatch):
     
     res = await agent.execute(payload)
     assert isinstance(res, OsintProfile)
-    assert res.confidence == 0.9
+    assert res.confidence == round(2 / 3, 3)
     assert res.data_confidence is True
     assert res.connected_emails == ["test@example.com"]
     assert res.associated_platforms == ["X"]
