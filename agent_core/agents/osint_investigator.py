@@ -76,7 +76,8 @@ class OsintInvestigatorAgent:
                 digital_footprint_score=0.0,
                 dark_web_hits=0,
                 confidence=0.0,
-                data_confidence=False
+                data_confidence=False,
+                fallback_reason="provider_credentials_unavailable",
             )
         else:
             try:

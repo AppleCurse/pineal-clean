@@ -52,6 +52,9 @@ async def test_osint_no_api_key_calls_llm_chain(monkeypatch):
     assert isinstance(res, OsintProfile)
     assert res.digital_footprint_score == 0.0
     assert res.confidence == 0.0
+    assert res.data_confidence is False
+    assert res.fallback_reason == "provider_credentials_unavailable"
+    mock_gateway.query_json_chain.assert_not_awaited()
     
 
 

@@ -618,7 +618,7 @@
                 {t[$currentLang].followerAuditTitle}
               </span>
               <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {followerAudit.verdict_code === 'healthy' ? 'background: #10b981; color: #000;' : followerAudit.verdict_code === 'inflated' ? 'background: #ef4444; color: #fff;' : 'background: #f59e0b; color: #000;'}">
-                {followerAudit.verdict_code === 'healthy' ? 'SAĞLIKLI' : followerAudit.verdict_code === 'inflated' ? 'ŞİŞİRME' : followerAudit.verdict_code === 'suspicious' ? 'ŞÜPHELİ' : 'VERİ YETERSİZ'}
+                {followerAudit.verdict_code === 'healthy' ? t[$currentLang].verdictHealthy : followerAudit.verdict_code === 'inflated' ? t[$currentLang].verdictInflated : followerAudit.verdict_code === 'suspicious' ? t[$currentLang].verdictSuspicious : t[$currentLang].verdictInsufficient}
               </span>
             </div>
             <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">

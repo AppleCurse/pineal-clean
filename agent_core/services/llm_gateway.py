@@ -9,6 +9,11 @@ from agent_core.services.response_cache import build_cache_from_env
 
 T = TypeVar('T', bound=BaseModel)
 
+
+class SpendCapExceeded(RuntimeError):
+    """OPENROUTER_MAX_SPEND_USD aşıldı; canlı LLM çağrıları durdurulur."""
+
+
 class LLMGateway:
     MODEL_REGISTRY = {
         "solar_pro4": "upstage/solar-pro4",
@@ -29,7 +34,7 @@ class LLMGateway:
     }
     
     TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["solar_pro4"])
-    TIER_2_MODEL = MODEL_REGISTRY["ling_3_flash"]
+    TIER_2_MODEL = os.getenv("OPENROUTER_TIER_2_MODEL", MODEL_REGISTRY["ling_3_flash"])
     DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", MODEL_REGISTRY["gemini_3_7_flash"])
 
     CHAINS = {
@@ -60,6 +65,10 @@ class LLMGateway:
         self.circuit_opened_at = 0.0
         self.live_unlocked = False
         self.total_cost = 0.0
+        try:
+            self.max_spend_usd = float(os.getenv("OPENROUTER_MAX_SPEND_USD", "0") or "0")
+        except ValueError:
+            self.max_spend_usd = 0.0
         self._rebuild()
         self.cache = build_cache_from_env()
 
@@ -101,6 +110,11 @@ class LLMGateway:
                 self.failure_count = 0
             else:
                 raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu (60s bekleme devrede)")
+
+        if self.max_spend_usd > 0 and self.total_cost >= self.max_spend_usd:
+            raise SpendCapExceeded(
+                f"SpendCapExceeded: ${self.total_cost:.5f} >= OPENROUTER_MAX_SPEND_USD=${self.max_spend_usd:.2f}"
+            )
         
         # Eğer local model seçildiyse veya global use_local aktifse
         is_local_request = (model and ("local" in model.lower() or "ollama" in model.lower() or "127.0.0.1" in model.lower())) or self.use_local

@@ -20,6 +20,7 @@
   `minimax-m2.7 → deepseek-v4-pro → glm-5.2` · fast `ling-3.0-flash →
   qwen3-235b-a22b-2507` (env: `OPENROUTER_CHAIN_<TASK>`).
 - Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
+- Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı). Aşılırsa `SpendCapExceeded`.
 
 ## Sık sorunlar
 | Belirti | Neden → Çözüm |
@@ -40,7 +41,7 @@
 ## Test / Kalite kapıları
 ```
 ruff check .          # gerçek hata kapısı (E9+F)
-pytest -q             # 218 test (bu revizyon itibarıyla): unit+integration+e2e+ws sıra+güvenlik+protokol
+pytest -q             # 223 test (bu revizyon itibarıyla): unit+integration+e2e+ws sıra+güvenlik+protokol
                       # güncel sayı: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
