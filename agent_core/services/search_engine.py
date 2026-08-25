@@ -30,19 +30,20 @@ class SearchEngine:
             self.exa_key = exa if exa != "" else None
 
     async def search(self, query: str, num_results: int = 5) -> List[SearchResult]:
-        tasks = []
-        if self.tavily_key:
-            tasks.append(self._search_tavily(query, num_results))
-        if self.serpapi_key:
-            tasks.append(self._search_serpapi(query, num_results))
-        if self.exa_key:
-            tasks.append(self._search_exa(query, num_results))
-        
-        # Eğer hiç anahtar yoksa ücretsiz DuckDuckGo yedeği devreye girer
-        if not tasks:
-            tasks.append(self._search_duckduckgo(query, num_results))
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            tasks = []
+            if self.tavily_key:
+                tasks.append(self._search_tavily(query, num_results, client=client))
+            if self.serpapi_key:
+                tasks.append(self._search_serpapi(query, num_results, client=client))
+            if self.exa_key:
+                tasks.append(self._search_exa(query, num_results, client=client))
 
-        results_lists = await asyncio.gather(*tasks, return_exceptions=True)
+            # Eğer hiç anahtar yoksa ücretsiz DuckDuckGo yedeği devreye girer
+            if not tasks:
+                tasks.append(self._search_duckduckgo(query, num_results, client=client))
+
+            results_lists = await asyncio.gather(*tasks, return_exceptions=True)
         
         merged: List[SearchResult] = []
         seen_urls = set()
@@ -54,15 +55,18 @@ class SearchEngine:
                         merged.append(item)
         return merged[:num_results * 2]
 
-    async def _search_tavily(self, query: str, num_results: int) -> List[SearchResult]:
+    async def _search_tavily(self, query: str, num_results: int, **kwargs) -> List[SearchResult]:
         url = "https://api.tavily.com/search"
         from agent_core.utils.security import is_safe_url
         if not is_safe_url(url):
             return []
         payload = {"api_key": self.tavily_key, "query": query, "max_results": num_results}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.post(url, json=payload)
+            if "client" in kwargs and kwargs["client"] is not None:
+                res = await kwargs["client"].post(url, json=payload)
+            else:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.post(url, json=payload)
                 if res.status_code == 200:
                     data = res.json()
                     return [
@@ -73,15 +77,18 @@ class SearchEngine:
             pass
         return []
 
-    async def _search_serpapi(self, query: str, num_results: int) -> List[SearchResult]:
+    async def _search_serpapi(self, query: str, num_results: int, **kwargs) -> List[SearchResult]:
         url = "https://serpapi.com/search"
         from agent_core.utils.security import is_safe_url
         if not is_safe_url(url):
             return []
         params = {"api_key": self.serpapi_key, "q": query, "num": num_results, "engine": "google"}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(url, params=params)
+            if "client" in kwargs and kwargs["client"] is not None:
+                res = await kwargs["client"].get(url, params=params)
+            else:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.get(url, params=params)
                 if res.status_code == 200:
                     data = res.json()
                     return [
@@ -92,7 +99,7 @@ class SearchEngine:
             pass
         return []
 
-    async def _search_exa(self, query: str, num_results: int) -> List[SearchResult]:
+    async def _search_exa(self, query: str, num_results: int, **kwargs) -> List[SearchResult]:
         url = "https://api.exa.ai/search"
         from agent_core.utils.security import is_safe_url
         if not is_safe_url(url):
@@ -100,8 +107,11 @@ class SearchEngine:
         headers = {"x-api-key": self.exa_key, "Content-Type": "application/json"}
         payload = {"query": query, "numResults": num_results}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.post(url, headers=headers, json=payload)
+            if "client" in kwargs and kwargs["client"] is not None:
+                res = await kwargs["client"].post(url, headers=headers, json=payload)
+            else:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.post(url, headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
                     return [
@@ -112,7 +122,7 @@ class SearchEngine:
             pass
         return []
 
-    async def _search_duckduckgo(self, query: str, num_results: int) -> List[SearchResult]:
+    async def _search_duckduckgo(self, query: str, num_results: int, **kwargs) -> List[SearchResult]:
         url = "https://html.duckduckgo.com/html/"
         from agent_core.utils.security import is_safe_url
         if not is_safe_url(url):
@@ -120,8 +130,11 @@ class SearchEngine:
         data = {"q": query}
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.post(url, data=data, headers=headers)
+            if "client" in kwargs and kwargs["client"] is not None:
+                res = await kwargs["client"].post(url, data=data, headers=headers)
+            else:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.post(url, data=data, headers=headers)
                 if res.status_code == 200:
                     html = res.text
                     results = []

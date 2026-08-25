@@ -2,7 +2,7 @@ import pytest
 from agent_core.services.canonical_memory import CanonicalMemory
 from agent_core.services.hindsight_memory import HindsightMemory
 from agent_core.utils.security import is_safe_url
-from backend.api import app, InterpreterPayload
+from backend.api import app
 from fastapi.testclient import TestClient
 import os
 
