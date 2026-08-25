@@ -157,11 +157,11 @@ class UncertaintyEngine:
 
         # Check conditions
         if not data_conf_flag:
-            # Fallback data
+            # An unavailable/fallback source is never safe evidence.
             return UncertaintyReport(
-                is_suspicious=False, 
-                confidence=combined_confidence, 
-                reason="Fallback modu devrede.",
+                is_suspicious=True,
+                confidence=0.0,
+                reason="Kaynak verisi kullanılamıyor; fallback sonuç kabul edilmedi.",
                 data_score=data_score,
                 breakdown=breakdown
             )

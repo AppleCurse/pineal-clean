@@ -102,6 +102,14 @@ class PinealExecutor:
             "shadow_executor": ShadowExecutor(),
         }
 
+    @staticmethod
+    def _hash_evidence_result(result: BaseModel) -> str:
+        """Canonical SHA-256 hash for a single typed agent result."""
+        import hashlib
+        import json
+        canonical = json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def _snapshot(self, status: TaskStatus):
         cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
         hits = cache_stats.get("hits", 0)
@@ -479,7 +487,7 @@ class PinealExecutor:
                     task_id=task_id,
                     agent_name=agent_name,
                     step_name="execute",
-                    output_hash="HASH"
+                    output_hash=self._hash_evidence_result(result)
                 ))
 
                 if agent_name == "resonance_calc" and hasattr(result, "compatibility_score") and result.compatibility_score < 0.70:
@@ -601,7 +609,7 @@ class PinealExecutor:
                     task_id=task_id,
                     agent_name=agent_name,
                     step_name="execute",
-                    output_hash="HASH",
+                    output_hash=self._hash_evidence_result(result),
                 ))
 
             # --- 360° HOLISTIC PROFILE OLUŞTURMA ---
