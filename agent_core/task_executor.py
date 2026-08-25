@@ -386,10 +386,12 @@ class PinealExecutor:
 
                 if agent_name == "mirror_truth":
                     input_data["user_mirror"] = result.model_dump()
-                    input_data["user_authentic_vector"] = await self._calculate_authentic_vector(input_data["user_mirror"])
+                    user_vector = await self._calculate_authentic_vector(input_data["user_mirror"])
+                    self._store_authentic_vector(input_data, "user", user_vector)
                 elif agent_name == "human_behavior":
                     input_data["target_analysis"] = result.model_dump()
-                    input_data["target_authentic_vector"] = await self._calculate_authentic_vector(input_data["target_analysis"])
+                    target_vector = await self._calculate_authentic_vector(input_data["target_analysis"])
+                    self._store_authentic_vector(input_data, "target", target_vector)
                 elif agent_name == "passion_mapper":
                     input_data["passions"] = result.model_dump()
                 elif agent_name == "friction_detector":
@@ -582,7 +584,27 @@ class PinealExecutor:
             self._snapshot(status)
         return status
 
-    async def _calculate_authentic_vector(self, data_dict: dict) -> dict:
+    def _store_authentic_vector(self, input_data: Dict[str, Any], subject: str, vector: dict | None) -> None:
+        """Store a vector only when it was actually calculated from the supplied data.
+
+        A missing vector is represented explicitly in metadata.  It must never be
+        replaced with neutral-looking numeric values because downstream resonance
+        calculations treat numeric vectors as decision-ready evidence.
+        """
+        vector_key = f"{subject}_authentic_vector"
+        status_key = f"{subject}_authentic_vector_status"
+        if vector is None:
+            input_data.pop(vector_key, None)
+            input_data[status_key] = {
+                "available": False,
+                "reason": "AUTHENTIC_VECTOR_UNAVAILABLE",
+            }
+            return
+
+        input_data[vector_key] = vector
+        input_data[status_key] = {"available": True, "reason": None}
+
+    async def _calculate_authentic_vector(self, data_dict: dict) -> dict | None:
         import json
         from pydantic import BaseModel
         
@@ -614,14 +636,10 @@ class PinealExecutor:
                 "dark_detail": res.dark_detail
             }
         except Exception as e:
-            self._log("WARNING", f"Vektör LLM üzerinden hesaplanamadı, fallback kullanılıyor: {e}")
-            return {
-                "depth": 0.5, 
-                "energy": 0.5, 
-                "achilles_heel": "Bilinmiyor", 
-                "core_wound": "Bilinmiyor", 
-                "dark_detail": "Bilinmiyor"
-            }
+            # Do not manufacture a neutral-looking vector.  A numeric fallback
+            # would be consumed by ResonanceCalculator as real user evidence.
+            self._log("WARNING", f"Vektör hesaplanamadı; veri kullanılamaz olarak işaretlendi: {e}")
+            return None
 
 executor = PinealExecutor()
 

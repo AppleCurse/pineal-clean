@@ -42,6 +42,14 @@ async def test_real_resonance_calculator_execution_in_executor():
     
     executor.agents["mirror_truth"].execute = AsyncMock(return_value=mock_mirror_res)
     executor.agents["autonomous_verifier"].execute = AsyncMock(return_value=mock_verifier_res)
+    # This test isolates executor-to-calculator wiring. Supply explicitly
+    # calculated test vectors; production must not invent neutral defaults.
+    executor._calculate_authentic_vector = AsyncMock(
+        side_effect=[
+            {"depth": 0.8, "energy": 0.4, "achilles_heel": "test", "core_wound": "test", "dark_detail": "test"},
+            {"depth": 0.7, "energy": 0.5, "achilles_heel": "test", "core_wound": "test", "dark_detail": "test"},
+        ]
+    )
     executor.agents["human_behavior"].execute = AsyncMock(return_value=mock_human_res)
     executor.agents["pattern_interrupt"].execute = AsyncMock(return_value=mock_pattern_res)
     
