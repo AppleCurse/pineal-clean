@@ -22,8 +22,14 @@ class ResonanceSynthesizerAgent:
         cognitive_data = payload.get("cognitive", {})
         sacred_rules = payload.get("sacred_rules", "")
 
-        user_bio = user_profile.get("bio", "Analitik gözlemci.")
+        user_bio = user_profile.get("bio", "")
         user_posts = user_profile.get("posts", [])
+        if not user_bio and not user_posts:
+            return AuthenticBridge(
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="user_context_unavailable",
+            )
         user_context = f"Kullanıcı Biyografisi: {user_bio}\nKullanıcı Paylaşımları: {', '.join(user_posts)}"
 
         target_context = f"""
