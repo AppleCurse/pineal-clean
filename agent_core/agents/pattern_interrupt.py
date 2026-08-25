@@ -13,6 +13,8 @@ class GeneratedMessage(BaseModel):
     confidence: float
     compliance_score: float  # 0.0 - 100.0 (Kutsal Kural ihlal skoru)
     dialogue_tree: List[ScenarioResponse]
+    data_confidence: bool = True
+    fallback_reason: str | None = None
 
     
     model_config = ConfigDict(extra="forbid")
@@ -59,22 +61,32 @@ class PatternInterrupt:
         user_truth = input_data.get('user_mirror', {})
         sacred_rules = input_data.get('sacred_rules', "")
         
-        # Dinamik şablon seçimi ve detay çıkarımı
+        # A message may only use source-tagged observations, never placeholder
+        # details or inferred wounds.
         t_dict = target_analysis.model_dump() if hasattr(target_analysis, 'model_dump') else (target_analysis if isinstance(target_analysis, dict) else {})
-        detail = self._extract_specific_detail(t_dict)
-        micro = self._extract_micro_signal(t_dict)
-        
-        template = random.choice(self.TEMPLATES['mirror_truth']).format(detail=detail, micro_signal=micro)
+        evidence = self._grounded_evidence(t_dict)
+        if not evidence:
+            return GeneratedMessage(
+                message="",
+                strategy="UNAVAILABLE",
+                confidence=0.0,
+                compliance_score=100.0,
+                dialogue_tree=[],
+                data_confidence=False,
+                fallback_reason="insufficient_grounded_evidence",
+            )
+        detail = evidence[0]
+        template = random.choice(self.TEMPLATES['mirror_truth']).format(detail=detail, micro_signal="gözlemlenebilir detay")
         
         target_json = target_analysis.model_dump_json(indent=2) if hasattr(target_analysis, 'model_dump_json') else str(target_analysis)
         user_json = user_truth.model_dump_json(indent=2) if hasattr(user_truth, 'model_dump_json') else str(user_truth)
         
         prompt = (
-            f"Sen 'Pattern Interrupt' ajanısın. Görevin, beklentileri kıran ve hedefte yankı uyandıran tek bir açılış cümlesi üretmek.\n"
-            f"Bununla yetinmeyeceksin; satranç oynar gibi hedefin bu kancaya verebileceği 3 olası tepkiyi (Agresif, Savunmacı, İlgili) öngörüp, 2. ve 3. hamleleri (counter-moves) önceden hazırlayacaksın.\n"
-            f"Asla reaktif olma, boşluk bırak, soru sorma.\n"
-            f"KRİTİK KURAL: HEDEF SON DERECE ZEKİ. Ucuz manipülasyonları, standart taktikleri anında sezer. Asla rıza veya onay arama.\n"
-            f"Açılış cümlen, sadece onun zekasına hitap eden, soğuk, sarsıcı ve tamamen analitik bir tespit (intellectual strike) olmalı.\n\n"
+            f"Sen evidence-temelli, saygılı ilk iletişim taslağı üreten bir ajansın.\n"
+            f"Yalnızca aşağıdaki kaynak-tagli gözlemlerden doğrudan desteklenen tek bir açılış cümlesi üret.\n"
+            f"Psikolojik teşhis, gizli niyet, yara, savunma mekanizması veya karşı tarafın kesin tepkisi hakkında iddia üretme.\n"
+            f"Rıza, sınır ve saygı kurallarını koru; manipülasyon, baskı veya karşı-hamle planı üretme.\n"
+            f"Kanıt dışında ayrıntı ekleme; kanıt yetersizse boş mesaj ve data_confidence=false döndür.\n\n"
             f"ÖNERİLEN GERÇEK ŞABLON YAKLAŞIMI:\n"
             f"- {template}\n\n"
             f"Hedef Analizi:\n{target_json}\n\n"
@@ -87,6 +99,18 @@ class PatternInterrupt:
         
         return await llm_gateway.query_json(prompt, GeneratedMessage)
     
+    @staticmethod
+    def _grounded_evidence(analysis: Dict) -> List[str]:
+        evidence = []
+        for signal in analysis.get("micro_signals", []) or []:
+            value = signal.get("evidence") if isinstance(signal, dict) else getattr(signal, "evidence", None)
+            if isinstance(value, str) and value.strip():
+                evidence.append(value.strip())
+        for quote in analysis.get("evidence_quotes", []) or []:
+            if isinstance(quote, str) and quote.strip():
+                evidence.append(quote.strip())
+        return list(dict.fromkeys(evidence))
+
     def _extract_specific_detail(self, analysis: Dict) -> str:
         """
         En spesifik, en görünmeyen detayı çıkar
