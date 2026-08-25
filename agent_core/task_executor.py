@@ -426,7 +426,12 @@ class PinealExecutor:
                     self._snapshot(status)
                     return status
 
+            # Deferred agents run after their dependencies, not outside the
+            # evidence contract.  Ordering must never bypass validation,
+            # uncertainty thresholds, or graceful-degradation policy.
             for agent_name in deferred:
+                if agent_name not in self.agents:
+                    raise KeyError("Bilinmeyen yetenek: " + agent_name)
                 status.current_agent = agent_name
                 self._log("WARNING", "[" + task_id + "] AGENT " + agent_name + ": calisiyor")
                 run = AgentRun(
@@ -438,34 +443,89 @@ class PinealExecutor:
                 )
                 status.agent_runs[agent_name] = run
                 self._snapshot(status)
+                self._emit(TaskStartedEvent(
+                    task_id=task_id,
+                    agent_name=agent_name,
+                    input_summary="Ajan tetiklendi",
+                ))
+                agent_cfg = self.config.get_agent_config(agent_name)
+
                 try:
                     agent = self.agents[agent_name]
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
                         result = await agent.execute(input_data)
+                    if not isinstance(result, BaseModel):
+                        raise TypeError(agent_name + " gecersiz cikti: " + str(type(result)))
+                except InsufficientEvidenceError:
+                    raise
                 except Exception as e:
                     run.status = "failed"
                     run.error_code = type(e).__name__
                     run.error_message = str(e)[:200]
-                    status.status = "failed"
-                    status.completed_at = datetime.now(timezone.utc)
-                    self._snapshot(status)
                     self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
-                    await self.memory.merge_evidence(task_id, status.evidence_chain)
-                    return status
-                    
+                    if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                        status.status = "halted_critical"
+                        status.completed_at = datetime.now(timezone.utc)
+                        self._snapshot(status)
+                        self._emit(ErrorHaltEvent(
+                            task_id=task_id,
+                            agent_name=agent_name,
+                            error_code=type(e).__name__,
+                            error_message=str(e)[:200],
+                            severity=Severity.Critical,
+                        ))
+                        await self.memory.merge_evidence(task_id, status.evidence_chain)
+                        return status
+                    self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} failed. Continuing pipeline.")
+                    self._snapshot(status)
+                    continue
+
+                check = self.uncertainty.evaluate(result, agent_name)
+                if check.confidence < agent_cfg.min_llm_confidence:
+                    halt_reason = check.reason
+                    run.status = "halted"
+                    run.error_code = "LOW_CONFIDENCE"
+                    run.error_message = halt_reason
+                    self._log("ERROR", f"[{task_id}] COGNITIVE ROUTER: {halt_reason}")
+                    if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                        status.halted_reason = halt_reason
+                        status.status = "halted_critical"
+                        self._snapshot(status)
+                        raise InsufficientEvidenceError(halt_reason)
+                    self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} halted due to evidence.")
+                    self._snapshot(status)
+                    continue
+
+                if check.is_suspicious:
+                    self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    try:
+                        result = await self._deep_research(input_data, result, agent_name)
+                    except Exception as e:
+                        if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                            raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
+                        run.status = "halted"
+                        run.error_code = "SUSPICIOUS_EVIDENCE"
+                        run.error_message = str(e)[:200]
+                        self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} deep research failed.")
+                        self._snapshot(status)
+                        continue
+
                 status.evidence_chain.append({"agent": agent_name, "result": result.model_dump(), "timestamp": datetime.now(timezone.utc).isoformat()})
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                # P0-FIX: hard-code 0.90 yerine ajanın kendi confidence'i; yoksa None bırak
-                run.confidence = getattr(result, "confidence", None)
-                if run.confidence is not None and not isinstance(run.confidence, (int, float)):
-                    run.confidence = None
+                run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
                 self._snapshot(status)
+                self._emit(StepCompletedEvent(
+                    task_id=task_id,
+                    agent_name=agent_name,
+                    step_name="execute",
+                    output_hash="HASH",
+                ))
 
             # --- 360° HOLISTIC PROFILE OLUŞTURMA ---
             passions_obj = None
