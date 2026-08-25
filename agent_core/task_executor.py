@@ -627,7 +627,7 @@ class PinealExecutor:
                 frictions=frictions_obj,
                 cognitive=cognitive_obj,
                 bridge=bridge_obj,
-                overall_confidence=0.85 if bridge_obj else 0.5
+                overall_confidence=self._holistic_confidence(status.agent_runs)
             )
             self._log("INFO", "[" + task_id + "] 360 İnsan Tanıma Profili Oluşturuldu")
 
@@ -657,7 +657,15 @@ class PinealExecutor:
                 status.agent_runs["shadow_executor"] = AgentRun(
                     task_id=task_id, agent_name="shadow_executor", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    confidence=0.7,
+                    confidence=(
+                        getattr(shadow_result, "confidence", None)
+                        if isinstance(getattr(shadow_result, "confidence", None), (int, float))
+                        and getattr(shadow_result, "data_confidence", True)
+                        else None
+                    ),
+                    warnings=[] if getattr(shadow_result, "data_confidence", True) else [
+                        getattr(shadow_result, "fallback_reason", None) or "data_unavailable"
+                    ],
                 )
                 self._log("INFO", f"[{task_id}] GÖLGE FORENSİĞİ: Manipülasyon ve NLP dizisi eklendi")
             except Exception as e:
@@ -676,8 +684,12 @@ class PinealExecutor:
                 status.agent_runs["osint_investigator"] = AgentRun(
                     task_id=task_id, agent_name="osint_investigator", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    confidence=0.5 if not data_conf else 0.9,
-                    warnings=[] if data_conf else [fallback or "simulation"],
+                    confidence=(
+                        getattr(osint_result, "confidence", None)
+                        if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))
+                        else None
+                    ),
+                    warnings=[] if data_conf else [fallback or "data_unavailable"],
                 )
                 self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı")
             except Exception as e:
@@ -740,6 +752,16 @@ class PinealExecutor:
 
         input_data[vector_key] = vector
         input_data[status_key] = {"available": True, "reason": None}
+
+    @staticmethod
+    def _holistic_confidence(agent_runs: Dict[str, AgentRun]) -> float:
+        """Aggregate only measured confidence values; absence is not neutral confidence."""
+        profile_agents = ("passion_mapper", "friction_detector", "cognitive_profiler", "resonance_synthesizer")
+        values = [
+            run.confidence for name, run in agent_runs.items()
+            if name in profile_agents and run.status == "completed" and isinstance(run.confidence, (int, float))
+        ]
+        return round(sum(values) / len(values), 3) if values else 0.0
 
     async def _calculate_authentic_vector(self, data_dict: dict) -> dict | None:
         import json
