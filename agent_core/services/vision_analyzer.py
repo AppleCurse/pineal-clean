@@ -30,7 +30,7 @@ class VisionAnalyzer:
     def __init__(self, llm_gateway: Optional[LLMGateway] = None):
         self.llm_gateway = llm_gateway or LLMGateway()
 
-    async def _download_and_encode_image(self, image_url: str) -> Optional[str]:
+    async def _download_and_encode_image(self, image_url: str, client: Optional[httpx.AsyncClient] = None) -> Optional[str]:
         """Görseli indirip base64 formatına çevirir."""
         if not image_url or not image_url.startswith("http"):
             return None
@@ -41,12 +41,18 @@ class VisionAnalyzer:
             return None
             
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                resp = await client.get(image_url, headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                })
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            if client:
+                resp = await client.get(image_url, headers=headers)
                 if resp.status_code == 200:
                     return base64.b64encode(resp.content).decode("utf-8")
+            else:
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as new_client:
+                    resp = await new_client.get(image_url, headers=headers)
+                    if resp.status_code == 200:
+                        return base64.b64encode(resp.content).decode("utf-8")
         except Exception as e:
             logger.warning(f"Görsel indirilemedi ({image_url[:40]}...): {e}")
         return None
@@ -68,9 +74,10 @@ class VisionAnalyzer:
                 fallback_reason="no_urls"
             )
 
-        # Parallel image download
-        tasks = [self._download_and_encode_image(url) for url in valid_urls]
-        results = await asyncio.gather(*tasks)
+        # Parallel image download with shared client for connection pooling
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            tasks = [self._download_and_encode_image(url, client=client) for url in valid_urls]
+            results = await asyncio.gather(*tasks)
 
         encoded_images = [b64 for b64 in results if b64]
 
