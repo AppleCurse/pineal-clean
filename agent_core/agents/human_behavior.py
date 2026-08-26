@@ -7,7 +7,6 @@ observations rather than diagnoses.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -82,11 +81,21 @@ class HumanBehaviorAnalyzer:
                 follow_redirects=True,
                 timeout=httpx.Timeout(10.0, connect=5.0),
             ) as client:
-                # ⚡ Bolt Optimization: Use asyncio.gather for parallel image fetching while using a shared httpx.AsyncClient connection pool
-                tasks = [self._fetch_and_analyze_image(client, image_url) for image_url in images[: self.MAX_IMAGES]]
-                results_lists = await asyncio.gather(*tasks)
-                for res in results_lists:
-                    visual_signals.extend(res)
+                for image_url in images[: self.MAX_IMAGES]:
+                    if not self._is_http_url(image_url):
+                        continue
+                    try:
+                        response = await client.get(image_url)
+                        response.raise_for_status()
+                        if len(response.content) > self.MAX_IMAGE_BYTES:
+                            logging.warning("Skipping oversized image: %s", image_url)
+                            continue
+                        arr = np.frombuffer(response.content, dtype=np.uint8)
+                        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        if image is not None:
+                            visual_signals.extend(self._analyze_visual_micro_img(image))
+                    except (httpx.HTTPError, ValueError) as exc:
+                        logging.warning("Visual analysis failed for %s: %s", image_url, exc)
         except httpx.HTTPError as exc:
             logging.warning("Unable to initialize visual analysis client: %s", exc)
 
@@ -154,23 +163,6 @@ class HumanBehaviorAnalyzer:
                 "HumanBehavior gecersiz cikti: " + type(result).__name__
             )
         return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
-
-    async def _fetch_and_analyze_image(self, client: httpx.AsyncClient, image_url: str) -> List[MicroSignal]:
-        if not self._is_http_url(image_url):
-            return []
-        try:
-            response = await client.get(image_url)
-            response.raise_for_status()
-            if len(response.content) > self.MAX_IMAGE_BYTES:
-                logging.warning("Skipping oversized image: %s", image_url)
-                return []
-            arr = np.frombuffer(response.content, dtype=np.uint8)
-            image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if image is not None:
-                return self._analyze_visual_micro_img(image)
-        except (httpx.HTTPError, ValueError) as exc:
-            logging.warning("Visual analysis failed for %s: %s", image_url, exc)
-        return []
 
     # ------------------------------------------------------------------ #
     # Helpers

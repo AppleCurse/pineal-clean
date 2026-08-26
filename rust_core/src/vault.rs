@@ -187,6 +187,8 @@ impl StealthVault {
 
             writer.write_all(plaintext)
                 .map_err(|e| VaultError::EncryptionError(format!("age write hatası: {}", e)))?;
+            writer.finish()
+                .map_err(|e| VaultError::EncryptionError(format!("age finish hatası: {}", e)))?;
         }
 
         Ok(encrypted)
