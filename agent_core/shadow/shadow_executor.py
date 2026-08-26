@@ -68,6 +68,30 @@ class ShadowExecutor:
         dark = self.dark_triad.analyze(task_input.get('target_profile', {}))
         strategy = self.dark_triad.generate_strategy(dark)
 
+        # [024 devamı] Gözlemlenebilir markör yoksa strateji ÜRETİLMEZ;
+        # kısmi markör eşiği geçmediyse de strateji türetilmez. Sahte
+        # "empathy" etiketi ve şablon mesaj bu durumda yasaktır.
+        if strategy["vector"] == "unavailable":
+            return ShadowResult(
+                message="",
+                dark_profile=dark.model_dump(),
+                strategy="unavailable",
+                nlp_sequence=[],
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="dark_triad_markers_unobserved",
+            )
+        if strategy["vector"] == "unobserved":
+            return ShadowResult(
+                message="",
+                dark_profile=dark.model_dump(),
+                strategy="unavailable",
+                nlp_sequence=[],
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="strategy_unobserved",
+            )
+
         # 2. Mirror (LLM gerektirir — fallback ile korumalı)
         mirror_result = None
         try:
@@ -84,17 +108,22 @@ class ShadowExecutor:
             log.warning("ShadowExecutor: Mirror LLM atlandı: %s", e)
 
         # 3. NLP Sequence (LLM gerektirmez — deterministik)
+        # Kullanıcı istem vermediyse varsayılan eylem ÜRETİLMEZ (eski
+        # 'cevap ver' default'u sahte istemdi).
+        desired_action = task_input.get('desired_action')
         nlp_seq = self.dark_nlp.generate_sequence(
             task_input.get('target_profile', {}),
-            task_input.get('desired_action', 'cevap ver')
+            desired_action if isinstance(desired_action, str) else ''
         )
 
         # 4. Presupposition Chain (LLM gerektirmez — deterministik)
-        beliefs = task_input.get('target_beliefs', ['anlaşılmak', 'özel hissetmek'])
+        # Kullanıcı inanç listesi vermediyse boş; sahte varsayılan inanç
+        # ('anlaşılmak', 'özel hissetmek') artık enjekte edilmez.
+        beliefs = task_input.get('target_beliefs') or []
         presup_chain = self.presupposition.generate_chain(beliefs)
 
         # 5. Pattern Interrupt (LLM gerektirir — fallback ile korumalı)
-        pattern_message = strategy.get('vector', 'Analiz tamamlandı')
+        pattern_message = strategy.get('vector') or "unavailable"
         try:
             pattern_input = {
                 'target_analysis': {

@@ -21,7 +21,9 @@ def test_dark_triad_strategy_vector():
     analyzer = DarkTriadAnalyzer()
     res = analyzer.analyze({"posts": ["mükemmel benzersiz seçilmiş"], "bio": ""})
     strategy = analyzer.generate_strategy(res)
-    assert strategy["vector"] in ("mirroring", "alliance", "thrill", "empathy")
+    # Kanıtsız "empathy" üretilmez; eşik altı işaret dürüstçe "unobserved"
+    # işaretlenir. Eşik aşan işaretler gerçek strateji üretir.
+    assert strategy["vector"] in ("mirroring", "alliance", "thrill", "unobserved")
 
 
 @pytest.mark.asyncio

@@ -53,12 +53,19 @@ class KeyEngine:
                 )
             )
         if pulse.rhythm_signature:
+            # Sabit 0.6 kaldırıldı: güven, pulse motorunun kendi gerçek
+            # durumundan türetilir (OBSERVED=1.0, WEAK=0.5, aksi=0.0).
+            pulse_conf = (
+                1.0 if pulse.status == EvidenceStatus.OBSERVED
+                else 0.5 if pulse.status == EvidenceStatus.WEAK
+                else 0.0
+            )
             vectors.append(
                 ResonanceVector(
                     dimension="rhythm_match",
                     approach=f"{pulse.rhythm_signature} ritme uyumlu iletişim.",
                     avoid="Karşı tarafın hızını zorlamayın.",
-                    confidence=0.6,
+                    confidence=pulse_conf,
                     source_pillars=["pulse"],
                 )
             )

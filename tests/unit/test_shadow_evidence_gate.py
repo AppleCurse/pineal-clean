@@ -31,7 +31,7 @@ async def test_shadow_with_real_target_still_produces_profile():
     executor = ShadowExecutor()
     result = await executor.execute({
         "target_profile": {
-            "bio": "Mükemmeliyetçi ve hırslı bir lider.",
+            "bio": "Mükemmel, mükemmel, mükemmel, mükemmel, eşsiz, eşsiz, olağanüstü, benzersiz, seçilmiş. Mükemmeliyetçi ve hırslı bir lider.",
             "posts": ["Başarı tek seçenektir.", "Kontrol bende."],
         },
         "user_profile": {"rituals": ["kahve"], "music": "klasik", "envies": "derin bağ"},
