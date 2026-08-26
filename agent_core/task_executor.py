@@ -99,7 +99,7 @@ class PinealExecutor:
             "interpreter": InterpreterAgent(self.llm_gateway),
             "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
             "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
-            "shadow_executor": ShadowExecutor(),
+            "shadow_executor": ShadowExecutor(llm_gateway=self.llm_gateway),
         }
 
     @staticmethod
@@ -211,6 +211,26 @@ class PinealExecutor:
         return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
+        """Public entry: impl'i saran güvenli yaşam döngüsü.
+
+        [035] fix: göreve ait geçici görseller başarı/halt/exception HER
+        durumunda temizlenir; hedefin kişisel görselleri temp dizinde kalıcı
+        artefakt olarak bırakılamaz (retention sözleşmesi).
+        """
+        try:
+            return await self._execute_task_impl(input_data, task_id)
+        finally:
+            self._cleanup_temp_images(input_data)
+
+    def _cleanup_temp_images(self, input_data: Dict[str, Any]) -> None:
+        import os
+        for path in (input_data.pop("_downloaded_temp_images", None) or []):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    async def _execute_task_impl(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
         from agent_core.schemas.telemetry import (
             TaskStartedEvent, StepCompletedEvent, ErrorHaltEvent, TaskCompletedEvent, Severity
         )
@@ -227,8 +247,11 @@ class PinealExecutor:
             from agent_core.services.timing_forensics import analyze_timing
             tp_info = input_data.get("target_profile", {})
             fol_cnt = tp_info.get("followers", 0)
-            fing_cnt = tp_info.get("following", 0)
-            posts_meta = tp_info.get("posts_meta", []) or [{"like_count": None, "comment_count": None}]
+            # [024] fix: following=None "ölçülmedi" demektir; 0'a çevrilmez.
+            fing_cnt = tp_info.get("following")
+            # [027] fix: sahte 1-post sentinel'i kaldırıldı. Boş posts_meta
+            # olduğu gibi iletilir; audit "İncelenen Post: 0" der, 1 demez.
+            posts_meta = tp_info.get("posts_meta") or []
             audit_res = audit_followers(fol_cnt, fing_cnt, posts_meta)
             input_data["follower_audit"] = audit_res.model_dump()
             status.follower_audit = audit_res.model_dump()
@@ -263,7 +286,10 @@ class PinealExecutor:
 
         imgs = input_data.get("target_profile", {}).get("images", [])
         if imgs and isinstance(imgs[0], str) and imgs[0].startswith("http"):
-            input_data["target_profile"]["images"] = await self._download_images(imgs)
+            downloaded = await self._download_images(imgs)
+            input_data["target_profile"]["images"] = downloaded
+            # [035] fix: task bitince (her çıkış yolunda) silinecekleri kaydet.
+            input_data["_downloaded_temp_images"] = downloaded
 
         # --- PINEAL DETERMINISTIC 7-PILLAR ---
         pillar_start = datetime.now(timezone.utc)

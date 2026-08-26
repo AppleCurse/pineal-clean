@@ -112,6 +112,96 @@ class InstagramGhostScraper:
 
         raise InsufficientEvidenceError(f"Instagram HTML'inde JSON bulunamadı: {username} - muhtemelen private veya rate-limit")
 
+    @staticmethod
+    def _collect_structured_posts(raw_json: Any) -> List[Dict[str, Any]]:
+        """[025] fix: sayfaya gömülü JSON'dan GERÇEK post düğümlerini toplar.
+
+        Sözleşme: caption/taken_at/like_count/comment_count yalnızca düğümde
+        gerçekten varsa alınır; eksik alan ASLA tamamlanmaz (None kalır).
+        Düğüm hem shortcode hem display_url taşımalıdır;aksi halde regex
+        yoluna düşülür.
+        """
+        found: List[Dict[str, Any]] = []
+
+        def _caption_of(node: Dict[str, Any]) -> Optional[str]:
+            try:
+                edges = (node.get("edge_media_to_caption") or {}).get("edges") or []
+                if edges:
+                    text = ((edges[0] or {}).get("node") or {}).get("text")
+                    if isinstance(text, str) and text.strip():
+                        return text[:2200]
+            except Exception:
+                pass
+            cap = node.get("caption")
+            if isinstance(cap, dict) and isinstance(cap.get("text"), str) and cap["text"].strip():
+                return cap["text"][:2200]
+            if isinstance(cap, str) and cap.strip():
+                return cap[:2200]
+            return None
+
+        def _to_datetime(value: Any) -> Optional[datetime]:
+            if isinstance(value, bool) or value is None:
+                return None
+            if isinstance(value, (int, float)):
+                try:
+                    return datetime.fromtimestamp(float(value), tz=timezone.utc)
+                except (ValueError, OSError, OverflowError):
+                    return None
+            if isinstance(value, str):
+                if value.isdigit():
+                    return _to_datetime(int(value))
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    return None
+            return None
+
+        def _count_of(node: Dict[str, Any], *keys: str) -> Optional[int]:
+            for key in keys:
+                holder = node.get(key)
+                if isinstance(holder, dict):
+                    value = holder.get("count")
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        return value
+                elif isinstance(holder, int) and not isinstance(holder, bool):
+                    return holder
+            return None
+
+        def _walk(obj: Any, depth: int = 0) -> None:
+            if depth > 14 or len(found) >= 24:
+                return
+            if isinstance(obj, list):
+                for item in obj:
+                    _walk(item, depth + 1)
+                return
+            if not isinstance(obj, dict):
+                return
+            shortcode = obj.get("shortcode")
+            display_url = obj.get("display_url") or obj.get("display_src")
+            if (
+                isinstance(shortcode, str) and shortcode
+                and isinstance(display_url, str) and display_url.startswith("http")
+            ):
+                raw_taken = obj.get("taken_at_timestamp")
+                if raw_taken is None:
+                    raw_taken = obj.get("taken_at")
+                found.append({
+                    "shortcode": shortcode,
+                    "display_url": display_url.replace("\\u0026", "&"),
+                    "caption": _caption_of(obj),
+                    "taken_at": _to_datetime(raw_taken),
+                    "like_count": _count_of(obj, "edge_liked_by", "edge_media_preview_like", "like_count"),
+                    "comment_count": _count_of(obj, "edge_media_to_comment", "comment_count"),
+                    "is_video": bool(obj.get("is_video", False)),
+                })
+            for value in obj.values():
+                _walk(value, depth + 1)
+
+        if isinstance(raw_json, dict) and raw_json.get("_source") != "meta_tags":
+            _walk(raw_json)
+        return found
+
     def _parse_real_profile(self, raw_json: Dict[str, Any], html: str, username: str) -> InstagramProfile:
         """
         Ham JSON veya meta tag'leri gerçek Pydantic modele çevirir.
@@ -176,29 +266,40 @@ class InstagramGhostScraper:
             profile_pic_url = profile_pic_match.group(1).replace("&amp;", "&").replace("\\u0026", "&") if profile_pic_match else None
 
             # 5. Postlar ve Görseller
+            # [025] fix: gömülü JSON'da gerçek post düğümleri varsa (caption,
+            # taken_at, like/comment dahil) onlar kullanılır. Regex yalnızca
+            # yapısal düğüm bulunamadığında URL kurtarmak için çalışır; o durumda
+            # temporal/engagement alanları dürüstçe None kalır (uydurulmaz).
             posts = []
-            shortcodes = re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html) or re.findall(r'/p/([A-Za-z0-9_-]+)/', html)
-            display_urls = re.findall(r'"display_url":"([^"]+)"', html)
-            
-            # Ekstra yüksek çözünürlüklü fotoğraflar
-            if not display_urls:
-                for m in re.finditer(r'https://scontent[^\s"\'<>&]+\.jpg[^\s"\'<>]*', html):
-                    url = m.group(0).replace("&amp;", "&").replace("\\u0026", "&")
-                    if url not in display_urls and ("s150x150" not in url and "s320x320" not in url):
-                        display_urls.append(url)
-
-            for i in range(min(len(display_urls), 12)):
+            for node in self._collect_structured_posts(raw_json)[:12]:
                 try:
-                    sc = shortcodes[i] if i < len(shortcodes) else f"post_{i+1}"
-                    url = display_urls[i].replace("\\u0026", "&")
-                    posts.append(InstagramPost(
-                        shortcode=sc,
-                        display_url=url,
-                        caption=None,
-                        is_video=False
-                    ))
+                    posts.append(InstagramPost(**node))
                 except Exception:
                     continue
+
+            if not posts:
+                shortcodes = re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html) or re.findall(r'/p/([A-Za-z0-9_-]+)/', html)
+                display_urls = re.findall(r'"display_url":"([^"]+)"', html)
+
+                # Ekstra yüksek çözünürlüklü fotoğraflar
+                if not display_urls:
+                    for m in re.finditer(r'https://scontent[^\s"\'<>&]+\.jpg[^\s"\'<>]*', html):
+                        url = m.group(0).replace("&amp;", "&").replace("\\u0026", "&")
+                        if url not in display_urls and ("s150x150" not in url and "s320x320" not in url):
+                            display_urls.append(url)
+
+                for i in range(min(len(display_urls), 12)):
+                    try:
+                        sc = shortcodes[i] if i < len(shortcodes) else f"post_{i+1}"
+                        url = display_urls[i].replace("\\u0026", "&")
+                        posts.append(InstagramPost(
+                            shortcode=sc,
+                            display_url=url,
+                            caption=None,
+                            is_video=False
+                        ))
+                    except Exception:
+                        continue
 
             # Eğer private ve post yoksa, sonraki ajanlar boş veriyle halüsinasyon göreceği için durdur
             if is_private and len(posts) == 0:

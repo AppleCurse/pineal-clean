@@ -247,10 +247,11 @@
       }
       if ($taskStatus.runs) {
         runs = $taskStatus.runs;
-        let lastConf = 0;
-        Object.values(runs).forEach(r => { if (r.confidence !== undefined && r.confidence !== null) lastConf = r.confidence; });
-        overallConfidence = lastConf;
       }
+      // [038] fix: "TOPLAM SİSTEM GÜVENİ" artık backend'in gerçek toplamıdır
+      // (holistic_profile.overall_confidence = profile ajanlarının dürüst
+      // ortalaması). Nesne sırasına göre 'son ajanın confidence'ı' gösterilmez.
+      overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
       if ($taskStatus.current_agent) currentAgent = $taskStatus.current_agent;
     }
   }

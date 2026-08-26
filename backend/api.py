@@ -383,14 +383,57 @@ class InitiatePayload(BaseModel):
     scraper_type: str = "instagram"
 
 def _effective_scraper_type(url: str, requested: str) -> str:
-    """URL'nin platformuna göre tarayıcı seç (FIX: instagram adresi X tarayıcısına
-    gitmesin). Tanınmayan adreslerde kullanıcının seçimine saygı duyar."""
+    """URL platformuna göre tarayıcı seç ([023] fix: platform registry).
+
+    Instagram adresi X tarayıcısına gitmesin diye URL platform tespiti
+    önceliklidir; ancak tanınmayan platformda kullanıcı seçimi GEÇERLİ
+    DEĞİLDİR: URL'nin son path segmentini Instagram adı gibi kullanıp
+    yanlış hedefi kazımak misattribution'dır. Tanınmayan platform ->
+    unsupported_web (run_mission analizi başlatmadan durur).
+    """
     u = (url or "").lower()
     if "instagram.com" in u:
         return "instagram"
     if "x.com" in u or "twitter.com" in u:
         return "x"
-    return requested
+    return "unsupported_web"
+
+def _new_task_id() -> str:
+    """[029] fix: saniye-çözünürlüklü op_HHMMSS çakışıyordu; aynı saniyede iki
+    görev (farklı client'lar dahil) aynı memory dosyasında birleşiyordu.
+    Tarihi saniye + uuid4 öneki -> CanonicalMemory task_id regex'i ile uyumlu."""
+    import uuid
+    return f"op_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+
+def _ig_target_profile_update(ig_data: Any) -> dict:
+    """InstagramProfile -> target_profile payload alanları ([024]/[025]/[026] fix).
+
+    Sözleşme (sahte veri YASAK):
+    - Sentetik "Instagram Profili: ..." postu ÜRETİLMEZ; caption yoksa "" kalır.
+    - posts / post_times / posts_meta AYNI post sırasıyla index-hizalıdır;
+      frequency_engine index bazlı eşleştirme yapar, hizasız listeler
+      caption'a başka postun zamanını yanlış eşleştirebilir.
+    - following=None "ölçülmedi" demektir; 0 ölçümdür, birbirine karışmaz.
+    """
+    posts = ig_data.posts or []
+    return {
+        "username": "@" + ig_data.username,
+        "bio": ig_data.biography or "",
+        "posts": [p.caption or "" for p in posts],
+        # Zaman damgası yoksa "" (None değil): str() ile "None" metnine
+        # dönüşüp quote_guard source'larına sızmasın.
+        "post_times": [p.taken_at.isoformat() if p.taken_at else "" for p in posts],
+        "posts_meta": [
+            {"like_count": p.like_count, "comment_count": p.comment_count}
+            for p in posts
+        ],
+        "images": [p.display_url for p in posts],
+        "followers": ig_data.follower_count or 0,
+        "following": ig_data.following_count,  # None = ölçülmedi ([024])
+        "is_private": ig_data.is_private,
+    }
+
 
 async def run_mission(req: InitiatePayload):
     client_id = req.client_id
@@ -442,7 +485,20 @@ async def run_mission(req: InitiatePayload):
             broadcast_log(client_id, "WARNING", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
             broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
             return
-        if req.url and effective_type != "x": 
+        if req.url and effective_type == "unsupported_web":
+            # [023] fix: tanınmayan platformda URL segmentini Instagram adı gibi
+            # kullanıp yanlış hedefi kazımak YASAK. Tahmin üretme, açıkça dur.
+            broadcast_log(
+                client_id, "WARNING",
+                f"PLATFORM DESTEKLENMİYOR: {req.url} — yalnızca Instagram kazıması var; "
+                "tanınmayan URL tahmine dayalı kazınmaz, analiz başlatılmadı.",
+            )
+            broadcast_result_error(
+                client_id, "unsupported_platform",
+                "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
+            )
+            return
+        if req.url and effective_type == "instagram":
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
@@ -489,38 +545,15 @@ async def run_mission(req: InitiatePayload):
                             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
                             ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
                             
-                            payload["target_profile"].update({
-                                "username": "@" + ig_data.username,
-                                "bio": ig_data.biography or "",
-                                "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram Profili: {ig_data.full_name or ig_data.username}"],
-                                "images": [p.display_url for p in ig_data.posts],
-                                "followers": ig_data.follower_count or 0,
-                                "is_private": ig_data.is_private
-                            })
+                            # [024]/[025]/[026]: hizalı gerçek alanlar; sentetik
+                            # post ÜRETİLMEZ, following=None ölçülmedi demektir.
+                            payload["target_profile"].update(_ig_target_profile_update(ig_data))
                             
                         # [016] X buraya asla ulaşmaz: effective_type == "x"
                         # run_mission başında awaiting_authorization'a döner.
-                        # (eski `elif effective_type == "x" and scrape_readonly`
-                        #  ölü daldı, kaldırıldı — scraper.py dosyası duruyor.)
-                        elif effective_type == "cross" and InstagramGhostScraper:
-                            # Try Instagram first
-                            ctx = await browser.new_context(**ctx_kwargs)
-                            page = await ctx.new_page()
-                            if stealth_engine:
-                                await stealth_engine.apply_stealth_async(page)
-                            ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
-                            ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
-                            payload["target_profile"].update({
-                                "username": "@" + ig_data.username,
-                                "bio": ig_data.biography or "",
-                                "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram: {ig_data.full_name or ig_data.username}"],
-                                "images": [p.display_url for p in ig_data.posts],
-                                "followers": ig_data.follower_count or 0,
-                                "is_private": ig_data.is_private
-                            })
-                        elif scrape_readonly:
-                            data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                            payload["target_profile"].update({k: v for k, v in data.items() if v})
+                        # [023] cross/generic dalları kaldırıldı: tanınmayan
+                        # platform unsupported_web ile yukarıda açıkça durur;
+                        # scrape_readonly (X-unsupported) çağrılamaz hale geldi.
                     finally:
                         for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
                             if resource:
@@ -535,7 +568,7 @@ async def run_mission(req: InitiatePayload):
                 if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
                     raise e
         
-        task_id = f"op_{datetime.now().strftime('%H%M%S')}"
+        task_id = _new_task_id()
         for attempt in range(1, 4):
             try:
                 broadcast_log(client_id, "INFO", f"OPERASYON BAŞLATILIYOR (Deneme {attempt}/3)...")
@@ -548,6 +581,13 @@ async def run_mission(req: InitiatePayload):
                 broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
                 if attempt == 3:
                     broadcast_log(client_id, "ERROR", "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI.")
+                    # [028] fix: terminal durum MUTLAKA WS'ye düşer; exception'ı
+                    # yutmak UI'ı sonsuz 'işleniyor' durumunda asılı bırakır.
+                    broadcast_result_error(
+                        client_id, "failed",
+                        "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI (3/3).",
+                    )
+                    return
     except InsufficientEvidenceError:
         broadcast_result_error(client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT")
     except Exception as e:
