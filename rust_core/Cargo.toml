@@ -38,7 +38,6 @@ chrono = { version = "0.4", features = ["serde"] }
 # UUID for task isolation
 uuid = { version = "1.0", features = ["v4", "serde"] }
 ndarray = "0.17.2"
-md5 = "0.8.1"
 # [048] fix: adli telemetri hash'i SHA-256 (MD5 değil)
 sha2 = "0.10"
 

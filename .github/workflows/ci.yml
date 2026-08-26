@@ -78,3 +78,21 @@ jobs:
         run: cargo check --all-targets
       - name: Cargo test
         run: cargo test
+
+  rust-core:
+    # [W4.1] Rust çekirdeði derleme+test kapýsý. tauri optional-feature
+    # olduðundan webkit sistem baðýmlýlýðý GEREKMEZ.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust_core
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_core
+      - name: Cargo check (core, tauri'siz)
+        run: cargo check --all-targets
+      - name: Cargo test
+        run: cargo test
