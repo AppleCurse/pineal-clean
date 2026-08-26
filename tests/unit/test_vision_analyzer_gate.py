@@ -9,7 +9,6 @@ Kapilar:
   4) Gateway hatasi UNAVAILABLE'a donusur (uydurma veri uretilmez).
 """
 
-import json
 
 import pytest
 
@@ -35,7 +34,7 @@ class _FakeGateway:
 
 @pytest.fixture
 def fake_download(monkeypatch):
-    async def _fake(self, url):
+    async def _fake(self, url, client=None):
         return "QUJD"
 
     monkeypatch.setattr(VisionAnalyzer, "_download_and_encode_image", _fake)
