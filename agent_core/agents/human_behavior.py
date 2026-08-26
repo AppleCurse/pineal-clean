@@ -219,10 +219,11 @@ class HumanBehaviorAnalyzer:
         # Rastgele nesne, araba veya kahve fotoğraflarında omuz gerginliği uydurulamaz.
         faces = ()
         try:
-            face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            face_cascade = cv2.CascadeClassifier(face_cascade_path)
-            if not face_cascade.empty():
-                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3, minSize=(20, 20))
+            if hasattr(cv2, "CascadeClassifier") and hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+                face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                face_cascade = cv2.CascadeClassifier(face_cascade_path)
+                if not face_cascade.empty():
+                    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3, minSize=(20, 20))
         except Exception:
             faces = ()
 
