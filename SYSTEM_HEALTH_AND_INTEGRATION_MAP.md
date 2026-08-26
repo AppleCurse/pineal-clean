@@ -28,20 +28,26 @@ TaskSnapshot / WebSocket events / Aspasia
 ```
 
 ### X özel akışı
-
 ```text
 X URL
   ↓
 Direct scraper unsupported
   ↓
-awaiting_authorization
+awaiting_authorization (executor çalışmaz)
   ↓
-Kullanıcı izin verirse public-web alternatif yetkisi kaydedilir
+POST /api/scraper/authorize-alternative {alternative: public_web_search, approved: true}
   ↓
-Alternatif provider gerçek evidence üretmeden executor çalışmaz
+_run_public_web_research: mevcut SearchEngine ile gerçek arama
+  ↓
+Subject matching (handle URL/içerikte geçmeli) + source attribution
+  ↓
+room['web_research'] + WS log; sonuç yoksa dürüst no_results/no_subject_match
 ```
 
-**Not:** Yetki kaydı ve executor’u boş X profile ile çalıştırmama mevcut. Yetkili alternatif provider’ın gerçek retrieval/adaptation yolu henüz ayrıca tasarlanmalı; bu boşluğu fake profile ile doldurmak yasaktır.
+**Not:** Alternatif akış PSİKOLOJİK PROFİL ÜRETMEZ: yalnızca kaynak
+attribution'lı gerçek arama kayıtları döner (biyografi/gönderi uydurma
+yasak). Sağlayıcı çökerse available=False; hedef handle ile eşleşmeyen
+sonuçlar düşürülür. Frontend henüz bu sonucu tüketmiyor (uyumluluk kırılmadı).
 
 ## 2. Sağlık Sınıfları
 
@@ -74,7 +80,7 @@ Alternatif provider gerçek evidence üretmeden executor çalışmaz
 |---|---|---|---|---|---|
 | `MirrorOfTruth` | Kullanıcı bağlamını structured reflection’a çevirir | Router | LLMGateway `query_json` | `confidence=0`, `data_confidence=False` | WIRED, LIVE-UNVERIFIED |
 | `AutonomousVerifier` | Bio claim çıkarır, SearchOutcome ile web teyidi yapar | Router | fast chain + Tavily/SerpAPI/Exa/DDG | Kanıt/provider yok → `UNVERIFIED`, score/confidence 0 | CONTRACTED |
-| `HumanBehaviorAnalyzer` | Metin/görsel observable sinyal çıkarır | Router | LLM + deterministic extraction | Semantik psikolojik etiketler yumuşatıldı; daha derin sınır incelemesi gerek | WIRED, REVIEW |
+| `HumanBehaviorAnalyzer` | Metin/görsel observable sinyal çıkarır | Router | LLM + deterministic extraction | model-level contract: LLM yoksa interpretation_unavailable + data_confidence=False; gözlem yoksa LLM çağrılmaz | WIRED, CONTRACTED |
 | `PassionMapper` | Kanıtlı ilgi/tutku alanları | Router | primary DeepSeek V4 Pro | LLM yok → explicit unavailable | WIRED, LIVE-UNVERIFIED |
 | `FrictionDetector` | Sınır/hassasiyet evidence extraction | Router | primary Ling 3 Flash | LLM yok → explicit unavailable | WIRED, LIVE-UNVERIFIED |
 | `CognitiveProfiler` | İletişim/bilişsel style | Router | primary Solar Pro 4 | LLM yok → explicit unavailable | WIRED, LIVE-UNVERIFIED |
@@ -87,6 +93,7 @@ Alternatif provider gerçek evidence üretmeden executor çalışmaz
 | `DepthAnalyst` | Evidence chain üzerinde quote-guardlı derinlik raporu | Post-profile phase | depth chain | hata loglanıp atlanıyor | WIRED, REVIEW |
 | `VisionAnalyzer` | URL görsellerinde multimodal evidence | Pre-route | Gemini vision chain | download/model failure typed fallback | WIRED, LIVE-UNVERIFIED |
 | `InterpreterAgent` | Experimental code execution | Experimental endpoint | interpreter | default disabled | EXPERIMENTAL |
+| `ReflectionLoop` | Q-learning prototype (kendi reflection.db) | Hiçbiri | — | kimse import etmiyor | ORPHAN (silme yok; ürün kararı gerekli) |
 | `AspasiaChief` | Telemetry/model/agent durumunu kullanıcı diline çevirir | Chat endpoint | LLMGateway | provider hata → dürüst connection mesajı | WIRED, LIVE-UNVERIFIED |
 
 ## 5. Specialist Model Policy
@@ -100,7 +107,7 @@ Alternatif provider gerçek evidence üretmeden executor çalışmaz
 | VisionAnalyzer | `google/gemini-3.7-flash` | Şu an fallback yok; tasarım kararı gerekli |
 | AutonomousVerifier | `deepseek/deepseek-v4-flash` | Ling 3 Flash |
 
-**Açık nokta:** Model seçimi gateway’de çalışıyor; ancak model/provider/attempt metadata evidence chain’e henüz yazılmıyor. Bu ikinci fazın en değerli gözlemlenebilirlik işi.
+**Durum:** Model/provider/attempt metadata artık evidence chain’e yazılıyor (llm_calls: kind, model, provider, attempts, duration_ms, token, error; cache hit → provider='cache'). UNAVAILABLE/REAL_LLM_CALL_NOT_EXECUTED denemeleri de loglanır.
 
 ## 6. Failure Semantics Haritası
 
@@ -147,9 +154,9 @@ Alternatif provider gerçek evidence üretmeden executor çalışmaz
 
 ## 8. Şu An Yeni Kod Yazmadan Önce İncelenecek Başlıklar
 
-1. **X alternatif retrieval sözleşmesi:** yetki var ama alternatifin source attribution, subject matching ve evidence formatı tasarlanmadan provider eklenmeyecek.
-2. **LLM evidence metadata:** model, provider, attempt, fallback_used bilgisi evidence kaydına eklenmeli.
-3. **HumanBehavior sınırı:** observable ile interpretation ayrımı model seviyesinde netleştirilmeli.
+1. ~~X alternatif retrieval sözleşmesi~~ → `a002b20`: source attribution + subject matching + evidence formatı uygulandı (sahte profil üretilmiyor; frontend tüketimi ayrı iş).
+2. ~~LLM evidence metadata~~ → `a002b20`: model/provider/attempt/token/error evidence kaydında (`llm_calls`).
+3. ~~HumanBehavior sınırı~~ → `a002b20`: model seviyesinde netleştirildi (data_confidence/fallback_reason + interpretation_unavailable).
 4. **Vision policy:** Gemini tek model olduğu için gerçek fallback stratejisi veya açık UNAVAILABLE policy kararlaştırılmalı.
 5. **Rust karar kaydı:** Rust core ürün runtime’ına alınacak mı, ayrı deneysel modül mü kalacak? ADR gerekli.
 

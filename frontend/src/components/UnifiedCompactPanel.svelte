@@ -61,8 +61,7 @@
           rituals: userRituals,
           playlist: userPlaylist,
           envies: userEnvies,
-          aggressiveness: 1.0,
-          evidence_th: 3
+
         })
       });
       if (!res.ok) throw new Error("API hatası: " + res.statusText);
@@ -247,10 +246,11 @@
       }
       if ($taskStatus.runs) {
         runs = $taskStatus.runs;
-        let lastConf = 0;
-        Object.values(runs).forEach(r => { if (r.confidence !== undefined && r.confidence !== null) lastConf = r.confidence; });
-        overallConfidence = lastConf;
       }
+      // [038] fix: "TOPLAM SİSTEM GÜVENİ" artık backend'in gerçek toplamıdır
+      // (holistic_profile.overall_confidence = profile ajanlarının dürüst
+      // ortalaması). Nesne sırasına göre 'son ajanın confidence'ı' gösterilmez.
+      overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
       if ($taskStatus.current_agent) currentAgent = $taskStatus.current_agent;
     }
   }
@@ -742,12 +742,12 @@
             <div style="font-size: 12px; color: #38bdf8; font-weight: 800;">{telemetry.cache_hit_rate || '0.0%'}</div>
           </div>
           <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
-            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">TASARRUF EDİLEN MALİYET</div>
-            <div style="font-size: 12px; color: #4ade80; font-weight: 800;">{telemetry.saved_llm_cost || '$0.000'}</div>
+            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">CACHE HIT</div>
+            <div style="font-size: 12px; color: #4ade80; font-weight: 800;">{telemetry.cache_hits ?? 0}</div>
           </div>
           <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
-            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">KARAR AĞIRLIĞI GÜNC.</div>
-            <div style="font-size: 12px; color: #a78bfa; font-weight: 800;">{telemetry.decision_weight_updates || 0}</div>
+            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">GÖZLENEN LLM ÇAĞRISI</div>
+            <div style="font-size: 12px; color: #a78bfa; font-weight: 800;">{telemetry.llm_calls_observed ?? 0}</div>
           </div>
         </div>
       </div>

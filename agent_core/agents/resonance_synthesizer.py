@@ -79,7 +79,7 @@ Aşağıdaki JSON formatında yanıt ver:
                 temperature=0.3,
                 agent_name="resonance_synthesizer"
             )
-            return result
+            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
         except Exception as e:
             logger.warning(f"ResonanceSynthesizer LLM hatası: {e}")
             return AuthenticBridge(

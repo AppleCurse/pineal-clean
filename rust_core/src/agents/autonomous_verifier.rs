@@ -32,6 +32,14 @@ pub struct AutonomousVerifier {
     tavily_key: Option<String>,
 }
 
+/// [048] fix: adli telemetri hash'i SHA-256 (MD5 değil).
+fn sha256_hex(text: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 impl AutonomousVerifier {
     pub fn new(event_bus: Arc<EventBus>, tavily_key: Option<String>) -> Self {
         Self { event_bus, tavily_key }
@@ -46,7 +54,8 @@ impl AgentNode for AutonomousVerifier {
 
     async fn execute(&self, input: &str) -> Result<AnalysisResult, HaltReason> {
         let task_id = Uuid::new_v4();
-        
+        let started = std::time::Instant::now();
+
         let _ = self.event_bus.publish(AgentEvent::TaskStarted {
             task_id,
             agent_name: self.name().to_string(),
@@ -75,10 +84,20 @@ impl AgentNode for AutonomousVerifier {
             .and_then(|b| b.as_str())
             .unwrap_or("");
 
+        // [043] fix: eski davranış fail-open'di — HTTP tamamen başarısız olsa
+        // bile overall_score=1.0 kalıyordu (SIFIR kanıtla %100 otantiklik) ve
+        // her arama sonucu koşulsuz "DOĞRULANDI" etiketi alıyordu (claim
+        // eşleşmesi yok). Yeni sözleşme:
+        //   - arama sonuçları yalnızca KAYNAK olarak kaydedilir (UNVERIFIED);
+        //     gerçek claim eşleşmesi implemente edilmeden DOĞRULANDI DENMEZ
+        //   - sağlayıcı/HTTP/parse hatası sessizce yutulmaz, kayda geçer
+        //   - skor TEMİNAT ölçüsüdür (3 sonuç hedefine ulaşma oranı)
         let mut verifications = Vec::new();
-        let mut overall_score = 1.0;
+        let mut failure_reason: Option<String> = None;
 
-        if !target_bio.is_empty() {
+        if target_bio.is_empty() {
+            failure_reason = Some("Hedef bio kanıtı yok; teyit edilecek iddia bulunamadı".to_string());
+        } else {
             let client = reqwest::Client::new();
             let search_body = serde_json::json!({
                 "api_key": tavily_api_key,
@@ -86,27 +105,41 @@ impl AgentNode for AutonomousVerifier {
                 "max_results": 3
             });
 
-            if let Ok(res) = client.post("https://api.tavily.com/search").json(&search_body).send().await {
-                if let Ok(search_json) = res.json::<Value>().await {
-                    if let Some(results) = search_json.get("results").and_then(|r| r.as_array()) {
-                        for item in results {
-                            let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Bilinmeyen").to_string();
-                            let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
-                            let snippet = item.get("content").and_then(|s| s.as_str()).unwrap_or("").to_string();
-                            verifications.push(VerificationResult {
-                                claim_text: title,
-                                truth_status: "DOĞRULANDI".to_string(),
-                                evidence_url: url,
-                                contradiction_detail: snippet,
-                            });
-                        }
-                        if verifications.is_empty() {
-                            overall_score = 0.5;
+            match client.post("https://api.tavily.com/search").json(&search_body).send().await {
+                Ok(res) => match res.json::<Value>().await {
+                    Ok(search_json) => {
+                        if let Some(results) = search_json.get("results").and_then(|r| r.as_array()) {
+                            for item in results {
+                                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Bilinmeyen").to_string();
+                                let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                                let snippet = item.get("content").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                                verifications.push(VerificationResult {
+                                    claim_text: title,
+                                    truth_status: "UNVERIFIED".to_string(),
+                                    evidence_url: url,
+                                    contradiction_detail: snippet,
+                                });
+                            }
+                            if verifications.is_empty() {
+                                failure_reason = Some("Arama sonuç döndürmedi".to_string());
+                            }
+                        } else {
+                            failure_reason = Some("Arama yanıtı 'results' alanı içermiyor".to_string());
                         }
                     }
-                }
+                    Err(e) => failure_reason = Some(format!("Arama yanıtı parse edilemedi: {}", e)),
+                },
+                Err(e) => failure_reason = Some(format!("Arama sağlayıcısına ulaşılamadı: {}", e)),
             }
         }
+
+        if let Some(reason) = &failure_reason {
+            tracing::warn!("[AutonomousVerifier] {}", reason);
+        }
+
+        // Skor: teminat kapsamı (0 sonuç -> 0.0). Kanıt yoksa uncertainty
+        // motoru ([006]) boş listeyi HALT eder — sıfır kanıtla %100 imkânsız.
+        let overall_score = (verifications.len() as f32 / 3.0).min(1.0);
 
         let report = VerifierReport {
             verifications,
@@ -143,7 +176,7 @@ impl AgentNode for AutonomousVerifier {
                     task_id,
                     agent_name: self.name().to_string(),
                     step_name: "Uncertainty_Check_Passed".to_string(),
-                    output_hash: format!("{:x}", md5::compute(&llm_json_str)),
+                    output_hash: sha256_hex(&llm_json_str),
                 });
             }
             Err(e) => {
@@ -154,8 +187,8 @@ impl AgentNode for AutonomousVerifier {
         let _ = self.event_bus.publish(AgentEvent::TaskCompleted {
             task_id,
             agent_name: self.name().to_string(),
-            final_result_hash: format!("{:x}", md5::compute(&llm_json_str)),
-            duration_ms: 150,
+            final_result_hash: sha256_hex(&llm_json_str),
+            duration_ms: started.elapsed().as_millis() as u64,
         });
 
         Ok(AnalysisResult {

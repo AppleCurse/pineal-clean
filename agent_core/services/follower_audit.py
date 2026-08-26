@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict
 
 class FollowerAuditReport(BaseModel):
     follower_count: int = 0
+    following_count: Optional[int] = None  # [024] None = ölçülmedi (0 ölçümdür)
     post_count: int = 0
     median_likes: Optional[float] = None
     median_comments: Optional[float] = None
@@ -15,7 +16,7 @@ class FollowerAuditReport(BaseModel):
     data_completeness: float = 0.0
     model_config = ConfigDict(extra="allow")
 
-def audit_followers(follower_count: int, following_count: int, posts: List[Dict[str, Any]]) -> FollowerAuditReport:
+def audit_followers(follower_count: int, following_count: Optional[int], posts: List[Dict[str, Any]]) -> FollowerAuditReport:
     """
     Deterministik aritmetik takipçi ve kitle denetimi.
     LLM veya sübjektif yorum içermez; saf formül ile çalışır.
@@ -23,6 +24,7 @@ def audit_followers(follower_count: int, following_count: int, posts: List[Dict[
     if follower_count <= 0:
         return FollowerAuditReport(
             follower_count=follower_count,
+            following_count=following_count,
             verdict="VERİ YETERSİZ",
             verdict_code="insufficient",
             evidence=["Takipçi sayısı 0 veya eksik."],
@@ -34,12 +36,15 @@ def audit_followers(follower_count: int, following_count: int, posts: List[Dict[
     comments = [p.get("comment_count") for p in posts if p.get("comment_count") is not None]
 
     evidence = []
-    evidence.append(f"Toplam Takipçi: {follower_count}, Takip Edilen: {following_count}, İncelenen Post: {len(posts)}")
+    # [024] fix: following ölçülmediyse "0" yazmak sahte ölçümdür; ölçülmedi denir.
+    following_str = "ölçülmedi" if following_count is None else str(following_count)
+    evidence.append(f"Toplam Takipçi: {follower_count}, Takip Edilen: {following_str}, İncelenen Post: {len(posts)}")
 
     if not likes:
         # Beğeni sayıları gizli veya anonim kazımada gelmedi
         return FollowerAuditReport(
             follower_count=follower_count,
+            following_count=following_count,
             post_count=len(posts),
             verdict="VERİ YETERSİZ (GİZLİ ETKİLEŞİM)",
             verdict_code="insufficient",
@@ -88,6 +93,7 @@ def audit_followers(follower_count: int, following_count: int, posts: List[Dict[
 
     return FollowerAuditReport(
         follower_count=follower_count,
+        following_count=following_count,
         post_count=len(posts),
         median_likes=med_likes,
         median_comments=med_comm,

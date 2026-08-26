@@ -83,7 +83,9 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
             compliance_score=100.0,
             dialogue_tree=[
                 ScenarioResponse(scenario_type="agresif", expected_target_reaction="Ne diyorsun?", our_counter_move="Sadece bir gözlem.")
-            ]
+            ],
+        data_confidence=True,  # gerçek LLM sonucu simülasyonu: açık beyan ([022])
+        fallback_reason=None
         )
     elif name == "ClaimList":
         from agent_core.agents.autonomous_verifier import Claim
@@ -134,7 +136,11 @@ async def test_p2_release_gate_e2e_integration():
     }
     
     from agent_core.domain.pipeline_status import PipelineStatus
-    with patch("agent_core.services.llm_gateway.LLMGateway.query_json", new=AsyncMock(side_effect=mock_query_json)):
+    async def _query_json_chain(prompt, schema=None, **kwargs):
+        return await mock_query_json(prompt, schema=schema, **kwargs)
+
+    with patch("agent_core.services.llm_gateway.LLMGateway.query_json", new=AsyncMock(side_effect=mock_query_json)), \
+         patch("agent_core.services.llm_gateway.LLMGateway.query_json_chain", new=AsyncMock(side_effect=_query_json_chain)):
         # Run execution
         result = await executor.execute_task(task_input, task_id="p2_release_gate")
 

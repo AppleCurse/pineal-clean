@@ -75,10 +75,12 @@ class MirrorOfTruth:
                 type(exc).__name__, exc,
             )
 
+            # [014] alignment_score ölçülmediyse "nötr orta" (0.5) ÜRETİLMEZ;
+            # 0.0 = ölçüm yok. data_confidence=False ile kanıt sayılmaz.
             return MirrorReflection(
                 user_core_frequency=core_freq,
                 surface_persona="bilinmiyor_llm_kapali",
-                alignment_score=0.5,
+                alignment_score=0.0,
                 authentic_anchors=anchors,
                 confidence=0.0,
                 data_confidence=False,

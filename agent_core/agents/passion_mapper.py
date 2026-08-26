@@ -76,7 +76,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 temperature=0.3,
                 agent_name="passion_mapper"
             )
-            return result
+            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
         except Exception as e:
             logger.warning(f"PassionMapper LLM hatası: {e}")
             return PassionProfile(

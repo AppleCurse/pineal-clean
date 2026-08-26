@@ -56,7 +56,7 @@ async def test_resonance_rejects_missing_user_vector_instead_of_using_default():
 async def test_resonance_rejects_an_empty_target_instead_of_deriving_from_empty_dict():
     calculator = ResonanceCalculator()
 
-    with pytest.raises(ResonanceCalculationError, match="ölçülebilir vektör"):
+    with pytest.raises(ResonanceCalculationError, match="rezonans türetilemez"):
         await calculator.execute(
             {"user_authentic_vector": {"depth": 0.7, "energy": 0.4}, "target_analysis": {}},
             memory=None,

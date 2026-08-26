@@ -72,7 +72,7 @@ def test_identify_wound_as_bridge():
     
     contradictions = [{'type': 'social_vs_alone', 'weight': 10}]
     res2 = analyzer._identify_wound_as_bridge(contradictions, {})
-    assert res2['type'] == 'yalnizlik_köprüsü'
+    assert res2['type'] == 'gözlemlenebilir_tutarsızlık'
 
 def test_calculate_resonance_potential():
     analyzer = HumanBehaviorAnalyzer()
@@ -114,10 +114,32 @@ async def test_execute():
         'target_profile': {'bio': 'test', 'posts': []},
         'sacred_rules': 'rule'
     }
-    
+
+    from agent_core.agents.human_behavior import DigitalColdReading
+    mock_llm = MagicMock()
+    mock_llm.query_json = AsyncMock(return_value=DigitalColdReading(
+        surface_identity="test",
+        detected_wound="yüzeysellik",
+        defense_mechanism="sessizlik",
+        micro_signals=[],
+        achilles_score=10.0,
+        resonance_potential=0.5,
+    ))
+
+    res = await analyzer.execute(input_data, None, mock_llm)
+    assert isinstance(res, DigitalColdReading)
+    assert res.data_confidence is True
+    assert res.fallback_reason is None
+    mock_llm.query_json.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_non_model_output_is_typed_error():
+    """Model dışı LLM çıktısı sessizce geçirilmez; TypeError fırlar."""
+    analyzer = HumanBehaviorAnalyzer()
     mock_llm = MagicMock()
     mock_llm.query_json = AsyncMock(return_value="mock_result")
-    
-    res = await analyzer.execute(input_data, None, mock_llm)
-    assert res == "mock_result"
-    mock_llm.query_json.assert_called_once()
+    with pytest.raises(TypeError):
+        await analyzer.execute(
+            {"target_profile": {"bio": "test", "posts": []}}, None, mock_llm
+        )

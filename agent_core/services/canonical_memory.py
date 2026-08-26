@@ -119,7 +119,26 @@ class CanonicalMemory:
             return {}
     
     def _calculate_overall_confidence(self, evidence: List[Dict]) -> float:
-        if not evidence:
+        """[036] fix: toplam güven yalnızca GERÇEK ajan çıktılarından hesaplanır.
+
+        Doğrulama notları (deep_research), pillar özetleri ve execution_failure
+        kayıtları confidence taşımaz; eski davranış bunları 0 sayıp ortalamayı
+        seyreltiyordu (iyi bir şey olan doğrulama notu güveni DÜŞÜRÜYORDU).
+        evidence_type'sız (eski format) kayıtlar geriye uyumluluk için dahil
+        edilir; result dict değilse güvenli atlanır.
+        """
+        values: List[float] = []
+        for e in evidence:
+            if not isinstance(e, dict):
+                continue
+            if e.get("evidence_type") not in (None, "agent_output"):
+                continue
+            result = e.get("result")
+            if not isinstance(result, dict):
+                continue
+            confidence = result.get("confidence")
+            if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+                values.append(float(confidence))
+        if not values:
             return 0.0
-        confidences = [e.get('result', {}).get('confidence', 0) for e in evidence]
-        return sum(confidences) / len(confidences)
+        return round(sum(values) / len(values), 3)

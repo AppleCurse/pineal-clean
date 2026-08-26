@@ -23,6 +23,65 @@ class UncertaintyEngine:
         'kesin olarak', 'şüphesiz'
     ]
 
+    # ------------------------------------------------------------------ #
+    # Kanıt kalitesi sözleşmesi ([017]/[018] fix):
+    # "Alan dolu" ≠ "kanıt var". Aşağıdaki ibareler bilgi taşımaz; veri
+    # kalitesi hesabında 0.0 sayılır. Kural ANLAM bazlıdır, UZUNLUK bazlı
+    # DEĞİLDİR: karakter sayısı confidence üretmez.
+    # ------------------------------------------------------------------ #
+    NON_EVIDENCE_PHRASES = (
+        'bulunamadı', 'bulunamadi', 'veri yok', 'bilgi yok', 'kayıt yok',
+        'kayit yok', 'sonuç yok', 'sonuc yok', 'veri bulunamadı',
+        'veri bulunamadi', 'bilinmiyor', 'belirsiz', 'tanımlı değil',
+        'tanimli degil', 'yetersiz veri', 'veri yetersiz', 'yetersiz gönderi',
+        'sentez yapılamadı', '< min', 'not found',
+        'no data', 'no results', 'no info', 'no evidence', 'unknown',
+    )
+    NON_EVIDENCE_EXACT = frozenset({
+        '', '-', '—', '–', '…', '...', '?', 'n/a', 'na', 'yok', 'yok.',
+        'bilinmiyor', 'belirsiz', 'unknown', 'tanımlı değil', 'tanimli degil',
+    })
+    # Çalışma zamanı metadata'sı: varlığı KANIT DEĞİLDİR (oranı şişiremez,
+    # boş veriyi kurtaramaz). Adları yalnızca bu seti kapsar; status/reason
+    # gibi sonuç-anlamlı alanlar hariç tutulur.
+    RUNTIME_METADATA_FIELDS = frozenset({
+        'confidence', 'data_confidence', 'fallback_reason',
+        'model', 'model_name', 'provider', 'source_provider',
+        'usage', 'tokens', 'token_usage', 'metrics',
+        'duration_ms', 'elapsed_ms', 'latency_ms', 'elapsed',
+        'agent', 'agent_name', 'request_id', 'task_id', 'trace_id',
+        'created_at', 'timestamp', 'ts', 'version',
+    })
+
+    @classmethod
+    def _is_non_evidence_text(cls, value: Any) -> bool:
+        """Bir metin gerçekten bilgi taşıyor mu? (placeholder/boş -> True)"""
+        if not isinstance(value, str):
+            return False
+        text = value.strip().lower()
+        if not text:
+            return True
+        if text in cls.NON_EVIDENCE_EXACT:
+            return True
+        return any(phrase in text for phrase in cls.NON_EVIDENCE_PHRASES)
+
+    @classmethod
+    def _value_bears_evidence(cls, value: Any) -> bool:
+        """Değer kanıt kalitesine katkı sağlıyor mu? (None/placeholder -> False)"""
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return not cls._is_non_evidence_text(value)
+        if isinstance(value, (list, tuple)):
+            return any(cls._value_bears_evidence(item) for item in value)
+        if isinstance(value, dict):
+            return any(cls._value_bears_evidence(v) for v in value.values())
+        if isinstance(value, BaseModel):
+            return any(cls._value_bears_evidence(v) for v in value.model_dump().values())
+        # sayı/bool/vb. tipli değerler: kanıt olarak sayılır (0.0 gibi
+        # anlamlı ölçümler silinmez).
+        return True
+
     def __init__(self):
         self.config = DecisionConfig.load()
         self.logger = logging.getLogger(__name__)
@@ -45,32 +104,43 @@ class UncertaintyEngine:
         
         # If no specific field weights are defined, just use a simple ratio
         if not field_weights:
-            data_fields = [v for k, v in output_dict.items() if k != "confidence" and k != "data_confidence" and k != "fallback_reason"]
+            # Yalnızca KANIT alanları sayılır; metadata alanları (model,
+            # provider, süre, token vb.) veri kalitesi oranını ŞİŞİREMEZ.
+            data_fields = [
+                (k, v) for k, v in output_dict.items()
+                if k not in self.RUNTIME_METADATA_FIELDS
+            ]
             total_fields = len(data_fields)
             if total_fields == 0:
                 return 0.0, {"reason": "No data fields"}
-                
-            empty_fields = sum(
-                1 for v in data_fields
-                if v is None or v == [] or v == {} or (isinstance(v, str) and (v == '' or 'bulunamadı' in v.lower()))
-            )
-            data_score = 1.0 - (empty_fields / total_fields)
-            return data_score, {"simple_ratio": data_score}
+
+            evidence_fields = sum(1 for _, v in data_fields if self._value_bears_evidence(v))
+            data_score = evidence_fields / total_fields
+            return data_score, {
+                "simple_ratio": data_score,
+                "evidence_bearing_fields": evidence_fields,
+                "total_candidate_fields": total_fields,
+                "metadata_excluded": [
+                    k for k in output_dict if k in self.RUNTIME_METADATA_FIELDS
+                ],
+            }
 
         for field, weight in field_weights.items():
             if field not in output_dict:
-                breakdown[field] = {"present": False, "score": 0.0, "weight": weight}
+                breakdown[field] = {"present": False, "score": 0.0, "weight": weight, "evidence_bearing": False}
                 total_weight += weight
                 continue
             
             value = output_dict[field]
             field_score = self._score_field_value(value, empty_list_penalty)
+            evidence_bearing = self._value_bears_evidence(value)
             
             breakdown[field] = {
                 "present": True,
                 "score": field_score,
                 "weight": weight,
-                "weighted_score": field_score * weight
+                "weighted_score": field_score * weight,
+                "evidence_bearing": evidence_bearing,
             }
             
             total_score += field_score * weight
@@ -90,28 +160,42 @@ class UncertaintyEngine:
 
         P1-B2 SÖZLEŞMESİ:
         - Güven, içerik UZUNLUĞUNDAN üretilmez (karakter sayısı confidence'ı artırmaz).
-        - Dolu ve şema-geçerli string/liste -> sabit completeness katkısı (1.0).
+        - Kanıt KALİTESİ ayrı değerlendirilir: "alan dolu" tek başına 1.0 DEĞİLDİR.
+          Boolean placeholder ibareler ("bulunamadı", "veri yok", "bilinmiyor",
+          "n/a", "unknown"...) ve yalnızca bu ibarelerden oluşan liste/dict
+          0.0 sayılır; karışık listeler kanıt oranına göre puanlanır.
+        - Tüm elemanları kanıt taşıyan dolu liste -> sabit katkı (1.0).
         - Boş -> ceza (empty_list_penalty / 0.0).
         - Başka sihirli uzunluk eşiği YOKTUR.
         """
         if value is None:
             return 0.0
         
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             if len(value) == 0:
                 # Boş liste cezası
                 return empty_list_penalty
-            # Dolu liste -> sabit katkı. (Eski 'eleman sayısı/3' ve
-            # 'ortalama karakter uzunluğu/50' eşikleri kaldırıldı.)
-            return 1.0
+            evidence_count = sum(
+                1 for item in value if self._value_bears_evidence(item)
+            )
+            if evidence_count == 0:
+                # Dolu görünen ama tamamı placeholder -> sıfır kanıt
+                return 0.0
+            # Gerçek kanıt oranı; eleman UZUNLUĞU veya sayısı skoru YÜKSELTMEZ.
+            return evidence_count / len(value)
         
         if isinstance(value, dict):
             if len(value) == 0:
                 return empty_list_penalty
-            return 0.8
+            evidence_count = sum(
+                1 for v in value.values() if self._value_bears_evidence(v)
+            )
+            if evidence_count == 0:
+                return 0.0
+            return 0.8 * (evidence_count / len(value))
         
         if isinstance(value, str):
-            if not value.strip() or 'bulunamadı' in value.lower():
+            if self._is_non_evidence_text(value):
                 return 0.0
             # Dolu ve şema-geçerli string -> sabit katkı; uzunluk fark yaratmaz.
             return 1.0
@@ -137,9 +221,15 @@ class UncertaintyEngine:
             result_dict = result.model_dump()
             data_score, breakdown = self.calculate_data_score(result_dict, agent_name)
             
-            # Eski is_empty mantığını da kısmen koruyalım
-            data_fields = [v for k, v in result_dict.items() if k not in ("confidence", "data_confidence", "fallback_reason")]
-            if data_fields and all(v is None or v == [] or v == {} or (isinstance(v, str) and (v == '' or 'bulunamadı' in v.lower())) for v in data_fields):
+            # is_empty artık KANIT KALİTESİNE bakar: placeholder ibarelerden
+            # oluşan dolu alanlar kanıt sayılmaz (metadata alanları da sayılmaz).
+            data_fields = [
+                (k, v) for k, v in result_dict.items()
+                if k not in self.RUNTIME_METADATA_FIELDS
+            ]
+            if data_fields and not any(
+                self._value_bears_evidence(v) for _, v in data_fields
+            ):
                 is_empty = True
         elif 'evidence' in result_text and 'bulunamadı' in result_text:
             is_empty = True

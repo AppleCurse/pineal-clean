@@ -99,7 +99,7 @@ class PinealExecutor:
             "interpreter": InterpreterAgent(self.llm_gateway),
             "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
             "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
-            "shadow_executor": ShadowExecutor(),
+            "shadow_executor": ShadowExecutor(llm_gateway=self.llm_gateway),
         }
 
     @staticmethod
@@ -114,25 +114,28 @@ class PinealExecutor:
         cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
         hits = cache_stats.get("hits", 0)
         hit_rate = cache_stats.get("hit_rate", "0.0%")
-        # Assuming avg 0.005$ per LLM call saved
-        if isinstance(hits, (int, float)):
-            saved_cost = hits * 0.005
-            saved_cost_str = f"${saved_cost:.3f}"
-        else:
-            saved_cost_str = "$0.000"
-            
+
         real_cost = getattr(self.llm_gateway, "spend_usd", None)
         if not isinstance(real_cost, (int, float)):
             real_cost = getattr(self.llm_gateway, "total_cost", 0.0)
         if not isinstance(real_cost, (int, float)):
             real_cost = 0.0
 
+        # [034] fix: telemetri yalnızca GERÇEK gözlemlenebilirlerden oluşur.
+        # - 'saved_llm_cost' varsayımsal $0.005/call sabitiyle uyduruluyordu;
+        #   cache hit'leri model/fiyat bilgisi taşımadığı için kesin tasarruf
+        #   hesaplanamaz -> hit sayısı dürüstçe raporlanır.
+        # - 'decision_weight_updates' hiçbir ağırlık güncellemesi yapılmayan
+        #   yolda ajan sayısını yanlış etiketliyordu -> gerçek LLM çağrı
+        #   gözlem sayısı raporlanır (gateway call_log).
+        call_log = getattr(self.llm_gateway, "call_log", None)
+
         status.telemetry = {
             "cache_hit_rate": hit_rate,
-            "saved_llm_cost": saved_cost_str,
+            "cache_hits": hits if isinstance(hits, (int, float)) else 0,
+            "llm_calls_observed": len(call_log) if isinstance(call_log, list) else 0,
             "total_llm_cost": f"${real_cost:.5f}",
             "llm_spend_usd": real_cost,
-            "decision_weight_updates": len(status.agent_runs)
         }
         
         if self._snapshot_cb:
@@ -190,7 +193,8 @@ class PinealExecutor:
 
     @staticmethod
     def _evidence_record(agent_name: str, result: BaseModel, *, evidence_type: str,
-                         uncertainty=None, source_agent: str | None = None) -> dict:
+                         uncertainty=None, source_agent: str | None = None,
+                         llm_calls: list | None = None) -> dict:
         """Build an auditable evidence entry while retaining its provenance."""
         record = {
             "agent": agent_name,
@@ -202,15 +206,43 @@ class PinealExecutor:
             record["source_agent"] = source_agent
         if uncertainty is not None:
             record["uncertainty"] = uncertainty.model_dump()
+        if llm_calls is not None:
+            # Gözlemlenebilirlik: bu ajan için yapılan gerçek LLM
+            # denemeleri (model/provider/deneme/hata/token). Sahte değil,
+            # gateway call_log'undan alınır.
+            record["llm_calls"] = llm_calls
         return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
+        """Public entry: impl'i saran güvenli yaşam döngüsü.
+
+        [035] fix: göreve ait geçici görseller başarı/halt/exception HER
+        durumunda temizlenir; hedefin kişisel görselleri temp dizinde kalıcı
+        artefakt olarak bırakılamaz (retention sözleşmesi).
+        """
+        try:
+            return await self._execute_task_impl(input_data, task_id)
+        finally:
+            self._cleanup_temp_images(input_data)
+
+    def _cleanup_temp_images(self, input_data: Dict[str, Any]) -> None:
+        import os
+        for path in (input_data.pop("_downloaded_temp_images", None) or []):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    async def _execute_task_impl(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
         from agent_core.schemas.telemetry import (
             TaskStartedEvent, StepCompletedEvent, ErrorHaltEvent, TaskCompletedEvent, Severity
         )
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         _task_wall_start = datetime.now(timezone.utc)
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
+        # Gözlemlenebilirlik: bu görevin LLM çağrıları ajan başına slice alınır.
+        if hasattr(self.llm_gateway, "call_log"):
+            self.llm_gateway.call_log.clear()
 
         # Deterministik Takipçi ve Zamanlama Forensiği
         try:
@@ -218,8 +250,11 @@ class PinealExecutor:
             from agent_core.services.timing_forensics import analyze_timing
             tp_info = input_data.get("target_profile", {})
             fol_cnt = tp_info.get("followers", 0)
-            fing_cnt = tp_info.get("following", 0)
-            posts_meta = tp_info.get("posts_meta", []) or [{"like_count": None, "comment_count": None}]
+            # [024] fix: following=None "ölçülmedi" demektir; 0'a çevrilmez.
+            fing_cnt = tp_info.get("following")
+            # [027] fix: sahte 1-post sentinel'i kaldırıldı. Boş posts_meta
+            # olduğu gibi iletilir; audit "İncelenen Post: 0" der, 1 demez.
+            posts_meta = tp_info.get("posts_meta") or []
             audit_res = audit_followers(fol_cnt, fing_cnt, posts_meta)
             input_data["follower_audit"] = audit_res.model_dump()
             status.follower_audit = audit_res.model_dump()
@@ -254,7 +289,10 @@ class PinealExecutor:
 
         imgs = input_data.get("target_profile", {}).get("images", [])
         if imgs and isinstance(imgs[0], str) and imgs[0].startswith("http"):
-            input_data["target_profile"]["images"] = await self._download_images(imgs)
+            downloaded = await self._download_images(imgs)
+            input_data["target_profile"]["images"] = downloaded
+            # [035] fix: task bitince (her çıkış yolunda) silinecekleri kaydet.
+            input_data["_downloaded_temp_images"] = downloaded
 
         # --- PINEAL DETERMINISTIC 7-PILLAR ---
         pillar_start = datetime.now(timezone.utc)
@@ -376,6 +414,7 @@ class PinealExecutor:
                 
                 try:
                     agent = self.agents[agent_name]
+                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
@@ -429,12 +468,16 @@ class PinealExecutor:
                         continue
 
                 research_note = None
+                _deep_llm_calls = []
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         # Preserve `result`: downstream dependencies must receive the
                         # actual typed agent output, never a generic research note.
                         research_note = await self._deep_research(result, check, agent_name)
+                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
+                                           if hasattr(self.llm_gateway, "call_log") else [])
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -457,11 +500,14 @@ class PinealExecutor:
                 elif agent_name == "cognitive_profiler":
                     input_data["cognitive"] = result.model_dump()
 
+                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
+                              if hasattr(self.llm_gateway, "call_log") else [])
                 status.evidence_chain.append(self._evidence_record(
                     agent_name,
                     result,
                     evidence_type="agent_output",
                     uncertainty=check,
+                    llm_calls=_llm_calls,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(
@@ -470,6 +516,7 @@ class PinealExecutor:
                         evidence_type="verification_note",
                         source_agent=agent_name,
                         uncertainty=check,
+                        llm_calls=_deep_llm_calls,
                     ))
 
                 run.status = "completed"
@@ -523,6 +570,7 @@ class PinealExecutor:
 
                 try:
                     agent = self.agents[agent_name]
+                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
@@ -570,10 +618,14 @@ class PinealExecutor:
                     continue
 
                 research_note = None
+                _deep_llm_calls = []
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         research_note = await self._deep_research(result, check, agent_name)
+                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
+                                           if hasattr(self.llm_gateway, "call_log") else [])
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -584,11 +636,14 @@ class PinealExecutor:
                         self._snapshot(status)
                         continue
 
+                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
+                              if hasattr(self.llm_gateway, "call_log") else [])
                 status.evidence_chain.append(self._evidence_record(
                     agent_name,
                     result,
                     evidence_type="agent_output",
                     uncertainty=check,
+                    llm_calls=_llm_calls,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(
@@ -597,6 +652,7 @@ class PinealExecutor:
                         evidence_type="verification_note",
                         source_agent=agent_name,
                         uncertainty=check,
+                        llm_calls=_deep_llm_calls,
                     ))
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
@@ -665,6 +721,8 @@ class PinealExecutor:
                 status.agent_runs["shadow_executor"] = AgentRun(
                     task_id=task_id, agent_name="shadow_executor", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    output_summary=shadow_result.model_dump()
+                        if hasattr(shadow_result, "model_dump") else {},
                     confidence=(
                         getattr(shadow_result, "confidence", None)
                         if isinstance(getattr(shadow_result, "confidence", None), (int, float))
@@ -692,6 +750,7 @@ class PinealExecutor:
                 status.agent_runs["osint_investigator"] = AgentRun(
                     task_id=task_id, agent_name="osint_investigator", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    output_summary=status.osint_footprint,
                     confidence=(
                         getattr(osint_result, "confidence", None)
                         if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))

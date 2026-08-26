@@ -87,8 +87,43 @@ class LLMGateway:
         # P2-MALİYET: kümülatif harcama ve sert üst limit
         self.spend_usd = 0.0
         self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 1.0)
+        # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
+        self.unpriced_calls = 0
+        # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
+        # kaydı. Evidence chain'e ajan bazında yazılır (task_executor).
+        self.call_log: List[dict] = []
         self._rebuild()
         self.cache = build_cache_from_env()
+
+    def _log_call(
+        self,
+        kind: str,
+        model: str,
+        provider: str,
+        *,
+        cache_hit: bool = False,
+        attempts: int = 0,
+        duration_ms: int = 0,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Append an auditable record of a single LLM interaction."""
+        self.call_log.append({
+            "kind": kind,
+            "model": model,
+            "provider": provider,
+            "cache_hit": cache_hit,
+            "attempts": attempts,
+            "duration_ms": duration_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "error": error,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+        # Sınırsız büyümesin; kanıt zinciri zaten slice ile alır.
+        if len(self.call_log) > 500:
+            del self.call_log[: len(self.call_log) - 500]
 
     @staticmethod
     def _env_float(name: str, default: float) -> float:
@@ -127,6 +162,66 @@ class LLMGateway:
             f"Daha fazla canli LLM cagrisi yapilmadi."
         )
 
+    def _pricing_guard(self, model: str, *, kind: str) -> None:
+        """[017] fix: fiyatı bilinmeyen model için ÜCRETLİ canlı çağrı varsayılan
+        olarak REDDEDİLİR. Eski davranış yalnızca uyarı loglayıp harcamayı 0
+        sayıyordu; bu, bilinmeyen modelle spend cap'in sessiz bypass'ı demekti.
+
+        Açık kabul: PINEAL_ALLOW_UNPRICED_MODELS=1 (takipsiz maliyet bilinçli
+        seçimdir; unpriced_calls sayacı gözlemlenebilirlikte raporlanır).
+        """
+        if model in self.MODEL_PRICING:
+            return
+        if os.getenv("PINEAL_ALLOW_UNPRICED_MODELS", "0") == "1":
+            self.unpriced_calls += 1
+            import logging
+            logging.warning(
+                "SPEND: fiyatı bilinmeyen modele açıkça izin verildi "
+                "(PINEAL_ALLOW_UNPRICED_MODELS=1): %s", model,
+            )
+            return
+        msg = (
+            f"UNKNOWN_PRICING: '{model}' için fiyat kaydı yok; harcama takip edilemez "
+            "ve spend cap bypass edilemez. MODEL_PRICING'e fiyat ekleyin veya "
+            "PINEAL_ALLOW_UNPRICED_MODELS=1 ile takipsiz maliyeti açıkça kabul edin."
+        )
+        self._log_call(kind, model, "openrouter", error="UNKNOWN_PRICING")
+        raise RuntimeError(msg)
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        """[018] fix: retry yalnızca GEÇİCİ hata sınıflarına uygulanır.
+
+        Retryable:   timeout, bağlantı hatası/reset, 408, 429, 5xx
+        Non-retryable: 400/401/403/404/422, geçersiz istek, model yok,
+                     bağlam limiti, spend cap (ayrı ele alınır)
+        Bilinmeyen durumlar mevcut davranışı (retry) korur.
+        """
+        try:
+            from openai import APIConnectionError, APITimeoutError
+            if isinstance(exc, (APITimeoutError, APIConnectionError)):
+                return True
+        except Exception:
+            pass
+
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int):
+            return status in (408, 429) or 500 <= status < 600
+
+        err = str(exc).lower()
+        if any(m in err for m in (
+            "timeout", "timed out", "connection", "connect", "refused",
+            "reset", "10061", "429", "rate limit", "rate_limit",
+            "502", "503", "504", "internal server error",
+        )):
+            return True
+        if any(m in err for m in (
+            "400", "403", "404", "422", "invalid_request", "invalid request",
+            "model_not_found", "context_length", "unauthorized", "invalid_api_key",
+        )):
+            return False
+        return True
+
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
         if unlock_live:
@@ -164,6 +259,8 @@ class LLMGateway:
                 self.circuit_open = False
                 self.failure_count = 0
             else:
+                self._log_call("query", getattr(self, "local_model", "") or "?",
+                               "circuit_breaker", error="CIRCUIT_OPEN")
                 raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu (60s bekleme devrede)")
         
         # Eğer local model seçildiyse veya global use_local aktifse
@@ -171,6 +268,7 @@ class LLMGateway:
 
         # P2-MALİYET: bütçe aşıldıysa canlı çağrı hiç yapılmaz
         if not is_local_request and self._cap_exceeded():
+            self._log_call("query", model or "?", "openrouter", error=self._cap_message())
             raise SpendCapExceeded(self._cap_message())
         
         if is_local_request:
@@ -179,14 +277,18 @@ class LLMGateway:
         else:
             import os
             if os.getenv("LIVE_LLM_E2E") != "1" and not getattr(self, "live_unlocked", False):
-                raise RuntimeError(
+                msg = (
                     "REAL_LLM_CALL_NOT_EXECUTED: Canlı LLM çağrıları kapalı. "
                     "Açmak için: (1) Kasa'ya API anahtarı girin (oturum boyunca açılır), veya "
                     "(2) .env dosyasına OPENROUTER_API_KEY yazıp LIVE_LLM_E2E=1 yapıp sunucuyu yeniden başlatın."
                 )
+                self._log_call("query", model or "?", "openrouter", error="REAL_LLM_CALL_NOT_EXECUTED")
+                raise RuntimeError(msg)
             
             if not self.client:
-                raise RuntimeError("LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç.")
+                msg = "LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç."
+                self._log_call("query", model or "?", "openrouter", error="LLM_KEY_MISSING")
+                raise RuntimeError(msg)
             target_client = self.client
             if images and not model:
                 # FAZ 3: görsel varsa vision modeline geç (env ile ezilebilir)
@@ -223,12 +325,20 @@ class LLMGateway:
             )
             cached = self.cache.get(cache_key)
             if cached is not None:
+                self._log_call("query", selected_model, "cache", cache_hit=True)
                 return cached
+
+        # [017] fix: ücretli çağrı öncesi fiyat guard'ı. Cache hit ücretsizdir;
+        # guard yalnızca gerçek provider çağrısından önce uygulanır. Local
+        # istekler ücretsizdir, muaf tutulur.
+        if not is_local_request:
+            self._pricing_guard(selected_model, kind="query")
 
         import asyncio
         import logging
         max_retries = 3
 
+        t0 = time.time()
         for attempt in range(max_retries):
             try:
                 # P2-MALİYET: döngü içinde de cap kontrolü
@@ -245,9 +355,20 @@ class LLMGateway:
                 if not is_local_request:
                     self._account_spend(selected_model, getattr(r, "usage", None))
 
+                usage = getattr(r, "usage", None)
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
+                self._log_call(
+                    "query", selected_model,
+                    "local" if is_local_request else "openrouter",
+                    attempts=attempt + 1,
+                    duration_ms=int((time.time() - t0) * 1000),
+                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0)
+                        if usage is not None else None,
+                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0)
+                        if usage is not None else None,
+                )
                 return content
             except SpendCapExceeded:
                 raise
@@ -273,8 +394,25 @@ class LLMGateway:
                 is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
                 if is_auth_error:
                     logging.error(f"LLM Gateway authentication error: {e}")
+                    self._log_call("query", selected_model,
+                                   "local" if is_local_request else "openrouter",
+                                   attempts=attempt + 1,
+                                   duration_ms=int((time.time() - t0) * 1000),
+                                   error="AUTH_FAILED")
                     raise RuntimeError(f"LLM API Key rejected: {e}") from e
-                    
+
+                # [018] fix: geçici OLMAYAN hata sınıfları (400/403/404/422,
+                # geçersiz istek, model yok, bağlam limiti) retry EDİLMEZ.
+                # Eskiden her generic Exception backoff'la 3 kez deneniyordu.
+                if not self._is_retryable_error(e):
+                    logging.error(f"LLM Gateway non-retryable error ({type(e).__name__}): {e}")
+                    self._log_call("query", selected_model,
+                                   "local" if is_local_request else "openrouter",
+                                   attempts=attempt + 1,
+                                   duration_ms=int((time.time() - t0) * 1000),
+                                   error=f"NON_RETRYABLE::{type(e).__name__}")
+                    raise
+
                 if attempt < max_retries - 1:
                     backoff = 2 ** attempt
                     logging.warning(f"LLM Bağlantı/Gecikme Hatası (deneme {attempt+1}/{max_retries}), {backoff}s içinde tekrar deneniyor... {e}")
@@ -285,6 +423,11 @@ class LLMGateway:
                 if self.failure_count > 5:
                     self.circuit_open = True
                     self.circuit_opened_at = time.time()
+                self._log_call("query", selected_model,
+                               "local" if is_local_request else "openrouter",
+                               attempts=attempt + 1,
+                               duration_ms=int((time.time() - t0) * 1000),
+                               error=type(e).__name__)
                 raise
 
     def extract_json(self, text: str) -> dict:

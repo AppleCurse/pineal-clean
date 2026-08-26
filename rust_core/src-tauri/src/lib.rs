@@ -1,10 +1,10 @@
 use pineal_heretic_core::{
     ChiefEngine, AspasiaEngine, EventBus, TaskManager, StealthVault,
 };
+use pineal_heretic_core::vault::default_vault_path;
 use pineal_heretic_core::tauri_bridge::{CoreState, setup_telemetry_bridge};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::path::PathBuf;
 
 // ─── FAZ 1-A: Vault Komutlari ─────────────────────────────────────────
 
@@ -13,15 +13,12 @@ async fn create_vault(
     password: String,
     state: tauri::State<'_, CoreState>,
 ) -> Result<String, String> {
-    let vault_dir = std::env::var("PINEAL_VAULT_DIR")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".to_string());
-            format!("{}/.pineal_vault", home)
-        });
-    std::fs::create_dir_all(&vault_dir).ok();
-    let vault_path = PathBuf::from(&vault_dir).join("vault.json");
+    // [W4.3] tek sahiplikli yol: rust_core::vault::default_vault_path
+    // (tauri_bridge'deki /tmp'li ikiz kaldırıldı — iki farklı dosya yok)
+    let vault_path = default_vault_path();
+    if let Some(parent) = vault_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
 
     let vault = StealthVault::new(&vault_path, &password)
         .map_err(|e| format!("Vault olusturulamadi: {}", e))?;
@@ -37,14 +34,7 @@ async fn open_vault(
     password: String,
     state: tauri::State<'_, CoreState>,
 ) -> Result<String, String> {
-    let vault_dir = std::env::var("PINEAL_VAULT_DIR")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_else(|_| ".".to_string());
-            format!("{}/.pineal_vault", home)
-        });
-    let vault_path = PathBuf::from(&vault_dir).join("vault.json");
+    let vault_path = default_vault_path();
 
     if !vault_path.exists() {
         return Err("Vault dosyasi bulunamadi. Once kasa olusturun.".to_string());
@@ -76,6 +66,29 @@ async fn set_vault_credentials(
             vault.store(&key, &cred)
                 .map_err(|e| format!("Kasaya yazilamadi: {}", e))?;
             Ok(format!("{} basariyla kasaya muhUrlendi.", key))
+        }
+        None => Err("Kasa acik degil. Once 'Kasa Ac' veya 'Kasa Olustur' butonuna basin.".to_string()),
+    }
+}
+
+// ─── FAZ 1-B2: Credentials Gercek Okuma ([047] fix) ───────────────────
+// Bu komut daha önce YALNIZCA tauri_bridge.rs'te vardı ve generate_handler
+// listesine hiç kayıtlı değildi: kasaya yazılan kimlik bilgisi gerçek
+// uygulamadan geri OKUNAMIYORDU. Tek sahiplikle artık burada ve kayıtlı.
+
+#[tauri::command]
+async fn get_vault_credentials(
+    key: String,
+    state: tauri::State<'_, CoreState>,
+) -> Result<String, String> {
+    let vault_state = state.vault.lock().await;
+    match vault_state.as_ref() {
+        Some(vault) => {
+            #[derive(serde::Deserialize)]
+            struct Credential { value: String }
+            let cred: Credential = vault.retrieve(&key)
+                .map_err(|e| format!("Kasadan okunamadi: {}", e))?;
+            Ok(cred.value)
         }
         None => Err("Kasa acik degil. Once 'Kasa Ac' veya 'Kasa Olustur' butonuna basin.".to_string()),
     }
@@ -115,7 +128,7 @@ async fn start_analysis(
         _user_playlist.unwrap_or_default(),
         _user_envies.unwrap_or_default(),
     ).await;
-    result.map_err(|e| format!("Analiz baslatildi: {}", e))
+    result.map_err(|e| format!("Analiz başlatılamadı: {}", e))
 }
 
 // ─── Tauri Uygulama Baslangici ─────────────────────────────────────────
@@ -151,6 +164,7 @@ pub fn run() {
             create_vault,
             open_vault,
             set_vault_credentials,
+            get_vault_credentials,
         ])
         .setup(move |app| {
             use tauri::Manager;
