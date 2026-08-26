@@ -17,9 +17,12 @@ async def test_resonance_synthesizer_fallback():
     assert isinstance(res, AuthenticBridge)
     assert res.confidence == 0.0
     assert res.resonance_score == 0.0
+<<<<<<< HEAD
+=======
     assert res.data_confidence is False
     assert res.fallback_reason == "llm_unavailable"
     assert res.suggested_opening_message == ""
+>>>>>>> 74e51a3a92ece8ec9976b976955db1b4db106554
 
 @pytest.mark.asyncio
 async def test_resonance_synthesizer_success():
