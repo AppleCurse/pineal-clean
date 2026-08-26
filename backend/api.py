@@ -774,6 +774,82 @@ class AlternativeAuthorizationPayload(BaseModel):
     approved: bool
 
 
+def _extract_handle_from_url(url: str) -> str:
+    """X/Instagram URL'sinden kullanıcı adı (subject) çıkarır."""
+    import re
+    if not url:
+        return ""
+    needle = re.search(r"(?:instagram\.com|x\.com|twitter\.com)/([^/?#]+)", url)
+    if needle:
+        return needle.group(1).strip().lstrip("@").lower()
+    return url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "").lower()
+
+
+async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, Any]:
+    """Yetki verilmiş alternatif: kanıt kaynaklı public-web araması.
+
+    Sözleşme (sahte veri YASAK):
+    - Biyografi/gönderi/kişilik ÜRETİLMEZ; yalnızca gerçek arama kayıtları
+      döner (source_url + provider + content).
+    - Subject matching: hedef kullanıcı adı kaynak URL'sinde veya içeriğinde
+      geçmeyen sonuçlar düşürülür (yanlış kişi eşleşmesi engeli).
+    - Sağlayıcı yok/çöktü -> available=False; sonuç yok -> no_results.
+    """
+    handle = _extract_handle_from_url(url)
+    if not handle:
+        return {
+            "status": "invalid_target", "available": False,
+            "query": "", "results": [], "matched_username": "",
+            "total_results_searched": 0,
+            "searched_at": datetime.now().isoformat(),
+            "note": "URL'den hedef kullanıcı adı çıkarılamadı.",
+        }
+
+    query = f'"{handle}"'
+    outcome = await search_engine.search(query, num_results=8)
+    if not getattr(outcome, "available", False):
+        return {
+            "status": "unavailable", "available": False, "query": query,
+            "results": [], "matched_username": handle,
+            "total_results_searched": 0,
+            "searched_at": datetime.now().isoformat(),
+            "note": getattr(outcome, "error", None) or "Arama sağlayıcısı kullanılamadı.",
+        }
+
+    raw = getattr(outcome, "results", []) or []
+    matched = [
+        {
+            "source_url": r.source_url,
+            "provider": r.provider,
+            "content": r.content,
+            "subject_match": True,
+        }
+        for r in raw
+        if handle in (r.source_url or "").lower()
+        or handle in (r.content or "").lower()
+    ]
+    if matched:
+        status = "ok"
+        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti."
+    elif raw:
+        status = "no_subject_match"
+        note = f"Arama yapıldı ({len(raw)} sonuç) ama hiçbiri hedef kullanıcı adıyla eşleşmedi; sonuç gösterilmiyor (yanlış kişi eşleşmesi engeli)."
+    else:
+        status = "no_results"
+        note = "Arama yapıldı, hiç sonuç döndü."
+
+    return {
+        "status": status,
+        "available": True,
+        "query": query,
+        "results": matched,
+        "matched_username": handle,
+        "total_results_searched": len(raw),
+        "searched_at": datetime.now().isoformat(),
+        "note": note,
+    }
+
+
 @app.post("/api/scraper/authorize-alternative")
 async def authorize_scraper_alternative(req: AlternativeAuthorizationPayload):
     room = get_room(req.client_id)
@@ -790,6 +866,19 @@ async def authorize_scraper_alternative(req: AlternativeAuthorizationPayload):
         "url": pending["url"],
         "authorized_at": datetime.now().isoformat(),
     }]
+
+    if req.alternative == "public_web_search":
+        executor = get_executor(req.client_id)
+        research = await _run_public_web_research(pending["url"], executor.search_engine)
+        room["web_research"] = research
+        room.pop("pending_alternative_authorization", None)
+        broadcast_log(
+            req.client_id, "INFO",
+            f"ALTERNATİF ARAŞTIRMA: {research['note']}",
+        )
+        return {"status": "research_completed", "alternative": req.alternative,
+                "research": research}
+
     room.pop("pending_alternative_authorization", None)
     return {"status": "authorized", "alternative": req.alternative}
 

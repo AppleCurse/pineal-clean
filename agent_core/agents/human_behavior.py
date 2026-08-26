@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import cv2
 import httpx
@@ -34,6 +34,11 @@ class DigitalColdReading(BaseModel):
     micro_signals: List[MicroSignal]
     achilles_score: float = Field(ge=0.0, le=100.0)
     resonance_potential: float = Field(ge=0.0, le=1.0)
+    # [022] Model-level evidence contract: yorum (wound/defense/achilles)
+    # ÖLÇÜMLÜ gözlemlere dayanır. LLM yorumu üretilemediyse
+    # data_confidence=False + fallback_reason; bu çıktı kanıt sayılmaz.
+    data_confidence: bool = True
+    fallback_reason: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -103,7 +108,20 @@ class HumanBehaviorAnalyzer:
             "contradictions": contradictions,
         }
 
-        # 5. Construct the observation-only prompt (no invented evidence)
+        # 5. Evidence gate: hiç gözlem yoksa LLM'e "yorum" ürettirmek yok.
+        if not all_signals and not contradictions and not bio.strip():
+            return DigitalColdReading(
+                surface_identity="observation_unavailable",
+                detected_wound="interpretation_unavailable",
+                defense_mechanism="interpretation_unavailable",
+                micro_signals=[],
+                achilles_score=0.0,
+                resonance_potential=0.0,
+                data_confidence=False,
+                fallback_reason="target_evidence_unavailable",
+            )
+
+        # 6. Construct the observation-only prompt (no invented evidence)
         prompt = (
             "Sen 'Human Behavior Analyzer' ajanısın. Görevin hedefin görünen kimliğinin altını kazımak "
             "ve çelişkilerini bulmak.\n"
@@ -118,7 +136,33 @@ class HumanBehaviorAnalyzer:
             "Bu kanıtları temkinli biçimde özetle ve beklenen JSON formatında cevap ver."
         )
 
-        return await llm_gateway.query_json(prompt, DigitalColdReading)
+        try:
+            result = await llm_gateway.query_json(prompt, DigitalColdReading)
+        except Exception as exc:
+            # [022] Yorum katmanı üretilemediyse sahte "Aşil tespiti" YOK:
+            # gözlemler (deterministik sinyaller) korunur, yorum alanları
+            # 'interpretation_unavailable' + data_confidence=False olur.
+            logging.warning(
+                "HumanBehavior: LLM yorumu üretilemedi (%s); yalnızca "
+                "gözlemler döndürülüyor.", type(exc).__name__,
+            )
+            return DigitalColdReading(
+                surface_identity=text_data.get("claimed_identity", "") or "observation_unavailable",
+                detected_wound="interpretation_unavailable",
+                defense_mechanism="interpretation_unavailable",
+                micro_signals=all_signals,
+                achilles_score=0.0,
+                resonance_potential=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
+            )
+        # LLM cevabı geldiyse kanıt sözleşmesi gereği işaretle.
+        # Model dışı çıktı typed failure sayılır (executor TypeError kapısı).
+        if not isinstance(result, DigitalColdReading):
+            raise TypeError(
+                "HumanBehavior gecersiz cikti: " + type(result).__name__
+            )
+        return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
 
     # ------------------------------------------------------------------ #
     # Helpers

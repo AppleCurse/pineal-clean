@@ -190,7 +190,8 @@ class PinealExecutor:
 
     @staticmethod
     def _evidence_record(agent_name: str, result: BaseModel, *, evidence_type: str,
-                         uncertainty=None, source_agent: str | None = None) -> dict:
+                         uncertainty=None, source_agent: str | None = None,
+                         llm_calls: list | None = None) -> dict:
         """Build an auditable evidence entry while retaining its provenance."""
         record = {
             "agent": agent_name,
@@ -202,6 +203,11 @@ class PinealExecutor:
             record["source_agent"] = source_agent
         if uncertainty is not None:
             record["uncertainty"] = uncertainty.model_dump()
+        if llm_calls is not None:
+            # Gözlemlenebilirlik: bu ajan için yapılan gerçek LLM
+            # denemeleri (model/provider/deneme/hata/token). Sahte değil,
+            # gateway call_log'undan alınır.
+            record["llm_calls"] = llm_calls
         return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
@@ -211,6 +217,9 @@ class PinealExecutor:
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         _task_wall_start = datetime.now(timezone.utc)
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
+        # Gözlemlenebilirlik: bu görevin LLM çağrıları ajan başına slice alınır.
+        if hasattr(self.llm_gateway, "call_log"):
+            self.llm_gateway.call_log.clear()
 
         # Deterministik Takipçi ve Zamanlama Forensiği
         try:
@@ -376,6 +385,7 @@ class PinealExecutor:
                 
                 try:
                     agent = self.agents[agent_name]
+                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
@@ -429,12 +439,16 @@ class PinealExecutor:
                         continue
 
                 research_note = None
+                _deep_llm_calls = []
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         # Preserve `result`: downstream dependencies must receive the
                         # actual typed agent output, never a generic research note.
                         research_note = await self._deep_research(result, check, agent_name)
+                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
+                                           if hasattr(self.llm_gateway, "call_log") else [])
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -457,11 +471,14 @@ class PinealExecutor:
                 elif agent_name == "cognitive_profiler":
                     input_data["cognitive"] = result.model_dump()
 
+                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
+                              if hasattr(self.llm_gateway, "call_log") else [])
                 status.evidence_chain.append(self._evidence_record(
                     agent_name,
                     result,
                     evidence_type="agent_output",
                     uncertainty=check,
+                    llm_calls=_llm_calls,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(
@@ -470,6 +487,7 @@ class PinealExecutor:
                         evidence_type="verification_note",
                         source_agent=agent_name,
                         uncertainty=check,
+                        llm_calls=_deep_llm_calls,
                     ))
 
                 run.status = "completed"
@@ -523,6 +541,7 @@ class PinealExecutor:
 
                 try:
                     agent = self.agents[agent_name]
+                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
@@ -570,10 +589,14 @@ class PinealExecutor:
                     continue
 
                 research_note = None
+                _deep_llm_calls = []
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         research_note = await self._deep_research(result, check, agent_name)
+                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
+                                           if hasattr(self.llm_gateway, "call_log") else [])
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -584,11 +607,14 @@ class PinealExecutor:
                         self._snapshot(status)
                         continue
 
+                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
+                              if hasattr(self.llm_gateway, "call_log") else [])
                 status.evidence_chain.append(self._evidence_record(
                     agent_name,
                     result,
                     evidence_type="agent_output",
                     uncertainty=check,
+                    llm_calls=_llm_calls,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(
@@ -597,6 +623,7 @@ class PinealExecutor:
                         evidence_type="verification_note",
                         source_agent=agent_name,
                         uncertainty=check,
+                        llm_calls=_deep_llm_calls,
                     ))
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)

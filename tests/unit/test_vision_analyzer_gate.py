@@ -4,7 +4,7 @@ Kapilar:
   1) Basari yolu gateway.query(images=...) uzerinden ilerler; yanit
      VisualEvidence olarak ayristirilir (data_confidence=True).
   2) LIVE_LLM_E2E=0 iken HICBIR outbound provider cagrisi olusmaz;
-     sonuc UNAVAILABLE (fallback_reason='llm_live_gate_closed').
+     sonuc UNAVAILABLE (fallback_reason='llm_unavailable').
   3) Bozuk JSON tek tamir denemesi ile kurtarilir.
   4) Gateway hatasi UNAVAILABLE'a donusur (uydurma veri uretilmez).
 """
