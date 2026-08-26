@@ -115,7 +115,7 @@ async fn start_analysis(
         _user_playlist.unwrap_or_default(),
         _user_envies.unwrap_or_default(),
     ).await;
-    result.map_err(|e| format!("Analiz baslatildi: {}", e))
+    result.map_err(|e| format!("Analiz başlatılamadı: {}", e))
 }
 
 // ─── Tauri Uygulama Baslangici ─────────────────────────────────────────

@@ -384,21 +384,20 @@ class InitiatePayload(BaseModel):
     # DecisionConfig üzerinden gerçek davranışla bağlanmalı. Eski istemcilerin
     # bu alanları göndermesi pydantic tarafından sessizce yok sayılır.
 
-def _effective_scraper_type(url: str, requested: str) -> str:
-    """URL platformuna göre tarayıcı seç ([023] fix: platform registry).
+# [W4.2] Tek sahiplik: platform kararları agent_core/services/platform_registry'de.
+# Rust TaskManager (scripts/run_task.py) aynı registry'yi kullanır; ikinci bir
+# karar katmanı YARATILMAZ ([009] duplication dersi). Geriye uyumluluk için
+# isimler burada da geçerli.
+from agent_core.services.platform_registry import (
+    effective_scraper_type as _effective_scraper_type,
+    scrape_instagram,
+)
+# Geriye uyumluluk re-export'u: Dalga 1 sözleşme testleri bu adı backend.api'den
+# içe aktarıyor ([024]/[025]/[026] mapping testleri).
+from agent_core.services.platform_registry import (  # noqa: F401
+    ig_target_profile_update as _ig_target_profile_update,
+)
 
-    Instagram adresi X tarayıcısına gitmesin diye URL platform tespiti
-    önceliklidir; ancak tanınmayan platformda kullanıcı seçimi GEÇERLİ
-    DEĞİLDİR: URL'nin son path segmentini Instagram adı gibi kullanıp
-    yanlış hedefi kazımak misattribution'dır. Tanınmayan platform ->
-    unsupported_web (run_mission analizi başlatmadan durur).
-    """
-    u = (url or "").lower()
-    if "instagram.com" in u:
-        return "instagram"
-    if "x.com" in u or "twitter.com" in u:
-        return "x"
-    return "unsupported_web"
 
 def _new_task_id() -> str:
     """[029] fix: saniye-çözünürlüklü op_HHMMSS çakışıyordu; aynı saniyede iki
@@ -406,35 +405,6 @@ def _new_task_id() -> str:
     Tarihi saniye + uuid4 öneki -> CanonicalMemory task_id regex'i ile uyumlu."""
     import uuid
     return f"op_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
-
-
-def _ig_target_profile_update(ig_data: Any) -> dict:
-    """InstagramProfile -> target_profile payload alanları ([024]/[025]/[026] fix).
-
-    Sözleşme (sahte veri YASAK):
-    - Sentetik "Instagram Profili: ..." postu ÜRETİLMEZ; caption yoksa "" kalır.
-    - posts / post_times / posts_meta AYNI post sırasıyla index-hizalıdır;
-      frequency_engine index bazlı eşleştirme yapar, hizasız listeler
-      caption'a başka postun zamanını yanlış eşleştirebilir.
-    - following=None "ölçülmedi" demektir; 0 ölçümdür, birbirine karışmaz.
-    """
-    posts = ig_data.posts or []
-    return {
-        "username": "@" + ig_data.username,
-        "bio": ig_data.biography or "",
-        "posts": [p.caption or "" for p in posts],
-        # Zaman damgası yoksa "" (None değil): str() ile "None" metnine
-        # dönüşüp quote_guard source'larına sızmasın.
-        "post_times": [p.taken_at.isoformat() if p.taken_at else "" for p in posts],
-        "posts_meta": [
-            {"like_count": p.like_count, "comment_count": p.comment_count}
-            for p in posts
-        ],
-        "images": [p.display_url for p in posts],
-        "followers": ig_data.follower_count or 0,
-        "following": ig_data.following_count,  # None = ölçülmedi ([024])
-        "is_private": ig_data.is_private,
-    }
 
 
 async def run_mission(req: InitiatePayload):
@@ -501,75 +471,20 @@ async def run_mission(req: InitiatePayload):
             )
             return
         if req.url and effective_type == "instagram":
-            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
+            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [INSTAGRAM]")
             try:
-                from playwright.async_api import async_playwright
-                try:
-                    from playwright_stealth import Stealth
-                    stealth_engine = Stealth()
-                except Exception:
-                    stealth_engine = None
-
-                async with async_playwright() as p:
-                    browser = None
-                    ctx = None
-                    page = None
-                    try:
-                        launch_kwargs = {"headless": True, "args": ["--disable-blink-features=AutomationControlled"]}
-                        chrome_paths = [
-                            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-                        ]
-                        for cp in chrome_paths:
-                            if os.path.exists(cp):
-                                launch_kwargs["executable_path"] = cp
-                                break
-
-                        browser = await p.chromium.launch(**launch_kwargs)
-                        ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-                        
-                        clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
-
-                        if effective_type == "instagram" and InstagramGhostScraper:
-                            ctx = await browser.new_context(**ctx_kwargs)
-                            if cookie and "sessionid" in cookie:
-                                parsed = []
-                                for part in cookie.split(";"):
-                                    if "=" in part:
-                                        k, v = part.split("=", 1)
-                                        parsed.append({"name": k.strip(), "value": v.strip(), "domain": ".instagram.com", "path": "/"})
-                                if parsed:
-                                    await ctx.add_cookies(parsed)
-                            
-                            page = await ctx.new_page()
-                            if stealth_engine:
-                                await stealth_engine.apply_stealth_async(page)
-                            ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
-                            ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
-                            
-                            # [024]/[025]/[026]: hizalı gerçek alanlar; sentetik
-                            # post ÜRETİLMEZ, following=None ölçülmedi demektir.
-                            payload["target_profile"].update(_ig_target_profile_update(ig_data))
-                            
-                        # [016] X buraya asla ulaşmaz: effective_type == "x"
-                        # run_mission başında awaiting_authorization'a döner.
-                        # [023] cross/generic dalları kaldırıldı: tanınmayan
-                        # platform unsupported_web ile yukarıda açıkça durur;
-                        # scrape_readonly (X-unsupported) çağrılamaz hale geldi.
-                    finally:
-                        for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
-                            if resource:
-                                try:
-                                    await resource.close()
-                                except Exception as cleanup_error:
-                                    broadcast_log(client_id, "WARNING", f"SCRAPER CLEANUP: {resource_name} kapanamadı: {str(cleanup_error)[:80]}")
-                        
+                # [W4.2] Kazıma tek sahiplikli platform_registry'de; Rust
+                # TaskManager (run_task.py) da aynı fonksiyonu kullanır.
+                payload["target_profile"].update(await scrape_instagram(
+                    req.url, cookie,
+                    log=lambda lvl, msg: broadcast_log(client_id, lvl, msg),
+                ))
                 broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"UPLINK KOPTU: {str(e)[:100]}")
                 if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
                     raise e
-        
+
         task_id = _new_task_id()
         for attempt in range(1, 4):
             try:

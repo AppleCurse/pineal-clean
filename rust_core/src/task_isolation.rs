@@ -1,11 +1,34 @@
+//! [W4.2] TaskManager — Rust/Tauri tarafının tek görev girişi.
+//!
+//! Eski zincir ([001]/[002]/[049]) iki adımda ölüydü:
+//!   1) scraper.py → X-unsupported → her girişte exit 1
+//!   2) agent_core.agents.rust_bridge_agent → modül HİÇ YOK
+//!
+//! Yeni sözleşme: TEK subprocess — `python3 scripts/run_task.py`.
+//! Platform kararı (instagram/x/unsupported_web) Python tarafındaki tek
+//! sahiplikli platform_registry'de verilir ([023]); Rust'ta ikinci bir
+//! karar katmanı YARATILMAZ ([009] duplication dersi).
+//!
+//! Güvenlik/süreç sözleşmesi:
+//! - Veri stdin JSON olarak geçilir; script metnine/komut satırına ASLA
+//!   gömülmez ([045] enjeksiyon dersi, [046] anahtar sızıntısı dersi).
+//! - kill_on_drop + timeout: takılan süreç öldürülür, Tauri command asılı kalmaz.
+//! - Telemetri hash'i stdout'un SHA-256'sıdır; StepCompleted/TaskCompleted
+//!   AYNI hash'i paylaşır ([048]: MD5 + çift-kaynak tutarsızlığı kaldırıldı).
+
 use uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use crate::event_bus::{EventBus, AgentEvent, Severity};
+
+/// Alt süreç için üst sınır: uzun bir gerçek analiz (playwright + ajan zinciri)
+/// için cömert, sonsuz bekleme değil.
+const TASK_TIMEOUT_SECS: u64 = 900;
 
 #[derive(Debug, Clone)]
 pub struct TaskContext {
@@ -17,25 +40,49 @@ pub struct TaskManager {
     tasks: Arc<Mutex<HashMap<Uuid, TaskContext>>>,
     event_bus: Arc<EventBus>,
     python_path: String,
-    scraper_path: String,
-    _executor_path: String,
+    task_script: String,
+}
+
+fn default_python() -> String {
+    if let Ok(py) = std::env::var("PINEAL_PYTHON") {
+        return py;
+    }
+    if cfg!(windows) { "python".to_string() } else { "python3".to_string() }
+}
+
+fn project_root() -> String {
+    if let Ok(root) = std::env::var("PINEAL_PROJECT_ROOT") {
+        return root;
+    }
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        if let Some(parent) = std::path::Path::new(&manifest).parent() {
+            return parent.to_string_lossy().to_string();
+        }
+    }
+    std::env::current_dir()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+/// UTF-8 char-boundary güvenli kısaltma (Türkçe metinlerde byte-slice PANİK eder).
+fn head(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
 }
 
 impl TaskManager {
     pub fn new(event_bus: Arc<EventBus>) -> Self {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .unwrap_or_else(|_| "/workspace/rust_core".to_string());
-        let project_root = std::path::Path::new(&manifest_dir)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/workspace".to_string());
-
+        let root = project_root();
         Self {
             tasks: Arc::new(Mutex::new(HashMap::new())),
             event_bus,
-            python_path: "python3".to_string(),
-            scraper_path: format!("{}/scraper.py", project_root),
-            _executor_path: format!("{}/agent_core/task_executor.py", project_root),
+            python_path: default_python(),
+            task_script: format!("{}/scripts/run_task.py", root),
         }
     }
 
@@ -50,6 +97,18 @@ impl TaskManager {
         self.tasks.lock().unwrap().get(task_id).cloned()
     }
 
+    /// [049] fix: haritadan temizlik — task kayıtları sonsuz büyümez.
+    fn finish_task(&self, task_id: &Uuid) {
+        self.tasks.lock().unwrap().remove(task_id);
+    }
+
+    /// Tek girişli analiz zinciri: scripts/run_task.py (gerçek PinealExecutor).
+    ///
+    /// Çıkış kodu sözleşmesi (run_task.py):
+    ///   0 = pipeline koştu (TaskStatus JSON; halted_* dürüst duraklar dahil)
+    ///   2 = platform desteklenmiyor / yetki bekleniyor
+    ///   3 = kazıma kanıt üretemedi
+    ///   4 = iç hata
     pub async fn execute_isolated_task(
         &self,
         target_url: String,
@@ -59,119 +118,116 @@ impl TaskManager {
     ) -> Result<String, String> {
         let task_id = self.create_task();
         let started = Instant::now();
+        let result = self.run_pipeline(task_id, target_url, user_rituals, user_playlist, user_envies).await;
+        self.finish_task(&task_id);
+        result
+    }
 
+    async fn run_pipeline(
+        &self,
+        task_id: Uuid,
+        target_url: String,
+        user_rituals: Vec<String>,
+        user_playlist: Vec<String>,
+        user_envies: Vec<String>,
+    ) -> Result<String, String> {
+        // [049] fix: her URL için sabit "X profili kaziniyor" demiyoruz;
+        // platform kararı Python registry'sinde verilir, burada tarafsız özet.
         let _ = self.event_bus.publish(AgentEvent::TaskStarted {
             task_id,
-            agent_name: "TaskManager(rust_bridge_agent)".to_string(),
+            agent_name: "TaskManager(run_task)".to_string(),
             input_summary: format!(
-                "X profili kaziniyor: {}, ritualer: {}, playlist: {}, envies: {}",
+                "Hedef: {}, ritüel: {}, çalma listesi: {}, kıskançlık: {} (platform kararı registry'de)",
                 target_url, user_rituals.join(", "), user_playlist.join(", "), user_envies.join(", ")
             ),
         });
 
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .unwrap_or_else(|_| "/workspace/rust_core".to_string());
-        let project_root = std::path::Path::new(&manifest_dir)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "/workspace".to_string());
-
-        let scraper_payload = json!({
-            "target_url": target_url,
-            "cookies": null
+        // Veri stdin'de — script metnine gömülmez ([045]).
+        let payload = json!({
+            "url": target_url,
+            "rituals": user_rituals,
+            "playlist": user_playlist,
+            "envies": user_envies,
         });
 
-        let mut scraper = Command::new(&self.python_path);
-        scraper
-            .current_dir(&project_root)
-            .arg(&self.scraper_path)
-            .arg("--stdin")
+        let mut child = Command::new(&self.python_path)
+            .arg(&self.task_script)
+            .current_dir(project_root())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-
-        let mut scraper_child = scraper
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true) // timeout iptalinde süreci öldür ([049])
             .spawn()
-            .map_err(|e| format!("Scraper süreci başlatılamadı: {}", e))?;
-        if let Some(mut stdin) = scraper_child.stdin.take() {
-            let payload = serde_json::to_vec(&scraper_payload).map_err(|e| format!("Scraper JSON oluşturulamadı: {}", e))?;
-            stdin.write_all(&payload).await.map_err(|e| format!("Scraper stdin yazılamadı: {}", e))?;
-        }
-        let scraper_output = scraper_child
-            .wait_with_output()
-            .await
-            .map_err(|e| format!("Scraper süreci okunamadı: {}", e))?;
+            .map_err(|e| format!("run_task.py süreci başlatılamadı ({}): {}", self.task_script, e))?;
 
-        if !scraper_output.status.success() {
-            let stderr = String::from_utf8_lossy(&scraper_output.stderr);
-            let _ = self.event_bus.publish(AgentEvent::ErrorHalt {
-                task_id,
-                agent_name: "TaskManager(scraper)".to_string(),
-                error_code: "SCRAPER_FAILED".to_string(),
-                error_message: stderr.to_string(),
-                severity: Severity::Critical,
-            });
-            return Err(format!("Scraper hatası: {}", stderr));
+        if let Some(mut stdin) = child.stdin.take() {
+            let bytes = serde_json::to_vec(&payload)
+                .map_err(|e| format!("stdin JSON oluşturulamadı: {}", e))?;
+            stdin.write_all(&bytes).await.map_err(|e| format!("stdin yazılamadı: {}", e))?;
+            // EOF gönder; betik okumayı bitirir.
+            drop(stdin);
         }
 
-        let profile_data: Value = serde_json::from_slice(&scraper_output.stdout)
-            .map_err(|e| format!("Scraper JSON parse hatası: {}", e))?;
-
-        let bridge_payload = json!({
-            "target_url": target_url,
-            "target_profile": profile_data,
-            "user_context": {
-                "rituals": user_rituals,
-                "playlist": user_playlist,
-                "envies": user_envies
+        // Zaman sınırlı bekleme: takılan süreç öldürülür ([049] — timeout yoktu).
+        let output = match tokio::time::timeout(
+            Duration::from_secs(TASK_TIMEOUT_SECS),
+            child.wait_with_output(),
+        )
+        .await
+        {
+            Ok(res) => res.map_err(|e| format!("run_task.py süreci okunamadı: {}", e))?,
+            Err(_) => {
+                let msg = format!(
+                    "GÖREV ZAMAN AŞIMI: {} saniyede tamamlanmadı, süreç öldürüldü.",
+                    TASK_TIMEOUT_SECS
+                );
+                let _ = self.event_bus.publish(AgentEvent::ErrorHalt {
+                    task_id,
+                    agent_name: "TaskManager(run_task)".to_string(),
+                    error_code: "TASK_TIMEOUT".to_string(),
+                    error_message: msg.clone(),
+                    severity: Severity::Critical,
+                });
+                return Err(msg);
             }
-        });
+        };
 
-        let mut bridge = Command::new(&self.python_path);
-        bridge
-            .current_dir(&project_root)
-            .arg("-m")
-            .arg("agent_core.agents.rust_bridge_agent")
-            .arg("--stdin")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_ok = output.status.success();
 
-        let mut bridge_child = bridge
-            .spawn()
-            .map_err(|e| format!("Rust bridge süreci başlatılamadı: {}", e))?;
-        if let Some(mut stdin) = bridge_child.stdin.take() {
-            let payload = serde_json::to_vec(&bridge_payload).map_err(|e| format!("Bridge JSON oluşturulamadı: {}", e))?;
-            stdin.write_all(&payload).await.map_err(|e| format!("Bridge stdin yazılamadı: {}", e))?;
-        }
+        // stdout her durumda JSON olmalı (run_task.py sözleşmesi); önce onu çöz.
+        let json_result: Value = serde_json::from_str(stdout.trim())
+            .map_err(|e| format!("run_task.py çıktısı JSON değil: {} | stdout: {} | stderr: {}",
+                e, head(&stdout, 300), head(&stderr, 300)))?;
 
-        let output = bridge_child
-            .wait_with_output()
-            .await
-            .map_err(|e| format!("Python bridge süreci okunamadı: {}", e))?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        if !output.status.success() {
+        if !exit_ok {
+            // 2/3/4: dürüst, açıklayalı durumlar — status alanını hata kodu yap.
+            let status = json_result.get("status").and_then(|v| v.as_str()).unwrap_or("failed");
+            let note = json_result
+                .get("note").or_else(|| json_result.get("error"))
+                .or_else(|| json_result.get("reason"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Bilinmeyen neden")
+                .to_string();
+            let message = format!("Görev durdu ({}): {} | stderr: {}", status, note, head(&stderr, 200));
             let _ = self.event_bus.publish(AgentEvent::ErrorHalt {
                 task_id,
-                agent_name: "TaskManager(PinealExecutor)".to_string(),
-                error_code: "PYTHON_EXECUTOR_FAILED".to_string(),
-                error_message: format!("{}\n{}", stderr, stdout),
-                severity: Severity::Critical,
+                agent_name: "TaskManager(run_task)".to_string(),
+                error_code: format!("PYTHON_{}", status.to_uppercase()),
+                error_message: message.clone(),
+                severity: Severity::High,
             });
-            return Err(format!("Executor hatası: {}", stderr));
+            return Err(message);
         }
 
-        let json_result: Value = serde_json::from_str(&stdout)
-            .map_err(|e| format!("JSON parse hatası: {}, çıktı: {}", e, stdout))?;
-
-        let status = json_result.get("status").and_then(|v| v.as_str()).unwrap_or("failed");
+        // Pipeline koştu — status alanı TaskStatus.status ([048] artık tek kaynak).
+        let status = json_result.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
         if status == "failed" {
             let error_msg = json_result.get("error").and_then(|v| v.as_str()).unwrap_or("Bilinmeyen hata");
             let _ = self.event_bus.publish(AgentEvent::ErrorHalt {
                 task_id,
-                agent_name: "TaskManager(PinealExecutor)".to_string(),
+                agent_name: "TaskManager(run_task)".to_string(),
                 error_code: "EXECUTOR_ERROR".to_string(),
                 error_message: error_msg.to_string(),
                 severity: Severity::High,
@@ -179,12 +235,10 @@ impl TaskManager {
             return Err(format!("Executor hatası: {}", error_msg));
         }
 
-        let data = &json_result;
-        if let Some(analysis) = data.get("mirror_analysis") {
+        if let Some(analysis) = json_result.get("mirror_analysis") {
             let alignment_score = analysis.get("alignment_score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             let anchor_count = analysis.get("authentic_anchors").and_then(|v| v.as_array()).map(|v| v.len() as u32).unwrap_or(0);
             let overall_frequency = analysis.get("user_core_frequency").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-
             let _ = self.event_bus.publish(AgentEvent::FrequencyUpdate {
                 task_id,
                 alignment_score,
@@ -193,19 +247,20 @@ impl TaskManager {
             });
         }
 
+        // [048] fix: tek kaynak (stdout), SHA-256, iki event AYNI hash.
+        let result_hash = sha256_hex(stdout.trim().as_bytes());
         let _ = self.event_bus.publish(AgentEvent::StepCompleted {
             task_id,
-            agent_name: "TaskManager(rust_bridge_agent)".to_string(),
+            agent_name: "TaskManager(run_task)".to_string(),
             step_name: "FullPipelineCompleted".to_string(),
-            output_hash: format!("{:x}", md5::compute(data.to_string())),
+            output_hash: result_hash.clone(),
         });
 
-        let duration_ms = started.elapsed().as_millis() as u64;
         let _ = self.event_bus.publish(AgentEvent::TaskCompleted {
             task_id,
-            agent_name: "TaskManager(rust_bridge_agent)".to_string(),
-            final_result_hash: format!("{:x}", md5::compute(stdout.to_string())),
-            duration_ms,
+            agent_name: "TaskManager(run_task)".to_string(),
+            final_result_hash: result_hash,
+            duration_ms: started.elapsed().as_millis() as u64,
         });
 
         Ok(stdout.to_string())
