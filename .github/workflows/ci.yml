@@ -1,4 +1,4 @@
-name: CI
+ï»¿name: CI
 
 on:
   push:
@@ -61,9 +61,9 @@ jobs:
           curl -sf "http://127.0.0.1:8000/" | grep -q 'id="app"'
           curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/api/aspasia/chat" -H 'Content-Type: application/json' -d '{"client_id":"ci","user_message":"hi"}' | grep -q 200
 
+  # [W4.1] Rust core compile+test gate. tauri is an optional feature on
+  # rust_core, so this job needs no webkit/gtk system packages.
   rust-core:
-    # [W4.1] Rust çekirdeði derleme+test kapýsý. tauri optional-feature
-    # olduðundan webkit sistem baðýmlýlýðý GEREKMEZ.
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -74,43 +74,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust_core
-      - name: Cargo check (core, tauri'siz)
-        run: cargo check --all-targets
-      - name: Cargo test
-        run: cargo test
-
-  rust-core:
-    # [W4.1] Rust çekirdeði derleme+test kapýsý. tauri optional-feature
-    # olduðundan webkit sistem baðýmlýlýðý GEREKMEZ.
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: rust_core
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust_core
-      - name: Cargo check (core, tauri'siz)
-        run: cargo check --all-targets
-      - name: Cargo test
-        run: cargo test
-
-  rust-core:
-    # [W4.1] Rust çekirdeði derleme+test kapýsý. tauri optional-feature
-    # olduðundan webkit sistem baðýmlýlýðý GEREKMEZ.
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: rust_core
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust_core
-      - name: Cargo check (core, tauri'siz)
+      - name: Cargo check (core, no tauri feature)
         run: cargo check --all-targets
       - name: Cargo test
         run: cargo test
