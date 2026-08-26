@@ -27,7 +27,9 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # Network
-reqwest = { version = "0.11", features = ["json"] }
+# [W4.1] rustls: native-tls (openssl-sys) CI/runner'da libssl-dev ister;
+# rustls-tls saf Rust -> sistem bağımlılığı yok. HTTPS davranışı aynı.
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 
 # Logging
 tracing = "0.1"
