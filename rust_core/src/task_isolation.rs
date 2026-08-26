@@ -117,6 +117,7 @@ impl TaskManager {
         user_envies: Vec<String>,
     ) -> Result<String, String> {
         let task_id = self.create_task();
+        let started = Instant::now();
         let result = self.run_pipeline(task_id, target_url, user_rituals, user_playlist, user_envies).await;
         self.finish_task(&task_id);
         result
@@ -132,7 +133,6 @@ impl TaskManager {
     ) -> Result<String, String> {
         // [049] fix: her URL için sabit "X profili kaziniyor" demiyoruz;
         // platform kararı Python registry'sinde verilir, burada tarafsız özet.
-        let started = Instant::now();
         let _ = self.event_bus.publish(AgentEvent::TaskStarted {
             task_id,
             agent_name: "TaskManager(run_task)".to_string(),

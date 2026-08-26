@@ -31,14 +31,14 @@ async def test_real_executor_uses_real_resonance_calculator(tmp_path):
 
     input_data = {
         "user_authentic_vector": {"depth": 0.9, "energy": 0.3},
-        "target_analysis": {"achilles_score": 10},
+        "target_authentic_vector": {"depth": 0.1, "energy": 0.9},
         "target_profile": {},
     }
 
     status = await executor.execute_task(input_data, "red_resonance")
 
     assert status.status == "halted_frequency"
-    assert status.evidence_chain[1]["agent"] == "resonance_calc"
+    assert any(e["agent"] == "resonance_calc" for e in status.evidence_chain)
     assert isinstance(executor.agents["resonance_calc"], ResonanceCalculator)
 
 

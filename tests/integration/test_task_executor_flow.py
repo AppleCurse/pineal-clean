@@ -91,7 +91,7 @@ async def test_execute_task_halt_low_confidence(executor):
     status = await executor.execute_task(input_data, "task_2")
     
     assert status.status == "halted_evidence"
-    assert len(status.evidence_chain) == 1 # 7pillar appends first
+    assert len(status.evidence_chain) == 1 # Appended before halting
     
 @pytest.mark.asyncio
 async def test_execute_task_suspicious_research(executor):
@@ -107,9 +107,17 @@ async def test_execute_task_suspicious_research(executor):
     
     status = await executor.execute_task(input_data, "task_3")
     
-    # Still completes if deep research doesn't raise exception
+    # The research note is separate evidence; it must not replace the typed
+    # human_behavior output that downstream agents consume.
     assert status.status == "completed"
     executor.llm_gateway.query.assert_called() # Deep research called
+    assert input_data["target_analysis"]["compatibility_score"] == 0.9
+    original = next(item for item in status.evidence_chain if item["agent"] == "human_behavior")
+    research = next(item for item in status.evidence_chain if item["agent"] == "deep_research")
+    assert original["evidence_type"] == "agent_output"
+    assert original["uncertainty"]["reason"] == "Inconsistent"
+    assert research["evidence_type"] == "verification_note"
+    assert research["source_agent"] == "human_behavior"
 
 @pytest.mark.asyncio
 async def test_execute_task_frequency_mismatch(executor):
@@ -121,5 +129,5 @@ async def test_execute_task_frequency_mismatch(executor):
     status = await executor.execute_task(input_data, "task_4")
     
     assert status.status == "halted_frequency"
-    # Should have appended evidence for human_behavior, mirror_truth, and resonance_calc
-    assert len(status.evidence_chain) == 4 # 7pillar + human_behavior + mirror_truth + resonance_calc
+    # Should have appended evidence for human_behavior, mirror_truth, resonance_calc, plus possibly pillar depending on order
+    assert len(status.evidence_chain) == 4
