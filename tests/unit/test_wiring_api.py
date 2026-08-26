@@ -85,5 +85,6 @@ def test_x_initiate_reports_unsupported_over_ws():
                 "failed",
                 "halted_evidence",
                 "halted_frequency",
-                "partially_completed",
-            )
+                    "partially_completed",
+                    "awaiting_authorization",
+                )

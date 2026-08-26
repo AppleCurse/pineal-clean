@@ -1,7 +1,12 @@
-﻿
+
+import asyncio
 import aiohttp
 import json
 from typing import List, Dict, Any
+
+class FetchUnavailable(RuntimeError):
+    """Raised after the bounded ALF fetch retry budget is exhausted."""
+
 
 class ALF_Engine:
     def __init__(self, profiles_path: str = "browser_profiles.json"):
@@ -39,19 +44,37 @@ class ALF_Engine:
             "Upgrade-Insecure-Requests": "1",
         }
 
-    async def stealth_fetch(self, url: str, profile_id: int = 0) -> str:
+    async def stealth_fetch(self, url: str, profile_id: int = 0, max_attempts: int = 3) -> str:
         if not self.profiles:
             raise ValueError("Yüklü tarayıcı profili yok.")
-        profile = self.profiles[profile_id % len(self.profiles)]
-        proxy = self._get_next_proxy()
-        headers = self._build_headers(profile)
+        if max_attempts < 1:
+            raise ValueError("max_attempts en az 1 olmalı.")
+
+        errors = []
         session = await self._get_session()
-        try:
-            async with session.get(url, headers=headers, proxy=proxy, timeout=aiohttp.ClientTimeout(total=15)) as response:
-                if response.status == 200:
-                    return await response.text()
-                else:
-                    return await self.stealth_fetch(url, profile_id + 1)
-        except Exception:
-            return await self.stealth_fetch(url, profile_id + 1)
+        for attempt in range(max_attempts):
+            profile = self.profiles[(profile_id + attempt) % len(self.profiles)]
+            try:
+                async with session.get(
+                    url,
+                    headers=self._build_headers(profile),
+                    proxy=self._get_next_proxy(),
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
+                    if response.status == 200:
+                        return await response.text()
+                    errors.append(f"HTTP_{response.status}")
+            except aiohttp.ClientError as exc:
+                errors.append(type(exc).__name__)
+            except TimeoutError:
+                errors.append("TIMEOUT")
+
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(0.1 * (attempt + 1))
+
+        raise FetchUnavailable(f"ALF fetch unavailable after {max_attempts} attempts: {', '.join(errors)}")
+
+    async def close(self) -> None:
+        if self.session is not None and not self.session.closed:
+            await self.session.close()
 

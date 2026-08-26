@@ -43,6 +43,16 @@ class LLMGateway:
         "dialogue": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_flash"]],
         "fast": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
     }
+    # Agent policies make specialist selection explicit while retaining a
+    # bounded, capability-compatible failover chain.
+    AGENT_CHAINS = {
+        "cognitive_profiler": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_pro"], MODEL_REGISTRY["glm_5_2"]],
+        "friction_detector": [MODEL_REGISTRY["ling_3_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
+        "passion_mapper": [MODEL_REGISTRY["deepseek_v4_pro"], MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["glm_5_2"]],
+        "resonance_synthesizer": [MODEL_REGISTRY["solar_pro4"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"]],
+        "autonomous_verifier": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["ling_3_flash"]],
+    }
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
@@ -52,6 +62,15 @@ class LLMGateway:
         if os.getenv(env_var):
             return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
         return self.CHAINS.get(task.lower(), [self.TIER_1_MODEL, self.TIER_2_MODEL])
+
+    def get_agent_chain(self, agent_name: str | None, task: str) -> List[str]:
+        if agent_name:
+            env_var = f"OPENROUTER_AGENT_CHAIN_{agent_name.upper()}"
+            if os.getenv(env_var):
+                return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+            if agent_name in self.AGENT_CHAINS:
+                return self.AGENT_CHAINS[agent_name]
+        return self.get_chain(task)
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -68,8 +87,41 @@ class LLMGateway:
         # P2-MALİYET: kümülatif harcama ve sert üst limit
         self.spend_usd = 0.0
         self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 1.0)
+        # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
+        # kaydı. Evidence chain'e ajan bazında yazılır (task_executor).
+        self.call_log: List[dict] = []
         self._rebuild()
         self.cache = build_cache_from_env()
+
+    def _log_call(
+        self,
+        kind: str,
+        model: str,
+        provider: str,
+        *,
+        cache_hit: bool = False,
+        attempts: int = 0,
+        duration_ms: int = 0,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Append an auditable record of a single LLM interaction."""
+        self.call_log.append({
+            "kind": kind,
+            "model": model,
+            "provider": provider,
+            "cache_hit": cache_hit,
+            "attempts": attempts,
+            "duration_ms": duration_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "error": error,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+        # Sınırsız büyümesin; kanıt zinciri zaten slice ile alır.
+        if len(self.call_log) > 500:
+            del self.call_log[: len(self.call_log) - 500]
 
     @staticmethod
     def _env_float(name: str, default: float) -> float:
@@ -145,6 +197,8 @@ class LLMGateway:
                 self.circuit_open = False
                 self.failure_count = 0
             else:
+                self._log_call("query", getattr(self, "local_model", "") or "?",
+                               "circuit_breaker", error="CIRCUIT_OPEN")
                 raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu (60s bekleme devrede)")
         
         # Eğer local model seçildiyse veya global use_local aktifse
@@ -152,6 +206,7 @@ class LLMGateway:
 
         # P2-MALİYET: bütçe aşıldıysa canlı çağrı hiç yapılmaz
         if not is_local_request and self._cap_exceeded():
+            self._log_call("query", model or "?", "openrouter", error=self._cap_message())
             raise SpendCapExceeded(self._cap_message())
         
         if is_local_request:
@@ -160,14 +215,18 @@ class LLMGateway:
         else:
             import os
             if os.getenv("LIVE_LLM_E2E") != "1" and not getattr(self, "live_unlocked", False):
-                raise RuntimeError(
+                msg = (
                     "REAL_LLM_CALL_NOT_EXECUTED: Canlı LLM çağrıları kapalı. "
                     "Açmak için: (1) Kasa'ya API anahtarı girin (oturum boyunca açılır), veya "
                     "(2) .env dosyasına OPENROUTER_API_KEY yazıp LIVE_LLM_E2E=1 yapıp sunucuyu yeniden başlatın."
                 )
+                self._log_call("query", model or "?", "openrouter", error="REAL_LLM_CALL_NOT_EXECUTED")
+                raise RuntimeError(msg)
             
             if not self.client:
-                raise RuntimeError("LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç.")
+                msg = "LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç."
+                self._log_call("query", model or "?", "openrouter", error="LLM_KEY_MISSING")
+                raise RuntimeError(msg)
             target_client = self.client
             if images and not model:
                 # FAZ 3: görsel varsa vision modeline geç (env ile ezilebilir)
@@ -204,12 +263,14 @@ class LLMGateway:
             )
             cached = self.cache.get(cache_key)
             if cached is not None:
+                self._log_call("query", selected_model, "cache", cache_hit=True)
                 return cached
 
         import asyncio
         import logging
         max_retries = 3
 
+        t0 = time.time()
         for attempt in range(max_retries):
             try:
                 # P2-MALİYET: döngü içinde de cap kontrolü
@@ -226,9 +287,20 @@ class LLMGateway:
                 if not is_local_request:
                     self._account_spend(selected_model, getattr(r, "usage", None))
 
+                usage = getattr(r, "usage", None)
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
+                self._log_call(
+                    "query", selected_model,
+                    "local" if is_local_request else "openrouter",
+                    attempts=attempt + 1,
+                    duration_ms=int((time.time() - t0) * 1000),
+                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0)
+                        if usage is not None else None,
+                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0)
+                        if usage is not None else None,
+                )
                 return content
             except SpendCapExceeded:
                 raise
@@ -236,17 +308,29 @@ class LLMGateway:
                 err_str = str(e).lower()
                 is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
                 
-                # Eğer yerel LLM (Ollama) bağlantısı koptuysa ve OpenRouter anahtarımız varsa otomatik buluta geç
-                if is_local_request and is_conn_error and self.client:
-                    logging.warning(f"Yerel model ({selected_model}) bağlantısı kurulamadı. OpenRouter bulut modeline ({self.TIER_1_MODEL}) geçiliyor...")
-                    target_client = self.client
-                    selected_model = self.TIER_1_MODEL
-                    is_local_request = False
-                    continue
+                # Provider boundary is explicit: local requests do not silently
+                # become paid cloud requests. Opt-in is required for any switch.
+                if is_local_request and is_conn_error:
+                    if os.getenv("ALLOW_LOCAL_TO_CLOUD_FALLBACK", "false").lower() != "true":
+                        raise RuntimeError(
+                            "LOCAL_PROVIDER_UNAVAILABLE: Yerel model erişilemedi; "
+                            "bulut fallback'i açıkça yetkilendirilmedi."
+                        ) from e
+                    if self.client:
+                        logging.warning(f"Yetkili provider fallback: local {selected_model} → cloud {self.TIER_1_MODEL}")
+                        target_client = self.client
+                        selected_model = self.TIER_1_MODEL
+                        is_local_request = False
+                        continue
 
                 is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
                 if is_auth_error:
                     logging.error(f"LLM Gateway authentication error: {e}")
+                    self._log_call("query", selected_model,
+                                   "local" if is_local_request else "openrouter",
+                                   attempts=attempt + 1,
+                                   duration_ms=int((time.time() - t0) * 1000),
+                                   error="AUTH_FAILED")
                     raise RuntimeError(f"LLM API Key rejected: {e}") from e
                     
                 if attempt < max_retries - 1:
@@ -259,6 +343,11 @@ class LLMGateway:
                 if self.failure_count > 5:
                     self.circuit_open = True
                     self.circuit_opened_at = time.time()
+                self._log_call("query", selected_model,
+                               "local" if is_local_request else "openrouter",
+                               attempts=attempt + 1,
+                               duration_ms=int((time.time() - t0) * 1000),
+                               error=type(e).__name__)
                 raise
 
     def extract_json(self, text: str) -> dict:
@@ -420,7 +509,8 @@ class LLMGateway:
         schema: Type[T],
         task: str = "depth",
         temperature: float = 0.7,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        agent_name: Optional[str] = None,
     ) -> T:
         """Görev bazlı model zinciri ile şemalı JSON sorgusu yapar.
 
@@ -428,7 +518,7 @@ class LLMGateway:
         AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
         """
         import logging
-        chain = self.get_chain(task)
+        chain = self.get_agent_chain(agent_name, task)
         last_exception = None
 
         for model in chain:

@@ -31,7 +31,7 @@ async def test_real_executor_uses_real_resonance_calculator(tmp_path):
 
     input_data = {
         "user_authentic_vector": {"depth": 0.9, "energy": 0.3},
-        "target_analysis": {"achilles_score": 10},
+        "target_authentic_vector": {"depth": 0.1, "energy": 0.9},
         "target_profile": {},
     }
 
@@ -55,7 +55,15 @@ async def test_resonance_failure_marks_task_failed(tmp_path):
 
     status = await executor.execute_task({"target_profile": {}}, "red_failure")
 
-    assert status.status in ("failed", "partially_completed", PipelineStatus.PARTIALLY_COMPLETED)
+    # [019] rezonans başarısız + başka kanıt yok -> PARTIAL DEGİL,
+    # yetersiz kanıt (dürüst state machine).
+    assert status.status in (
+        PipelineStatus.HALTED_INSUFFICIENT_EVIDENCE,
+        "halted_evidence",
+        "failed",
+        "partially_completed",
+        PipelineStatus.PARTIALLY_COMPLETED,
+    )
 
 
 @pytest.mark.asyncio

@@ -28,9 +28,9 @@ class PassionProfile(BaseModel):
     flow_triggers: List[str] = []
     sentiment_polarity: float = 0.0  # -1.0 (karamsar) ile +1.0 (coşkulu) arası
     evidence_quotes: List[str] = []
-    confidence: float = 1.0
-    data_confidence: bool = True
-    fallback_reason: Optional[str] = None
+    confidence: float = 0.0
+    data_confidence: bool = False
+    fallback_reason: Optional[str] = "unavailable"
 
     model_config = ConfigDict(extra="allow")
 
@@ -40,17 +40,21 @@ class FrictionProfile(BaseModel):
     stress_triggers: List[str] = []
     boundary_signals: List[str] = []
     evidence_quotes: List[str] = []
-    confidence: float = 1.0
+    confidence: float = 0.0
+    data_confidence: bool = False
+    fallback_reason: Optional[str] = "unavailable"
 
     model_config = ConfigDict(extra="allow")
 
 class CognitiveStyle(BaseModel):
     """Kişinin düşünce kalıbı, iletişim üslubu ve sosyal ritmi."""
-    communication_tone: str = "dengeli"  # doğrudan, analitik, metaforik, samimi, mesafeli
-    complexity_level: str = "orta"  # sade, teknik, kavramsal
+    communication_tone: str = "unknown"  # doğrudan, analitik, metaforik, samimi, mesafeli
+    complexity_level: str = "unknown"  # sade, teknik, kavramsal
     humor_style: Optional[str] = None  # hiciv, ironi, kuru mizah, yok
-    social_orientation: str = "bağımsız"  # toplulukçu, bağımsız, gözlemci
-    confidence: float = 1.0
+    social_orientation: str = "unknown"  # toplulukçu, bağımsız, gözlemci
+    confidence: float = 0.0
+    data_confidence: bool = False
+    fallback_reason: Optional[str] = "unavailable"
 
     model_config = ConfigDict(extra="allow")
 
@@ -62,9 +66,9 @@ class AuthenticBridge(BaseModel):
     authentic_opening_topic: str = ""
     conversation_starter_rationale: str = ""
     suggested_opening_message: str = ""
-    confidence: float = 1.0
-    data_confidence: bool = True
-    fallback_reason: Optional[str] = None
+    confidence: float = 0.0
+    data_confidence: bool = False
+    fallback_reason: Optional[str] = "unavailable"
 
     model_config = ConfigDict(extra="allow")
 

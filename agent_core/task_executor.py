@@ -102,6 +102,14 @@ class PinealExecutor:
             "shadow_executor": ShadowExecutor(),
         }
 
+    @staticmethod
+    def _hash_evidence_result(result: BaseModel) -> str:
+        """Canonical SHA-256 hash for a single typed agent result."""
+        import hashlib
+        import json
+        canonical = json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def _snapshot(self, status: TaskStatus):
         cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
         hits = cache_stats.get("hits", 0)
@@ -167,13 +175,40 @@ class PinealExecutor:
         paths = [p for p in results if p is not None]
         return paths
 
-    async def _deep_research(self, input_data, suspicious, agent_name):
+    async def _deep_research(self, original_result: BaseModel, check, agent_name: str) -> VerifiedNote:
+        """Request a separate review without changing the originating agent output."""
         prompt = (
-            "Onceki analiz supheli bulundu. Kanit: " + suspicious.model_dump_json() +
-            "\nKurallar: 1) Emin degilsen 'bilmiyorum' de 2) Tahmin uretme 3) Sadece veride olanlari analiz et. Yeniden analiz et."
+            f"{agent_name} ajaninin onceki analizi supheli bulundu.\n"
+            f"Suphe nedeni: {check.reason}\n"
+            "Orijinal ajan ciktisi (degistirilemez kayit): " + original_result.model_dump_json() +
+            "\nKurallar: 1) Emin degilsen 'bilmiyorum' de 2) Tahmin uretme "
+            "3) Sadece verilen veriyi degerlendir 4) Orijinal analizi yeniden yazma; "
+            "yalnizca dogrulama/degerlendirme notu ver."
         )
         verified = await self.llm_gateway.query(prompt, temperature=0.1, tier=1)
         return VerifiedNote(note=verified)
+
+    @staticmethod
+    def _evidence_record(agent_name: str, result: BaseModel, *, evidence_type: str,
+                         uncertainty=None, source_agent: str | None = None,
+                         llm_calls: list | None = None) -> dict:
+        """Build an auditable evidence entry while retaining its provenance."""
+        record = {
+            "agent": agent_name,
+            "result": result.model_dump(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "evidence_type": evidence_type,
+        }
+        if source_agent is not None:
+            record["source_agent"] = source_agent
+        if uncertainty is not None:
+            record["uncertainty"] = uncertainty.model_dump()
+        if llm_calls is not None:
+            # Gözlemlenebilirlik: bu ajan için yapılan gerçek LLM
+            # denemeleri (model/provider/deneme/hata/token). Sahte değil,
+            # gateway call_log'undan alınır.
+            record["llm_calls"] = llm_calls
+        return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
         from agent_core.schemas.telemetry import (
@@ -182,6 +217,9 @@ class PinealExecutor:
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         _task_wall_start = datetime.now(timezone.utc)
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
+        # Gözlemlenebilirlik: bu görevin LLM çağrıları ajan başına slice alınır.
+        if hasattr(self.llm_gateway, "call_log"):
+            self.llm_gateway.call_log.clear()
 
         # Deterministik Takipçi ve Zamanlama Forensiği
         try:
@@ -272,12 +310,39 @@ class PinealExecutor:
             self._log("INFO", f"[{task_id}] 7-PILLAR tamamlandı ({elapsed_ms}ms)")
             self._snapshot(status)
         except Exception as e:
-            self._log("ERROR", f"[{task_id}] 7-PILLAR graceful failure: {e}")
+            error_time = datetime.now(timezone.utc)
+            error_code = type(e).__name__
+            self._log("ERROR", f"[{task_id}] 7-PILLAR failure: {error_code}: {e}")
             status.agent_runs["pineal_7pillar"] = AgentRun(
                 task_id=task_id, agent_name="pineal_7pillar", status="failed",
-                started_at=pillar_start, completed_at=datetime.now(timezone.utc),
+                started_at=pillar_start, completed_at=error_time,
+                error_code=error_code,
                 error_message=str(e)[:250],
             )
+            # Failures are evidence too: retain a serializable record instead
+            # of leaving an unexplained gap in the chain.
+            status.evidence_chain.append({
+                "agent": "pineal_7pillar",
+                "evidence_type": "execution_failure",
+                "result": {"error_code": error_code, "error_message": str(e)[:250]},
+                "timestamp": error_time.isoformat(),
+            })
+            pillar_cfg = self.config.get_agent_config("pineal_7pillar")
+            if not pillar_cfg.graceful_degradation:
+                status.status = PipelineStatus.HALTED_CRITICAL
+                status.halted_reason = "7-pillar evidence foundation failed"
+                status.completed_at = error_time
+                self._emit(ErrorHaltEvent(
+                    task_id=task_id,
+                    agent_name="pineal_7pillar",
+                    error_code=error_code,
+                    error_message=str(e)[:200],
+                    severity=Severity.Critical,
+                ))
+                await self.memory.merge_evidence(task_id, status.evidence_chain)
+                self._snapshot(status)
+                return status
+            self._snapshot(status)
 
         self._emit(TaskStartedEvent(
             task_id=task_id,
@@ -320,6 +385,7 @@ class PinealExecutor:
                 
                 try:
                     agent = self.agents[agent_name]
+                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
@@ -372,11 +438,17 @@ class PinealExecutor:
                         self._snapshot(status)
                         continue
 
+                research_note = None
+                _deep_llm_calls = []
                 if check.is_suspicious:
-                    # Should be covered above, but just in case for deep research
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
-                        result = await self._deep_research(input_data, result, agent_name)
+                        # Preserve `result`: downstream dependencies must receive the
+                        # actual typed agent output, never a generic research note.
+                        research_note = await self._deep_research(result, check, agent_name)
+                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
+                                           if hasattr(self.llm_gateway, "call_log") else [])
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -386,10 +458,12 @@ class PinealExecutor:
 
                 if agent_name == "mirror_truth":
                     input_data["user_mirror"] = result.model_dump()
-                    input_data["user_authentic_vector"] = await self._calculate_authentic_vector(input_data["user_mirror"])
+                    user_vector = await self._calculate_authentic_vector(input_data["user_mirror"])
+                    self._store_authentic_vector(input_data, "user", user_vector)
                 elif agent_name == "human_behavior":
                     input_data["target_analysis"] = result.model_dump()
-                    input_data["target_authentic_vector"] = await self._calculate_authentic_vector(input_data["target_analysis"])
+                    target_vector = await self._calculate_authentic_vector(input_data["target_analysis"])
+                    self._store_authentic_vector(input_data, "target", target_vector)
                 elif agent_name == "passion_mapper":
                     input_data["passions"] = result.model_dump()
                 elif agent_name == "friction_detector":
@@ -397,8 +471,25 @@ class PinealExecutor:
                 elif agent_name == "cognitive_profiler":
                     input_data["cognitive"] = result.model_dump()
 
-                status.evidence_chain.append({"agent": agent_name, "result": result.model_dump(), "timestamp": datetime.now(timezone.utc).isoformat()})
-                
+                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
+                              if hasattr(self.llm_gateway, "call_log") else [])
+                status.evidence_chain.append(self._evidence_record(
+                    agent_name,
+                    result,
+                    evidence_type="agent_output",
+                    uncertainty=check,
+                    llm_calls=_llm_calls,
+                ))
+                if research_note is not None:
+                    status.evidence_chain.append(self._evidence_record(
+                        "deep_research",
+                        research_note,
+                        evidence_type="verification_note",
+                        source_agent=agent_name,
+                        uncertainty=check,
+                        llm_calls=_deep_llm_calls,
+                    ))
+
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
@@ -414,7 +505,7 @@ class PinealExecutor:
                     task_id=task_id,
                     agent_name=agent_name,
                     step_name="execute",
-                    output_hash="HASH"
+                    output_hash=self._hash_evidence_result(result)
                 ))
 
                 if agent_name == "resonance_calc" and hasattr(result, "compatibility_score") and result.compatibility_score < 0.70:
@@ -424,7 +515,12 @@ class PinealExecutor:
                     self._snapshot(status)
                     return status
 
+            # Deferred agents run after their dependencies, not outside the
+            # evidence contract.  Ordering must never bypass validation,
+            # uncertainty thresholds, or graceful-degradation policy.
             for agent_name in deferred:
+                if agent_name not in self.agents:
+                    raise KeyError("Bilinmeyen yetenek: " + agent_name)
                 status.current_agent = agent_name
                 self._log("WARNING", "[" + task_id + "] AGENT " + agent_name + ": calisiyor")
                 run = AgentRun(
@@ -436,34 +532,112 @@ class PinealExecutor:
                 )
                 status.agent_runs[agent_name] = run
                 self._snapshot(status)
+                self._emit(TaskStartedEvent(
+                    task_id=task_id,
+                    agent_name=agent_name,
+                    input_summary="Ajan tetiklendi",
+                ))
+                agent_cfg = self.config.get_agent_config(agent_name)
+
                 try:
                     agent = self.agents[agent_name]
+                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
                         result = await agent.execute(input_data)
+                    if not isinstance(result, BaseModel):
+                        raise TypeError(agent_name + " gecersiz cikti: " + str(type(result)))
+                except InsufficientEvidenceError:
+                    raise
                 except Exception as e:
                     run.status = "failed"
                     run.error_code = type(e).__name__
                     run.error_message = str(e)[:200]
-                    status.status = "failed"
-                    status.completed_at = datetime.now(timezone.utc)
-                    self._snapshot(status)
                     self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
-                    await self.memory.merge_evidence(task_id, status.evidence_chain)
-                    return status
-                    
-                status.evidence_chain.append({"agent": agent_name, "result": result.model_dump(), "timestamp": datetime.now(timezone.utc).isoformat()})
+                    if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                        status.status = "halted_critical"
+                        status.completed_at = datetime.now(timezone.utc)
+                        self._snapshot(status)
+                        self._emit(ErrorHaltEvent(
+                            task_id=task_id,
+                            agent_name=agent_name,
+                            error_code=type(e).__name__,
+                            error_message=str(e)[:200],
+                            severity=Severity.Critical,
+                        ))
+                        await self.memory.merge_evidence(task_id, status.evidence_chain)
+                        return status
+                    self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} failed. Continuing pipeline.")
+                    self._snapshot(status)
+                    continue
+
+                check = self.uncertainty.evaluate(result, agent_name)
+                if check.confidence < agent_cfg.min_llm_confidence:
+                    halt_reason = check.reason
+                    run.status = "halted"
+                    run.error_code = "LOW_CONFIDENCE"
+                    run.error_message = halt_reason
+                    self._log("ERROR", f"[{task_id}] COGNITIVE ROUTER: {halt_reason}")
+                    if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                        status.halted_reason = halt_reason
+                        status.status = "halted_critical"
+                        self._snapshot(status)
+                        raise InsufficientEvidenceError(halt_reason)
+                    self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} halted due to evidence.")
+                    self._snapshot(status)
+                    continue
+
+                research_note = None
+                _deep_llm_calls = []
+                if check.is_suspicious:
+                    self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
+                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
+                    try:
+                        research_note = await self._deep_research(result, check, agent_name)
+                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
+                                           if hasattr(self.llm_gateway, "call_log") else [])
+                    except Exception as e:
+                        if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
+                            raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
+                        run.status = "halted"
+                        run.error_code = "SUSPICIOUS_EVIDENCE"
+                        run.error_message = str(e)[:200]
+                        self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} deep research failed.")
+                        self._snapshot(status)
+                        continue
+
+                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
+                              if hasattr(self.llm_gateway, "call_log") else [])
+                status.evidence_chain.append(self._evidence_record(
+                    agent_name,
+                    result,
+                    evidence_type="agent_output",
+                    uncertainty=check,
+                    llm_calls=_llm_calls,
+                ))
+                if research_note is not None:
+                    status.evidence_chain.append(self._evidence_record(
+                        "deep_research",
+                        research_note,
+                        evidence_type="verification_note",
+                        source_agent=agent_name,
+                        uncertainty=check,
+                        llm_calls=_deep_llm_calls,
+                    ))
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                # P0-FIX: hard-code 0.90 yerine ajanın kendi confidence'i; yoksa None bırak
-                run.confidence = getattr(result, "confidence", None)
-                if run.confidence is not None and not isinstance(run.confidence, (int, float)):
-                    run.confidence = None
+                run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
                 self._snapshot(status)
+                self._emit(StepCompletedEvent(
+                    task_id=task_id,
+                    agent_name=agent_name,
+                    step_name="execute",
+                    output_hash=self._hash_evidence_result(result),
+                ))
 
             # --- 360° HOLISTIC PROFILE OLUŞTURMA ---
             passions_obj = None
@@ -488,7 +662,7 @@ class PinealExecutor:
                 frictions=frictions_obj,
                 cognitive=cognitive_obj,
                 bridge=bridge_obj,
-                overall_confidence=0.85 if bridge_obj else 0.5
+                overall_confidence=self._holistic_confidence(status.agent_runs)
             )
             self._log("INFO", "[" + task_id + "] 360 İnsan Tanıma Profili Oluşturuldu")
 
@@ -518,7 +692,17 @@ class PinealExecutor:
                 status.agent_runs["shadow_executor"] = AgentRun(
                     task_id=task_id, agent_name="shadow_executor", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    confidence=0.7,
+                    output_summary=shadow_result.model_dump()
+                        if hasattr(shadow_result, "model_dump") else {},
+                    confidence=(
+                        getattr(shadow_result, "confidence", None)
+                        if isinstance(getattr(shadow_result, "confidence", None), (int, float))
+                        and getattr(shadow_result, "data_confidence", True)
+                        else None
+                    ),
+                    warnings=[] if getattr(shadow_result, "data_confidence", True) else [
+                        getattr(shadow_result, "fallback_reason", None) or "data_unavailable"
+                    ],
                 )
                 self._log("INFO", f"[{task_id}] GÖLGE FORENSİĞİ: Manipülasyon ve NLP dizisi eklendi")
             except Exception as e:
@@ -537,8 +721,13 @@ class PinealExecutor:
                 status.agent_runs["osint_investigator"] = AgentRun(
                     task_id=task_id, agent_name="osint_investigator", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    confidence=0.5 if not data_conf else 0.9,
-                    warnings=[] if data_conf else [fallback or "simulation"],
+                    output_summary=status.osint_footprint,
+                    confidence=(
+                        getattr(osint_result, "confidence", None)
+                        if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))
+                        else None
+                    ),
+                    warnings=[] if data_conf else [fallback or "data_unavailable"],
                 )
                 self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı")
             except Exception as e:
@@ -582,7 +771,37 @@ class PinealExecutor:
             self._snapshot(status)
         return status
 
-    async def _calculate_authentic_vector(self, data_dict: dict) -> dict:
+    def _store_authentic_vector(self, input_data: Dict[str, Any], subject: str, vector: dict | None) -> None:
+        """Store a vector only when it was actually calculated from the supplied data.
+
+        A missing vector is represented explicitly in metadata.  It must never be
+        replaced with neutral-looking numeric values because downstream resonance
+        calculations treat numeric vectors as decision-ready evidence.
+        """
+        vector_key = f"{subject}_authentic_vector"
+        status_key = f"{subject}_authentic_vector_status"
+        if vector is None:
+            input_data.pop(vector_key, None)
+            input_data[status_key] = {
+                "available": False,
+                "reason": "AUTHENTIC_VECTOR_UNAVAILABLE",
+            }
+            return
+
+        input_data[vector_key] = vector
+        input_data[status_key] = {"available": True, "reason": None}
+
+    @staticmethod
+    def _holistic_confidence(agent_runs: Dict[str, AgentRun]) -> float:
+        """Aggregate only measured confidence values; absence is not neutral confidence."""
+        profile_agents = ("passion_mapper", "friction_detector", "cognitive_profiler", "resonance_synthesizer")
+        values = [
+            run.confidence for name, run in agent_runs.items()
+            if name in profile_agents and run.status == "completed" and isinstance(run.confidence, (int, float))
+        ]
+        return round(sum(values) / len(values), 3) if values else 0.0
+
+    async def _calculate_authentic_vector(self, data_dict: dict) -> dict | None:
         import json
         from pydantic import BaseModel
         
@@ -614,14 +833,10 @@ class PinealExecutor:
                 "dark_detail": res.dark_detail
             }
         except Exception as e:
-            self._log("WARNING", f"Vektör LLM üzerinden hesaplanamadı, fallback kullanılıyor: {e}")
-            return {
-                "depth": 0.5, 
-                "energy": 0.5, 
-                "achilles_heel": "Bilinmiyor", 
-                "core_wound": "Bilinmiyor", 
-                "dark_detail": "Bilinmiyor"
-            }
+            # Do not manufacture a neutral-looking vector.  A numeric fallback
+            # would be consumed by ResonanceCalculator as real user evidence.
+            self._log("WARNING", f"Vektör hesaplanamadı; veri kullanılamaz olarak işaretlendi: {e}")
+            return None
 
 executor = PinealExecutor()
 

@@ -90,7 +90,7 @@ async def test_shadow_executor_deterministic_synthesis(monkeypatch):
     
     task_input = {
         "target_profile": {
-            "bio": "Mükemmeliyetçi ve hırslı bir lider.",
+            "bio": "Mükemmel, mükemmel, mükemmel, mükemmel, eşsiz, eşsiz, olağanüstü, benzersiz, seçilmiş. Mükemmeliyetçi ve hırslı bir lider.",
             "posts": ["Başarı tek seçenektir.", "Kontrol bende."]
         },
         "user_profile": {

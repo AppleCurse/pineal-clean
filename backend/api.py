@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
@@ -380,7 +380,7 @@ class InitiatePayload(BaseModel):
     envies: str
     aggressiveness: float
     evidence_th: int
-    scraper_type: str = "x"
+    scraper_type: str = "instagram"
 
 def _effective_scraper_type(url: str, requested: str) -> str:
     """URL'nin platformuna göre tarayıcı seç (FIX: instagram adresi X tarayıcısına
@@ -398,9 +398,12 @@ async def run_mission(req: InitiatePayload):
     vault = get_vault(client_id)
     
     try:
-        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else ["Gece stüdyo kayıtları", "Analog ses tasarımı"]
-        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else ["Dark Jazz", "Ambient"]
-        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else ["Sahici ve derin diyalog"]
+        # [009] Kullanıcı göndermediyse ASLA örnek/placeholder ritüel ÜRETME.
+        # Boş kullanıcı verisi -> boş listeler; MirrorOfTruth "user_data_missing"
+        # fallback'iyle çalışır. Sahte ritüel ile kullanıcı frekansı kirletilmez.
+        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else []
+        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else []
+        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else []
 
         payload = {
             "user_profile": {
@@ -428,10 +431,18 @@ async def run_mission(req: InitiatePayload):
                 
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
         if effective_type == "x":
-            # W5/B4: X kazimasi desteklenmiyor — tarayici bile acilmadan
-            # WS/UI'da ACIK hata logu uretilir; uydurma veri uretilmez.
-            broadcast_log(client_id, "ERROR", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: B4 kararıyla devre dışı bırakıldı; profil analizi boş hedefle sürecek.")
-        if req.url and effective_type != "x":
+            # Never run Pineal on an empty X profile. Preserve the request and
+            # ask the user to authorize a distinct, auditable alternative.
+            room = get_room(client_id)
+            room["pending_alternative_authorization"] = {
+                "url": req.url,
+                "requested_at": datetime.now().isoformat(),
+                "alternatives": ["public_web_search"],
+            }
+            broadcast_log(client_id, "WARNING", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
+            broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
+            return
+        if req.url and effective_type != "x": 
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
             try:
                 from playwright.async_api import async_playwright
@@ -459,7 +470,6 @@ async def run_mission(req: InitiatePayload):
                         browser = await p.chromium.launch(**launch_kwargs)
                         ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                         
-                        is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
                         clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
 
                         if effective_type == "instagram" and InstagramGhostScraper:
@@ -488,10 +498,10 @@ async def run_mission(req: InitiatePayload):
                                 "is_private": ig_data.is_private
                             })
                             
-                        elif effective_type == "x" and scrape_readonly:
-                            data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                            payload["target_profile"].update({k: v for k, v in data.items() if v})
-
+                        # [016] X buraya asla ulaşmaz: effective_type == "x"
+                        # run_mission başında awaiting_authorization'a döner.
+                        # (eski `elif effective_type == "x" and scrape_readonly`
+                        #  ölü daldı, kaldırıldı — scraper.py dosyası duruyor.)
                         elif effective_type == "cross" and InstagramGhostScraper:
                             # Try Instagram first
                             ctx = await browser.new_context(**ctx_kwargs)
@@ -499,36 +509,25 @@ async def run_mission(req: InitiatePayload):
                             if stealth_engine:
                                 await stealth_engine.apply_stealth_async(page)
                             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
-                            try:
-                                ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
-                                payload["target_profile"].update({
-                                    "username": "@" + ig_data.username,
-                                    "bio": ig_data.biography or "",
-                                    "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram: {ig_data.full_name or ig_data.username}"],
-                                    "images": [p.display_url for p in ig_data.posts],
-                                    "followers": ig_data.follower_count or 0,
-                                    "is_private": ig_data.is_private
-                                })
-                            except Exception as ig_err:
-                                if scrape_readonly and is_x_url:
-                                    x_data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                                    payload["target_profile"].update({k: v for k, v in x_data.items() if v})
-                                else:
-                                    raise ig_err
-                                
+                            ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
+                            payload["target_profile"].update({
+                                "username": "@" + ig_data.username,
+                                "bio": ig_data.biography or "",
+                                "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram: {ig_data.full_name or ig_data.username}"],
+                                "images": [p.display_url for p in ig_data.posts],
+                                "followers": ig_data.follower_count or 0,
+                                "is_private": ig_data.is_private
+                            })
                         elif scrape_readonly:
                             data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
                             payload["target_profile"].update({k: v for k, v in data.items() if v})
                     finally:
-                        if page:
-                            try: await page.close()
-                            except: pass
-                        if ctx:
-                            try: await ctx.close()
-                            except: pass
-                        if browser:
-                            try: await browser.close()
-                            except: pass
+                        for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
+                            if resource:
+                                try:
+                                    await resource.close()
+                                except Exception as cleanup_error:
+                                    broadcast_log(client_id, "WARNING", f"SCRAPER CLEANUP: {resource_name} kapanamadı: {str(cleanup_error)[:80]}")
                         
                 broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:
@@ -769,34 +768,169 @@ async def aspasia_chat(payload: AspasiaChatPayload):
     resp = await aspasia.chat(payload.user_message, room, payload.model_override, payload.image_data)
     return resp.model_dump()
 
+class AlternativeAuthorizationPayload(BaseModel):
+    client_id: str
+    alternative: str
+    approved: bool
+
+
+def _extract_handle_from_url(url: str) -> str:
+    """X/Instagram URL'sinden kullanıcı adı (subject) çıkarır."""
+    import re
+    if not url:
+        return ""
+    needle = re.search(r"(?:instagram\.com|x\.com|twitter\.com)/([^/?#]+)", url)
+    if needle:
+        return needle.group(1).strip().lstrip("@").lower()
+    return url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "").lower()
+
+
+async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, Any]:
+    """Yetki verilmiş alternatif: kanıt kaynaklı public-web araması.
+
+    Sözleşme (sahte veri YASAK):
+    - Biyografi/gönderi/kişilik ÜRETİLMEZ; yalnızca gerçek arama kayıtları
+      döner (source_url + provider + content).
+    - Subject matching: hedef kullanıcı adı kaynak URL'sinde veya içeriğinde
+      geçmeyen sonuçlar düşürülür (yanlış kişi eşleşmesi engeli).
+    - Sağlayıcı yok/çöktü -> available=False; sonuç yok -> no_results.
+    """
+    handle = _extract_handle_from_url(url)
+    if not handle:
+        return {
+            "status": "invalid_target", "available": False,
+            "query": "", "results": [], "matched_username": "",
+            "total_results_searched": 0,
+            "searched_at": datetime.now().isoformat(),
+            "note": "URL'den hedef kullanıcı adı çıkarılamadı.",
+        }
+
+    query = f'"{handle}"'
+    outcome = await search_engine.search(query, num_results=8)
+    if not getattr(outcome, "available", False):
+        return {
+            "status": "unavailable", "available": False, "query": query,
+            "results": [], "matched_username": handle,
+            "total_results_searched": 0,
+            "searched_at": datetime.now().isoformat(),
+            "note": getattr(outcome, "error", None) or "Arama sağlayıcısı kullanılamadı.",
+        }
+
+    raw = getattr(outcome, "results", []) or []
+    matched = [
+        {
+            "source_url": r.source_url,
+            "provider": r.provider,
+            "content": r.content,
+            "subject_match": True,
+        }
+        for r in raw
+        if handle in (r.source_url or "").lower()
+        or handle in (r.content or "").lower()
+    ]
+    if matched:
+        status = "ok"
+        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti."
+    elif raw:
+        status = "no_subject_match"
+        note = f"Arama yapıldı ({len(raw)} sonuç) ama hiçbiri hedef kullanıcı adıyla eşleşmedi; sonuç gösterilmiyor (yanlış kişi eşleşmesi engeli)."
+    else:
+        status = "no_results"
+        note = "Arama yapıldı, hiç sonuç döndü."
+
+    return {
+        "status": status,
+        "available": True,
+        "query": query,
+        "results": matched,
+        "matched_username": handle,
+        "total_results_searched": len(raw),
+        "searched_at": datetime.now().isoformat(),
+        "note": note,
+    }
+
+
+@app.post("/api/scraper/authorize-alternative")
+async def authorize_scraper_alternative(req: AlternativeAuthorizationPayload):
+    room = get_room(req.client_id)
+    pending = room.get("pending_alternative_authorization")
+    if not pending:
+        return {"status": "no_pending_authorization"}
+    if not req.approved or req.alternative not in pending["alternatives"]:
+        room.pop("pending_alternative_authorization", None)
+        return {"status": "declined"}
+    # Authorization is recorded; provider execution is a separate explicit
+    # route and must not fabricate an X profile from unrelated sources.
+    room["authorized_alternatives"] = room.get("authorized_alternatives", []) + [{
+        "alternative": req.alternative,
+        "url": pending["url"],
+        "authorized_at": datetime.now().isoformat(),
+    }]
+
+    if req.alternative == "public_web_search":
+        executor = get_executor(req.client_id)
+        research = await _run_public_web_research(pending["url"], executor.search_engine)
+        room["web_research"] = research
+        room.pop("pending_alternative_authorization", None)
+        broadcast_log(
+            req.client_id, "INFO",
+            f"ALTERNATİF ARAŞTIRMA: {research['note']}",
+        )
+        return {"status": "research_completed", "alternative": req.alternative,
+                "research": research}
+
+    room.pop("pending_alternative_authorization", None)
+    return {"status": "authorized", "alternative": req.alternative}
+
+
 class IntervenePayload(BaseModel):
     client_id: str
     action_type: str
     target_agent: Optional[str] = None
-    parameters: dict = {}
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+
+
+class InterventionRecord(BaseModel):
+    client_id: str
+    action_type: str
+    target_agent: Optional[str] = None
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+    requested_at: str
+    outcome: str
+
 
 @app.post("/api/executor/intervene")
 async def executor_intervene(req: IntervenePayload):
-    """Kullanıcının doğrudan müdahale komutunu PinealExecutor üzerinde çalıştırır"""
+    """Record intervention requests without mutating shared executor safety state."""
     room = get_room(req.client_id)
-    executor = room.get("executor")
-    
-    if req.action_type == "OVERRIDE_CONFIDENCE":
-        executor.uncertainty.evaluate = lambda result, agent_name: type('UncertaintyResult', (), {'confidence': 1.0, 'is_suspicious': False, 'reason': 'Mösyö müdahalesi ile esnetildi'})()
-        broadcast_log(req.client_id, "WARNING", "MÜDAHALE: Güven kısıtlaması kaldırıldı (Override).")
-        return {"status": "overridden", "message": "Güven eşiği Mösyö emriyle 1.0'e sabitlendi."}
-        
-    elif req.action_type == "SKIP_AGENT" and req.target_agent:
-        if req.target_agent in executor.agents:
-            del executor.agents[req.target_agent]
-            broadcast_log(req.client_id, "WARNING", f"MÜDAHALE: Ajan devre dışı bırakıldı [{req.target_agent}].")
-            return {"status": "skipped", "message": f"{req.target_agent} ajan devre dışı."}
+    record = InterventionRecord(
+        client_id=req.client_id,
+        action_type=req.action_type,
+        target_agent=req.target_agent,
+        parameters=req.parameters,
+        reason=req.reason,
+        requested_at=datetime.now().isoformat(),
+        outcome="review_required",
+    )
+    room.setdefault("interventions", []).append(record.model_dump())
 
-    elif req.action_type == "HALT":
-        broadcast_log(req.client_id, "ERROR", "MÜDAHALE: Operasyon Mösyö emriyle DURDURULDU.")
-        return {"status": "halted", "message": "Operasyon durduruldu."}
+    # These actions previously rewrote uncertainty or deleted agents from the
+    # room's shared executor. They are now auditable requests, not bypasses.
+    if req.action_type in {"OVERRIDE_CONFIDENCE", "SKIP_AGENT", "HALT"}:
+        broadcast_log(req.client_id, "WARNING", f"MÜDAHALE KAYDEDİLDİ: {req.action_type}; otomatik uygulanmadı.")
+        return {
+            "status": "review_required",
+            "message": "Talep kaydedildi. Kanıt/güvenlik kuralları otomatik olarak değiştirilmedi.",
+            "intervention": record.model_dump(),
+        }
 
-    return {"status": "acknowledged", "message": "Müdahale emri alındı."}
+    return {
+        "status": "acknowledged",
+        "message": "Müdahale talebi kaydedildi; uygulanmadan önce inceleme gerekir.",
+        "intervention": record.model_dump(),
+    }
 
 class InterpreterPayload(BaseModel):
     client_id: str

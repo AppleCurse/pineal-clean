@@ -107,9 +107,17 @@ async def test_execute_task_suspicious_research(executor):
     
     status = await executor.execute_task(input_data, "task_3")
     
-    # Still completes if deep research doesn't raise exception
+    # The research note is separate evidence; it must not replace the typed
+    # human_behavior output that downstream agents consume.
     assert status.status == "completed"
     executor.llm_gateway.query.assert_called() # Deep research called
+    assert input_data["target_analysis"]["compatibility_score"] == 0.9
+    original = next(item for item in status.evidence_chain if item["agent"] == "human_behavior")
+    research = next(item for item in status.evidence_chain if item["agent"] == "deep_research")
+    assert original["evidence_type"] == "agent_output"
+    assert original["uncertainty"]["reason"] == "Inconsistent"
+    assert research["evidence_type"] == "verification_note"
+    assert research["source_agent"] == "human_behavior"
 
 @pytest.mark.asyncio
 async def test_execute_task_frequency_mismatch(executor):
