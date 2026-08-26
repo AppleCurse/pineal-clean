@@ -93,6 +93,7 @@ sonuçlar düşürülür. Frontend henüz bu sonucu tüketmiyor (uyumluluk kır�
 | `DepthAnalyst` | Evidence chain üzerinde quote-guardlı derinlik raporu | Post-profile phase | depth chain | hata loglanıp atlanıyor | WIRED, REVIEW |
 | `VisionAnalyzer` | URL görsellerinde multimodal evidence | Pre-route | Gemini vision chain | download/model failure typed fallback | WIRED, LIVE-UNVERIFIED |
 | `InterpreterAgent` | Experimental code execution | Experimental endpoint | interpreter | default disabled | EXPERIMENTAL |
+| `ReflectionLoop` | Q-learning prototype (kendi reflection.db) | Hiçbiri | — | kimse import etmiyor | ORPHAN (silme yok; ürün kararı gerekli) |
 | `AspasiaChief` | Telemetry/model/agent durumunu kullanıcı diline çevirir | Chat endpoint | LLMGateway | provider hata → dürüst connection mesajı | WIRED, LIVE-UNVERIFIED |
 
 ## 5. Specialist Model Policy
