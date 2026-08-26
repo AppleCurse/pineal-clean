@@ -87,11 +87,18 @@ def test_calculate_resonance_potential():
 @patch('cv2.imread')
 @patch('cv2.Canny')
 @patch('cv2.Laplacian')
-def test_analyze_visual_micro(mock_laplacian, mock_canny, mock_imread):
+@patch('cv2.CascadeClassifier')
+def test_analyze_visual_micro(mock_cascade_cls, mock_laplacian, mock_canny, mock_imread):
     analyzer = HumanBehaviorAnalyzer()
     
     fake_img = np.zeros((100, 100, 3), dtype=np.uint8)
     mock_imread.return_value = fake_img
+    
+    # Mock face detection: yüz tespit edildiğinde omuz gerginliği hesaplanır
+    mock_cascade = MagicMock()
+    mock_cascade.empty.return_value = False
+    mock_cascade.detectMultiScale.return_value = [(20, 20, 30, 30)]
+    mock_cascade_cls.return_value = mock_cascade
     
     # Mock Canny to return array with high mean (tension)
     mock_canny.return_value = np.full((30, 60), 100, dtype=np.uint8)
@@ -106,6 +113,24 @@ def test_analyze_visual_micro(mock_laplacian, mock_canny, mock_imread):
     assert len(signals) == 2
     assert any(s.signal_type == "tension" for s in signals)
     assert any(s.signal_type == "void" for s in signals)
+
+
+@patch('cv2.imread')
+@patch('cv2.Canny')
+@patch('cv2.Laplacian')
+@patch('cv2.CascadeClassifier')
+def test_analyze_visual_micro_no_face_no_false_tension(mock_cascade_cls, mock_laplacian, mock_canny, mock_imread):
+    """İçinde insan/yüz bulunmayan görselde sahte omuz gerginliği üretilmez."""
+    analyzer = HumanBehaviorAnalyzer()
+    mock_imread.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+    
+    mock_cascade = MagicMock()
+    mock_cascade.empty.return_value = False
+    mock_cascade.detectMultiScale.return_value = ()
+    mock_cascade_cls.return_value = mock_cascade
+    
+    signals = analyzer._analyze_visual_micro(["pizza.jpg"])
+    assert not any(s.signal_type == "tension" for s in signals)
 
 @pytest.mark.asyncio
 async def test_execute():

@@ -499,6 +499,8 @@ class PinealExecutor:
                     input_data["frictions"] = result.model_dump()
                 elif agent_name == "cognitive_profiler":
                     input_data["cognitive"] = result.model_dump()
+                elif agent_name == "autonomous_verifier":
+                    input_data["verifications"] = result.model_dump()
 
                 _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
                               if hasattr(self.llm_gateway, "call_log") else [])

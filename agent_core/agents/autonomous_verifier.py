@@ -92,8 +92,10 @@ class AutonomousVerifier:
         for claim in claim_data.claims:
             query = claim.claim_text
             name = target_profile.get("name", "")
-            if name:
-                query = f"{name} {query}"
+            username = target_profile.get("username", "")
+            identity = name or (f"@{username.lstrip('@')}" if username else "")
+            if identity:
+                query = f"{identity} {query}"
 
             outcome = await self.search_engine.search(query, num_results=2)
             if not outcome.available:
@@ -136,14 +138,23 @@ class AutonomousVerifier:
             )
 
         confirmed = sum(1 for v in verifications if v.truth_status == "DOĞRULANDI")
+        falsified = sum(1 for v in verifications if v.truth_status in {"YALAN", "ÇELİŞKİLİ"})
         conclusive = sum(1 for v in verifications if v.truth_status in {"DOĞRULANDI", "YALAN", "ÇELİŞKİLİ"})
-        # Unknown search results are not positive authenticity evidence.
+
+        # [062] fix: Yalan/çelişkili iddialar çoğunluktaysa veya varsa profil asla 'VERIFIED' ilan edilemez.
         score = confirmed / total
-        status = "VERIFIED" if confirmed else "UNVERIFIED"
+        if falsified > confirmed:
+            verdict_status = "CONTRADICTED"
+        elif falsified > 0 and confirmed > 0:
+            verdict_status = "PARTIALLY_CONTRADICTED"
+        elif confirmed > 0 and falsified == 0:
+            verdict_status = "VERIFIED"
+        else:
+            verdict_status = "UNVERIFIED"
 
         return VerifierReport(
             verifications=verifications,
             overall_authenticity_score=score,
-            status=status,
+            status=verdict_status,
             confidence=conclusive / total,
         )

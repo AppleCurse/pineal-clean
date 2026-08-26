@@ -96,20 +96,19 @@ class ShadowExecutor:
             )
 
         # 2. Mirror (LLM gerektirir — fallback ile korumalı)
-        # [031] fix: payload sözleşmesindeki gerçek alan adlarını kullan
-        # (private_rituals/late_night_playlist/secret_envies + user_context).
-        # Eski 'rituals/music/envies' anahtarları hiçbir üretici tarafından
-        # yazılmıyordu; kullanıcı verisi mirror'a hiç ulaşmıyordu.
-        mirror_result = None
-        try:
-            mirror_result = await self.mirror.execute(
-                {
-                    "user_profile": task_input.get("user_profile", {}),
-                    "user_context": task_input.get("user_context", {}),
-                }
-            )
-        except Exception as e:
-            log.warning("ShadowExecutor: Mirror LLM atlandı: %s", e)
+        # [054] fix: task_input içinde önceden üretilmiş user_mirror varsa onu kullan;
+        # aynı görev için gereksiz ikinci kez Mirror LLM çağırma.
+        mirror_result = task_input.get("user_mirror")
+        if mirror_result is None:
+            try:
+                mirror_result = await self.mirror.execute(
+                    {
+                        "user_profile": task_input.get("user_profile", {}),
+                        "user_context": task_input.get("user_context", {}),
+                    }
+                )
+            except Exception as e:
+                log.warning("ShadowExecutor: Mirror LLM atlandı: %s", e)
 
         # 3. NLP Sequence (LLM gerektirmez — deterministik)
         # Kullanıcı istem vermediyse varsayılan eylem ÜRETİLMEZ (eski
@@ -127,19 +126,42 @@ class ShadowExecutor:
         presup_chain = self.presupposition.generate_chain(beliefs)
 
         # 5. Pattern Interrupt (LLM gerektirir — fallback ile korumalı)
+        # [053] fix: PatternInterrupt._grounded_evidence için geçerli micro_signals
+        # aktarılır; böylece pattern mesajı sessizce boşluğa çökmez.
         pattern_message = strategy.get('vector') or "unavailable"
         try:
-            pattern_input = {
-                'target_analysis': {
+            existing_target_analysis = task_input.get("target_analysis") or {}
+            if existing_target_analysis and isinstance(existing_target_analysis, dict):
+                p_analysis = existing_target_analysis
+            else:
+                p_analysis = {
                     'surface_identity': task_input.get('target_profile', {}).get('bio', '')[:50],
                     'detected_wound': strategy['vector'],
-                    'resonance_potential': dark.exploitability
-                },
-                'user_mirror': mirror_result.model_dump() if mirror_result and hasattr(mirror_result, 'model_dump') else {},
-                'sacred_rules': ""
+                    'resonance_potential': dark.exploitability,
+                    'micro_signals': [
+                        {
+                            'signal_type': 'defense',
+                            'confidence': 0.85,
+                            'location': 'behavioral',
+                            'evidence': f"Strateji vektörü: {strategy['vector']}",
+                            'psychological_weight': 0.7,
+                        }
+                    ]
+                }
+
+            p_mirror = (
+                mirror_result.model_dump()
+                if hasattr(mirror_result, "model_dump")
+                else (mirror_result if isinstance(mirror_result, dict) else {})
+            )
+            pattern_input = {
+                'target_analysis': p_analysis,
+                'user_mirror': p_mirror,
+                'sacred_rules': task_input.get("sacred_rules", "")
             }
             pattern_result = await self.pattern.execute(pattern_input, None, self.llm_gateway)
-            pattern_message = pattern_result.message
+            if pattern_result and pattern_result.message:
+                pattern_message = pattern_result.message
         except Exception as e:
             log.warning("ShadowExecutor: Pattern LLM atlandı: %s", e)
 
@@ -151,12 +173,24 @@ class ShadowExecutor:
             strategy
         )
 
+        # [066] fix: exploitability psikolojik manipülasyon metriğidir; ölçüm
+        # güveni (confidence) olarak telemetriye verilemez. Ölçüm güveni, markör
+        # gözlem kapsamından türetilir.
+        observed_traits = sum(
+            1 for t in ("machiavellianism", "narcissism", "psychopathy")
+            if getattr(dark, t, 0.0) > 0.0
+        )
+        analysis_confidence = (
+            min(round(0.5 + (observed_traits * 0.15), 2), 1.0)
+            if observed_traits > 0 else 0.0
+        )
+
         return ShadowResult(
             message=final_message,
             dark_profile=dark.model_dump(),
             strategy=strategy['vector'],
             nlp_sequence=nlp_seq,
-            confidence=dark.exploitability
+            confidence=analysis_confidence
         )
     
     def _synthesize(self, base_msg: str, nlp_seq: list, presup: list, strategy: Dict) -> str:

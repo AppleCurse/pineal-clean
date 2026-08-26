@@ -74,7 +74,14 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 temperature=0.3,
                 agent_name="friction_detector"
             )
-            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
+            has_frictions = bool(
+                result.sensitivities or result.stress_triggers or result.boundary_signals or result.evidence_quotes
+            )
+            has_valid_evidence = has_frictions and (getattr(result, "confidence", 0.0) > 0.0)
+            return result.model_copy(update={
+                "data_confidence": has_valid_evidence,
+                "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
+            })
         except Exception as e:
             logger.warning(f"FrictionDetector LLM hatası: {e}")
             return FrictionProfile(
