@@ -85,7 +85,9 @@ async def test_holistic_360_e2e_pipeline():
                 strategy="void_resonance",
                 confidence=0.95,
                 compliance_score=100.0,
-                dialogue_tree=[]
+                dialogue_tree=[],
+                data_confidence=True,  # gerçek LLM sonucu simülasyonu: açık beyan ([022])
+                fallback_reason=None
             )
         elif name == "AuthenticVectorResult":
             return model(

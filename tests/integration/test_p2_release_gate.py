@@ -83,7 +83,9 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
             compliance_score=100.0,
             dialogue_tree=[
                 ScenarioResponse(scenario_type="agresif", expected_target_reaction="Ne diyorsun?", our_counter_move="Sadece bir gözlem.")
-            ]
+            ],
+        data_confidence=True,  # gerçek LLM sonucu simülasyonu: açık beyan ([022])
+        fallback_reason=None
         )
     elif name == "ClaimList":
         from agent_core.agents.autonomous_verifier import Claim

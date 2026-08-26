@@ -63,8 +63,17 @@ impl UncertaintyEngine {
         Self { _task_id: task_id, required_fields }
     }
 
-    /// Veriyi doğrula ve ConfidenceLevel döndür
-    /// Asla sahte skor üretmez - Fail-Fast prensibi
+    /// Veriyi doğrula ve ConfidenceLevel döndür.
+    /// Asla sahte skor üretmez - Fail-Fast prensibi.
+    ///
+    /// [006] fix: eski sözleşme yalnızca "alan var mı"na bakıyordu; {} / boş
+    /// dizi / placeholder metin / null değerler PASS olup score=100 alıyordu.
+    /// Yeni sözleşme: "alan var" != "kanıt var".
+    ///   - alan yok veya null        -> HALT
+    ///   - boş obje / boş dizi       -> HALT (kanıt taşımayan kap)
+    ///   - NaN/sonsuz sayı           -> HALT
+    ///   - boş/placeholder metin     -> HALT ("unknown", "n/a", "yok", ...)
+    /// PASS yalnızca TÜM zorunlu alanlar gerçek kanıt taşıdığında verilir.
     pub fn evaluate<T: Serialize>(&self, data: &T) -> Result<ConfidenceLevel, UncertaintyError> {
         // JSON serialize ederek alan kontrolü yap
         let json_value = serde_json::to_value(data)
@@ -73,30 +82,61 @@ impl UncertaintyEngine {
         let obj = json_value.as_object()
             .ok_or_else(|| UncertaintyError::ValidationFailed("Veri obje değil".to_string()))?;
 
-        // Eksik alanları tespit et
+        // Eksik/kanıtsız alanları tespit et
         let mut missing: Vec<String> = Vec::new();
         for field in &self.required_fields {
-            if !obj.contains_key(field) {
+            let bears_evidence = match obj.get(field) {
+                None => false,
+                Some(value) => Self::value_bears_evidence(value),
+            };
+            if !bears_evidence {
                 missing.push(field.clone());
             }
         }
 
         if !missing.is_empty() {
-            // FAIL-FAST: Eksik alan varsa hemen HALT
+            // FAIL-FAST: Eksik/kanıtsız alan varsa hemen HALT
             return Ok(ConfidenceLevel::Halt(InsufficientEvidence {
-                reason: format!("Gerekli {} alandan {} eksik", self.required_fields.len(), missing.len()),
+                reason: format!(
+                    "Gerekli {} alandan {} eksik veya kanıt taşımıyor",
+                    self.required_fields.len(),
+                    missing.len()
+                ),
                 missing_fields: missing,
                 severity: Severity::Critical,
             }));
         }
 
-        // Tüm alanlar mevcut - PASS
+        // Tüm zorunlu alanlar gerçek kanıt taşıyor - PASS
         let data_points: Vec<String> = obj.keys().cloned().collect();
         Ok(ConfidenceLevel::Pass(Evidence {
-            score: 100, // Tüm alanlar mevcut
+            score: 100, // Tüm zorunlu alanlar doğrulandı
             data_points,
             verified_at: chrono::Utc::now(),
         }))
+    }
+
+    /// Bir JSON değeri gerçek kanıt taşıyor mu? ([006] sözleşmesi)
+    pub fn value_bears_evidence(value: &serde_json::Value) -> bool {
+        use serde_json::Value;
+        match value {
+            Value::Null => false,
+            Value::Bool(_) => true,
+            Value::Number(n) => n.as_f64().map(|f| f.is_finite()).unwrap_or(false),
+            Value::String(s) => {
+                let t = s.trim().to_lowercase();
+                if t.is_empty() {
+                    return false;
+                }
+                !matches!(
+                    t.as_str(),
+                    "unknown" | "n/a" | "na" | "-" | "yok" | "yok." | "bilinmiyor"
+                        | "veri yok" | "belirsiz" | "not found" | "no data" | "no results"
+                )
+            }
+            Value::Array(items) => !items.is_empty() && items.iter().any(Self::value_bears_evidence),
+            Value::Object(map) => !map.is_empty() && map.values().any(Self::value_bears_evidence),
+        }
     }
 
     /// LLM'den gelen JSON'u güvenli şekilde parse et
@@ -141,6 +181,65 @@ mod tests {
                 assert_eq!(evidence.severity, Severity::Critical);
             },
             ConfidenceLevel::Pass(_) => panic!("Beklenen HALT durumu gelmedi!"),
+        }
+    }
+
+    #[test]
+    fn test_empty_object_field_does_not_pass() {
+        // [006]: {"user_authentic_vector": {}} artık PASS olamaz
+        let engine = UncertaintyEngine::new(
+            uuid::Uuid::new_v4(),
+            vec!["user_authentic_vector".to_string()],
+        );
+        let data = serde_json::json!({ "user_authentic_vector": {} });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Halt(e) => assert_eq!(e.missing_fields, vec!["user_authentic_vector"]),
+            ConfidenceLevel::Pass(_) => panic!("Boş obje PASS olamaz"),
+        }
+    }
+
+    #[test]
+    fn test_non_numeric_dimension_does_not_pass() {
+        // [006]: {"depth": "x"} -> obje dolu ama değer kanıt değil; vektör
+        // ajanları tip kontrolünü kendi parse'ında yapar, motor string'e izin
+        // verir ANCAK placeholder ise HALT eder:
+        let engine = UncertaintyEngine::new(
+            uuid::Uuid::new_v4(),
+            vec!["vec".to_string()],
+        );
+        let data = serde_json::json!({ "vec": { "depth": "unknown" } });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Halt(e) => assert_eq!(e.missing_fields, vec!["vec"]),
+            ConfidenceLevel::Pass(_) => panic!("placeholder değer PASS olamaz"),
+        }
+    }
+
+    #[test]
+    fn test_null_and_empty_array_do_not_pass() {
+        let engine = UncertaintyEngine::new(
+            uuid::Uuid::new_v4(),
+            vec!["verifications".to_string(), "score".to_string()],
+        );
+        let data = serde_json::json!({ "verifications": [], "score": null });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Halt(e) => assert_eq!(e.missing_fields.len(), 2),
+            ConfidenceLevel::Pass(_) => panic!("boş dizi/null PASS olamaz"),
+        }
+    }
+
+    #[test]
+    fn test_valid_evidence_passes() {
+        let engine = UncertaintyEngine::new(
+            uuid::Uuid::new_v4(),
+            vec!["vector".to_string(), "anchors".to_string()],
+        );
+        let data = serde_json::json!({
+            "vector": { "depth": 0.9, "energy": 0.4 },
+            "anchors": ["ritüel uyumu"]
+        });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Pass(e) => assert_eq!(e.score, 100),
+            ConfidenceLevel::Halt(_) => panic!("geçerli kanıt HALT olamaz"),
         }
     }
 }

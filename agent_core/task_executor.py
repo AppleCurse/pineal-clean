@@ -99,7 +99,7 @@ class PinealExecutor:
             "interpreter": InterpreterAgent(self.llm_gateway),
             "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
             "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
-            "shadow_executor": ShadowExecutor(),
+            "shadow_executor": ShadowExecutor(llm_gateway=self.llm_gateway),
         }
 
     @staticmethod
@@ -114,25 +114,28 @@ class PinealExecutor:
         cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
         hits = cache_stats.get("hits", 0)
         hit_rate = cache_stats.get("hit_rate", "0.0%")
-        # Assuming avg 0.005$ per LLM call saved
-        if isinstance(hits, (int, float)):
-            saved_cost = hits * 0.005
-            saved_cost_str = f"${saved_cost:.3f}"
-        else:
-            saved_cost_str = "$0.000"
-            
+
         real_cost = getattr(self.llm_gateway, "spend_usd", None)
         if not isinstance(real_cost, (int, float)):
             real_cost = getattr(self.llm_gateway, "total_cost", 0.0)
         if not isinstance(real_cost, (int, float)):
             real_cost = 0.0
 
+        # [034] fix: telemetri yalnızca GERÇEK gözlemlenebilirlerden oluşur.
+        # - 'saved_llm_cost' varsayımsal $0.005/call sabitiyle uyduruluyordu;
+        #   cache hit'leri model/fiyat bilgisi taşımadığı için kesin tasarruf
+        #   hesaplanamaz -> hit sayısı dürüstçe raporlanır.
+        # - 'decision_weight_updates' hiçbir ağırlık güncellemesi yapılmayan
+        #   yolda ajan sayısını yanlış etiketliyordu -> gerçek LLM çağrı
+        #   gözlem sayısı raporlanır (gateway call_log).
+        call_log = getattr(self.llm_gateway, "call_log", None)
+
         status.telemetry = {
             "cache_hit_rate": hit_rate,
-            "saved_llm_cost": saved_cost_str,
+            "cache_hits": hits if isinstance(hits, (int, float)) else 0,
+            "llm_calls_observed": len(call_log) if isinstance(call_log, list) else 0,
             "total_llm_cost": f"${real_cost:.5f}",
             "llm_spend_usd": real_cost,
-            "decision_weight_updates": len(status.agent_runs)
         }
         
         if self._snapshot_cb:
@@ -211,6 +214,26 @@ class PinealExecutor:
         return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
+        """Public entry: impl'i saran güvenli yaşam döngüsü.
+
+        [035] fix: göreve ait geçici görseller başarı/halt/exception HER
+        durumunda temizlenir; hedefin kişisel görselleri temp dizinde kalıcı
+        artefakt olarak bırakılamaz (retention sözleşmesi).
+        """
+        try:
+            return await self._execute_task_impl(input_data, task_id)
+        finally:
+            self._cleanup_temp_images(input_data)
+
+    def _cleanup_temp_images(self, input_data: Dict[str, Any]) -> None:
+        import os
+        for path in (input_data.pop("_downloaded_temp_images", None) or []):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    async def _execute_task_impl(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
         from agent_core.schemas.telemetry import (
             TaskStartedEvent, StepCompletedEvent, ErrorHaltEvent, TaskCompletedEvent, Severity
         )
@@ -227,8 +250,11 @@ class PinealExecutor:
             from agent_core.services.timing_forensics import analyze_timing
             tp_info = input_data.get("target_profile", {})
             fol_cnt = tp_info.get("followers", 0)
-            fing_cnt = tp_info.get("following", 0)
-            posts_meta = tp_info.get("posts_meta", []) or [{"like_count": None, "comment_count": None}]
+            # [024] fix: following=None "ölçülmedi" demektir; 0'a çevrilmez.
+            fing_cnt = tp_info.get("following")
+            # [027] fix: sahte 1-post sentinel'i kaldırıldı. Boş posts_meta
+            # olduğu gibi iletilir; audit "İncelenen Post: 0" der, 1 demez.
+            posts_meta = tp_info.get("posts_meta") or []
             audit_res = audit_followers(fol_cnt, fing_cnt, posts_meta)
             input_data["follower_audit"] = audit_res.model_dump()
             status.follower_audit = audit_res.model_dump()
@@ -263,7 +289,10 @@ class PinealExecutor:
 
         imgs = input_data.get("target_profile", {}).get("images", [])
         if imgs and isinstance(imgs[0], str) and imgs[0].startswith("http"):
-            input_data["target_profile"]["images"] = await self._download_images(imgs)
+            downloaded = await self._download_images(imgs)
+            input_data["target_profile"]["images"] = downloaded
+            # [035] fix: task bitince (her çıkış yolunda) silinecekleri kaydet.
+            input_data["_downloaded_temp_images"] = downloaded
 
         # --- PINEAL DETERMINISTIC 7-PILLAR ---
         pillar_start = datetime.now(timezone.utc)

@@ -39,6 +39,21 @@ pub struct EncryptedPayload {
 }
 
 /// Stealth Vault - Ana şifreli kasa yapısı
+/// [W4.3] Tek sahiplikli vault yolu. create/open/get komutları (src-tauri)
+/// bu fonksiyonu kullanır; tauri_bridge'deki /tmp'li ikiz kaldrıldı.
+/// Öncelik: $PINEAL_VAULT_DIR/vault.json, yoksa $USERPROFILE|$HOME/.pineal_vault/vault.json
+pub fn default_vault_path() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("PINEAL_VAULT_DIR") {
+        if !dir.trim().is_empty() {
+            return std::path::PathBuf::from(dir).join("vault.json");
+        }
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(format!("{}/.pineal_vault", home)).join("vault.json")
+}
+
 pub struct StealthVault {
     vault_path: PathBuf,
     master_key: Secret<Vec<u8>>,
@@ -257,6 +272,35 @@ mod tests {
         vault.store("test_credentials", &secret).unwrap();
         let mut vault_mut = vault;
         vault_mut.secure_wipe();
+    }
+
+    #[test]
+    fn test_vault_roundtrip_store_reload_retrieve() {
+        // [047] sözleşme: oluştur -> yaz -> (diskten) aç -> oku -> değer aynı
+        let dir = tempdir().unwrap();
+        let vault_path = dir.path().join("roundtrip_vault.json");
+        {
+            let vault = StealthVault::new(&vault_path, "parola").unwrap();
+            #[derive(Serialize)]
+            struct Credential { value: String }
+            vault.store("OPENROUTER_API_KEY", &Credential { value: "sk-or-v1-x".to_string() }).unwrap();
+        }
+        let reloaded = StealthVault::load(&vault_path, "parola").unwrap();
+        #[derive(Deserialize, Debug)]
+        struct Credential { value: String }
+        let cred: Credential = reloaded.retrieve("OPENROUTER_API_KEY").unwrap();
+        assert_eq!(cred.value, "sk-or-v1-x");
+    }
+
+    #[test]
+    fn test_default_vault_path_single_source() {
+        // [W4.3] env önceliği + varsayılan ev dizini altı (asla /tmp değil)
+        std::env::set_var("PINEAL_VAULT_DIR", "/tmp/ozel_kasa");
+        assert_eq!(default_vault_path(), std::path::PathBuf::from("/tmp/ozel_kasa/vault.json"));
+        std::env::remove_var("PINEAL_VAULT_DIR");
+        let path = default_vault_path();
+        assert!(path.to_string_lossy().contains(".pineal_vault"));
+        assert!(path.to_string_lossy().ends_with("vault.json"));
     }
 
     #[test]

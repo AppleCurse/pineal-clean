@@ -11,8 +11,12 @@ def test_effective_scraper_type_url_aware():
     assert _effective_scraper_type("https://www.instagram.com/gokayte/", "cross") == "instagram"
     assert _effective_scraper_type("https://x.com/gokayte", "cross") == "x"
     assert _effective_scraper_type("https://twitter.com/gokayte", "instagram") == "x"
-    assert _effective_scraper_type("https://ornek.com/profil", "cross") == "cross"
-    assert _effective_scraper_type("", "cross") == "cross"
+    # [023] fix: tanınmayan platformda kullanıcı seçimi GEÇERLİ DEĞİLDİR.
+    # URL segmenti Instagram adı sanılıp yanlış hedef kazınmasın.
+    assert _effective_scraper_type("https://ornek.com/profil", "cross") == "unsupported_web"
+    assert _effective_scraper_type("https://tiktok.com/@hedef", "cross") == "unsupported_web"
+    assert _effective_scraper_type("https://linkedin.com/in/hedef", "instagram") == "unsupported_web"
+    assert _effective_scraper_type("", "cross") == "unsupported_web"
 
 def test_vault_key_unlocks_live_llm_gate():
     """Kasa'ya anahtar -> gateway.live_unlocked True -> flag'siz canlı çağrıya izin."""

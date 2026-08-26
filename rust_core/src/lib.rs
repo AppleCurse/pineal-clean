@@ -11,6 +11,10 @@ pub mod agent_pipeline;
 pub mod task_isolation;
 pub mod agents;
 pub mod aspasia;
+// [W4.1] tauri_bridge yalnızca masaüstü kabuğu derlemesinde (feature="tauri").
+// Böylece rust_core çekirdeği CI'da webkit sistem bağımlılıkları olmadan
+// derlenip test edilebilir; kabuk (src-tauri) feature'ı açar.
+#[cfg(feature = "tauri")]
 pub mod tauri_bridge;
 
 pub use uncertainty::{ConfidenceLevel, UncertaintyEngine, UncertaintyError, InsufficientEvidence, Evidence, Severity};

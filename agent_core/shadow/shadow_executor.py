@@ -20,12 +20,15 @@ class ShadowResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 class ShadowExecutor:
-    def __init__(self):
+    def __init__(self, llm_gateway: Optional[LLMGateway] = None):
+        # [030] fix: gateway enjekte edilebilir. PinealExecutor kendi (anahtarlı)
+        # gateway'ini verir; yetimsiz ikinci gateway production'da LLM katmanlarını
+        # yapısal olarak hep fallback'e düşürüyordu.
         self.dark_nlp = EmbeddedCommandEngine()
         self.presupposition = PresuppositionEngine()
         self.dark_triad = DarkTriadAnalyzer()
         self.pattern = PatternInterrupt()
-        self.llm_gateway = LLMGateway()
+        self.llm_gateway = llm_gateway or LLMGateway()
         self.mirror = MirrorOfTruth(self.llm_gateway)
 
     @staticmethod
@@ -93,15 +96,16 @@ class ShadowExecutor:
             )
 
         # 2. Mirror (LLM gerektirir — fallback ile korumalı)
+        # [031] fix: payload sözleşmesindeki gerçek alan adlarını kullan
+        # (private_rituals/late_night_playlist/secret_envies + user_context).
+        # Eski 'rituals/music/envies' anahtarları hiçbir üretici tarafından
+        # yazılmıyordu; kullanıcı verisi mirror'a hiç ulaşmıyordu.
         mirror_result = None
         try:
             mirror_result = await self.mirror.execute(
                 {
-                    "user_profile": {
-                        "rituals": task_input.get('user_profile', {}).get('rituals', []),
-                        "music": task_input.get('user_profile', {}).get('music', ''),
-                        "envies": task_input.get('user_profile', {}).get('envies', '')
-                    }
+                    "user_profile": task_input.get("user_profile", {}),
+                    "user_context": task_input.get("user_context", {}),
                 }
             )
         except Exception as e:
