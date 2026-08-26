@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use sha2::Digest;
 use crate::agent_pipeline::{AgentNode, AnalysisResult, HaltReason};
 use crate::uncertainty::{ConfidenceLevel, UncertaintyEngine};
 use crate::event_bus::{AgentEvent, EventBus};
@@ -139,8 +140,8 @@ impl AgentNode for MirrorTruthAgent {
         let started = std::time::Instant::now();
         let payload = serde_json::to_string(&reflection).unwrap();
         let mut hasher = sha2::Sha256::new();
-        sha2::Digest::update(&mut hasher, payload.as_bytes());
-        let result_hash = format!("{:x}", sha2::Digest::finalize(hasher));
+        hasher.update(payload.as_bytes());
+        let result_hash = format!("{:x}", hasher.finalize());
 
         let _ = self.event_bus.publish(AgentEvent::TaskCompleted {
             task_id,
