@@ -155,7 +155,7 @@ async def test_gateway_cache_disabled_by_env(tmp_path, monkeypatch):
     gw.client.chat.completions.create = AsyncMock(
         return_value=type("R", (), {"choices": [type("C", (), {"message": type("M", (), {"content": "x"})()})()]})()
     )
-    await gw.query("p", model="m")
-    await gw.query("p", model="m")
+    await gw.query("p", model="upstage/solar-pro4")
+    await gw.query("p", model="upstage/solar-pro4")
     assert gw.client.chat.completions.create.await_count == 2
     assert isinstance(gw.cache, NullCache)

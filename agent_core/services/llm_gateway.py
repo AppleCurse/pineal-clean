@@ -87,6 +87,8 @@ class LLMGateway:
         # P2-MALİYET: kümülatif harcama ve sert üst limit
         self.spend_usd = 0.0
         self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 1.0)
+        # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
+        self.unpriced_calls = 0
         # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
         # kaydı. Evidence chain'e ajan bazında yazılır (task_executor).
         self.call_log: List[dict] = []
@@ -159,6 +161,66 @@ class LLMGateway:
             f">= ust limit ${self.spend_cap_usd:.2f} (OPENROUTER_MAX_SPEND_USD). "
             f"Daha fazla canli LLM cagrisi yapilmadi."
         )
+
+    def _pricing_guard(self, model: str, *, kind: str) -> None:
+        """[017] fix: fiyatı bilinmeyen model için ÜCRETLİ canlı çağrı varsayılan
+        olarak REDDEDİLİR. Eski davranış yalnızca uyarı loglayıp harcamayı 0
+        sayıyordu; bu, bilinmeyen modelle spend cap'in sessiz bypass'ı demekti.
+
+        Açık kabul: PINEAL_ALLOW_UNPRICED_MODELS=1 (takipsiz maliyet bilinçli
+        seçimdir; unpriced_calls sayacı gözlemlenebilirlikte raporlanır).
+        """
+        if model in self.MODEL_PRICING:
+            return
+        if os.getenv("PINEAL_ALLOW_UNPRICED_MODELS", "0") == "1":
+            self.unpriced_calls += 1
+            import logging
+            logging.warning(
+                "SPEND: fiyatı bilinmeyen modele açıkça izin verildi "
+                "(PINEAL_ALLOW_UNPRICED_MODELS=1): %s", model,
+            )
+            return
+        msg = (
+            f"UNKNOWN_PRICING: '{model}' için fiyat kaydı yok; harcama takip edilemez "
+            "ve spend cap bypass edilemez. MODEL_PRICING'e fiyat ekleyin veya "
+            "PINEAL_ALLOW_UNPRICED_MODELS=1 ile takipsiz maliyeti açıkça kabul edin."
+        )
+        self._log_call(kind, model, "openrouter", error="UNKNOWN_PRICING")
+        raise RuntimeError(msg)
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        """[018] fix: retry yalnızca GEÇİCİ hata sınıflarına uygulanır.
+
+        Retryable:   timeout, bağlantı hatası/reset, 408, 429, 5xx
+        Non-retryable: 400/401/403/404/422, geçersiz istek, model yok,
+                     bağlam limiti, spend cap (ayrı ele alınır)
+        Bilinmeyen durumlar mevcut davranışı (retry) korur.
+        """
+        try:
+            from openai import APIConnectionError, APITimeoutError
+            if isinstance(exc, (APITimeoutError, APIConnectionError)):
+                return True
+        except Exception:
+            pass
+
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int):
+            return status in (408, 429) or 500 <= status < 600
+
+        err = str(exc).lower()
+        if any(m in err for m in (
+            "timeout", "timed out", "connection", "connect", "refused",
+            "reset", "10061", "429", "rate limit", "rate_limit",
+            "502", "503", "504", "internal server error",
+        )):
+            return True
+        if any(m in err for m in (
+            "400", "403", "404", "422", "invalid_request", "invalid request",
+            "model_not_found", "context_length", "unauthorized", "invalid_api_key",
+        )):
+            return False
+        return True
 
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
@@ -266,6 +328,12 @@ class LLMGateway:
                 self._log_call("query", selected_model, "cache", cache_hit=True)
                 return cached
 
+        # [017] fix: ücretli çağrı öncesi fiyat guard'ı. Cache hit ücretsizdir;
+        # guard yalnızca gerçek provider çağrısından önce uygulanır. Local
+        # istekler ücretsizdir, muaf tutulur.
+        if not is_local_request:
+            self._pricing_guard(selected_model, kind="query")
+
         import asyncio
         import logging
         max_retries = 3
@@ -332,7 +400,19 @@ class LLMGateway:
                                    duration_ms=int((time.time() - t0) * 1000),
                                    error="AUTH_FAILED")
                     raise RuntimeError(f"LLM API Key rejected: {e}") from e
-                    
+
+                # [018] fix: geçici OLMAYAN hata sınıfları (400/403/404/422,
+                # geçersiz istek, model yok, bağlam limiti) retry EDİLMEZ.
+                # Eskiden her generic Exception backoff'la 3 kez deneniyordu.
+                if not self._is_retryable_error(e):
+                    logging.error(f"LLM Gateway non-retryable error ({type(e).__name__}): {e}")
+                    self._log_call("query", selected_model,
+                                   "local" if is_local_request else "openrouter",
+                                   attempts=attempt + 1,
+                                   duration_ms=int((time.time() - t0) * 1000),
+                                   error=f"NON_RETRYABLE::{type(e).__name__}")
+                    raise
+
                 if attempt < max_retries - 1:
                     backoff = 2 ** attempt
                     logging.warning(f"LLM Bağlantı/Gecikme Hatası (deneme {attempt+1}/{max_retries}), {backoff}s içinde tekrar deneniyor... {e}")

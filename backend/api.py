@@ -745,6 +745,8 @@ async def api_telemetry(client_id: str):
         # P2-MALİYET: oturum boyu tahmini harcama + aktif limit
         "llm_spend_usd": round(float(getattr(executor.llm_gateway, "spend_usd", 0.0)), 6),
         "llm_spend_cap_usd": float(getattr(executor.llm_gateway, "spend_cap_usd", 0.0)),
+        # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
+        "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }
 
 @app.post("/api/experimental/shadow/analyze")
