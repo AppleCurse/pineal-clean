@@ -42,7 +42,9 @@ async def test_real_resonance_calculator_execution_in_executor(tmp_path):
         strategy="test strategy",
         confidence=0.9,
         compliance_score=0.9,
-        dialogue_tree=[]
+        dialogue_tree=[],
+        data_confidence=True,  # gerçek LLM sonucu simülasyonu: açık beyan ([022])
+        fallback_reason=None
     )
     
     executor.agents["mirror_truth"].execute = AsyncMock(return_value=mock_mirror_res)

@@ -86,9 +86,21 @@ class ResonanceCalculator:
         return float(dot_product / (magnitude1 * magnitude2))
 
     def _detect_red_flags(self, user: Dict, target: Dict) -> list:
+        """[033] fix: eski 'surface_focus' koşulu hiçbir üretici tarafından
+        doldurulmadığı için DERINLIK_UYUSMAZLIGI bayrağı üretilemezdi (ölü dal).
+        Gerçek vektör boyutlarından türetilir."""
         flags = []
-        if user.get('depth', 0) > 0.8 and target.get('surface_focus', 0) > 0.8:
+
+        def _num(vec: Dict, key: str):
+            v = vec.get(key)
+            return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+        u_depth, t_depth = _num(user, "depth"), _num(target, "depth")
+        if u_depth is not None and t_depth is not None and abs(u_depth - t_depth) > 0.35:
             flags.append("DERINLIK_UYUSMAZLIĞI")
-        if user.get('energy', 0.5) < 0.3 and target.get('energy', 0.5) > 0.8:
+
+        u_energy, t_energy = _num(user, "energy"), _num(target, "energy")
+        if u_energy is not None and t_energy is not None and u_energy < 0.3 and t_energy > 0.8:
             flags.append("ENERJI_UYUSMAZLIĞI")
+
         return flags

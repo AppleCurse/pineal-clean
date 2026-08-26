@@ -378,9 +378,11 @@ class InitiatePayload(BaseModel):
     rituals: str
     playlist: str
     envies: str
-    aggressiveness: float
-    evidence_th: int
     scraper_type: str = "instagram"
+    # [037] fix: aggressiveness/evidence_th kabul ediliyordu ama HİÇBİR davranışa
+    # bağlanmamıştı (ölü API sözleşmesi). Kaldırıldı; eşik ayarı gerekiyorsa
+    # DecisionConfig üzerinden gerçek davranışla bağlanmalı. Eski istemcilerin
+    # bu alanları göndermesi pydantic tarafından sessizce yok sayılır.
 
 def _effective_scraper_type(url: str, requested: str) -> str:
     """URL platformuna göre tarayıcı seç ([023] fix: platform registry).

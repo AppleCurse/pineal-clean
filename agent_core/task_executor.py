@@ -114,25 +114,28 @@ class PinealExecutor:
         cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
         hits = cache_stats.get("hits", 0)
         hit_rate = cache_stats.get("hit_rate", "0.0%")
-        # Assuming avg 0.005$ per LLM call saved
-        if isinstance(hits, (int, float)):
-            saved_cost = hits * 0.005
-            saved_cost_str = f"${saved_cost:.3f}"
-        else:
-            saved_cost_str = "$0.000"
-            
+
         real_cost = getattr(self.llm_gateway, "spend_usd", None)
         if not isinstance(real_cost, (int, float)):
             real_cost = getattr(self.llm_gateway, "total_cost", 0.0)
         if not isinstance(real_cost, (int, float)):
             real_cost = 0.0
 
+        # [034] fix: telemetri yalnızca GERÇEK gözlemlenebilirlerden oluşur.
+        # - 'saved_llm_cost' varsayımsal $0.005/call sabitiyle uyduruluyordu;
+        #   cache hit'leri model/fiyat bilgisi taşımadığı için kesin tasarruf
+        #   hesaplanamaz -> hit sayısı dürüstçe raporlanır.
+        # - 'decision_weight_updates' hiçbir ağırlık güncellemesi yapılmayan
+        #   yolda ajan sayısını yanlış etiketliyordu -> gerçek LLM çağrı
+        #   gözlem sayısı raporlanır (gateway call_log).
+        call_log = getattr(self.llm_gateway, "call_log", None)
+
         status.telemetry = {
             "cache_hit_rate": hit_rate,
-            "saved_llm_cost": saved_cost_str,
+            "cache_hits": hits if isinstance(hits, (int, float)) else 0,
+            "llm_calls_observed": len(call_log) if isinstance(call_log, list) else 0,
             "total_llm_cost": f"${real_cost:.5f}",
             "llm_spend_usd": real_cost,
-            "decision_weight_updates": len(status.agent_runs)
         }
         
         if self._snapshot_cb:

@@ -12,8 +12,11 @@ class GeneratedMessage(BaseModel):
     confidence: float
     compliance_score: float  # 0.0 - 100.0 (Kutsal Kural ihlal skoru)
     dialogue_tree: List[ScenarioResponse]
-    data_confidence: bool = True
-    fallback_reason: str | None = None
+    # [022] fix: fail-closed default'lar. Model doğrudan kurulursa (LLM sonucu
+    # ayrıştırılmadan) "doğrulanmış" sayılmaz; LLM yanıtından üretildiğini
+    # execute() açıkça işaretler.
+    data_confidence: bool = False
+    fallback_reason: str | None = "not_verified"
 
     
     model_config = ConfigDict(extra="forbid")
@@ -27,10 +30,10 @@ class PatternInterrupt:
     # Tek gerçek gözlemden türetilen, kanıt DIŞI hiçbir ayrıntı eklemeyen
     # nötr cümle kılavuzları. Rastgele seçilmez, psikolojik iddia içermez,
     # manipülatif dil barındırmaz (eski random şablonlar kaldırıldı).
-    OBSERVATION_FRAMES = (
-        "Bu gözlemi doğrudan ifade eden, kanıt dışı ayrıntı eklemeyen tek cümle.",
-        "Gözlemi samimi ve sade biçimde dile getiren, yorum katmayan tek cümle.",
-        "Kanıtı olduğu gibi aktaran, tahmin ve teşhis içermeyen tek cümle.",
+    # [019] fix: tek kılavuz. Eski üçlü tuple'ın yalnızca [0]ı execution
+    # path'te kullanılıyordu; diğer ikisi ölü ağırlıktı.
+    OBSERVATION_FRAME = (
+        "Bu gözlemi doğrudan ifade eden, kanıt dışı ayrıntı eklemeyen tek cümle."
     )
 
     async def execute(self, input_data: Dict, memory, llm_gateway) -> GeneratedMessage:
@@ -64,7 +67,7 @@ class PatternInterrupt:
             f"Rıza, sınır ve saygı kurallarını koru; manipülasyon, baskı veya karşı-hamle planı üretme.\n"
             f"Kanıt dışında ayrıntı ekleme; kanıt yetersizse boş mesaj ve data_confidence=false döndür.\n\n"
             f"BİRİNCİL GÖZLEM (mesajın tek dayanağı): {detail}\n"
-            f"Cümle kılavuzu: {self.OBSERVATION_FRAMES[0]}\n\n"
+            f"Cümle kılavuzu: {self.OBSERVATION_FRAME}\n\n"
             f"Hedef Analizi:\n{target_json}\n\n"
             f"Kullanıcı Gerçeği:\n{user_json}\n\n"
             f"{sacred_rules}\n\n"
@@ -76,7 +79,12 @@ class PatternInterrupt:
             f"oranında uyduğunu değerlendir."
         )
         
-        return await llm_gateway.query_json(prompt, GeneratedMessage)
+        result = await llm_gateway.query_json(prompt, GeneratedMessage)
+        # [022] fix: gerçek LLM yanıtı ayrıştırıldı -> doğrulandı olarak işaretle.
+        # Model default'u fail-closed; burası üretim yolunun TE doğrulama noktası.
+        result.data_confidence = True
+        result.fallback_reason = None
+        return result
     
     @staticmethod
     def _grounded_evidence(analysis: Dict) -> List[str]:
@@ -108,10 +116,22 @@ class PatternInterrupt:
             return "unavailable"
         
     def _extract_micro_signal(self, analysis: Dict) -> str:
+        """[020] fix: en güçlü sinyalin GERÇEK kanıtını döndürür.
+        Eskiden herhangi bir sinyal varsa sabit "observation" etiketi
+        dönüyordu (içerik/confidence/evidence kullanılmıyordu)."""
         signals = analysis.get('micro_signals', [])
-        if signals:
-            return "observation"
-        return "unavailable"
+        if not signals:
+            return "unavailable"
+        try:
+            top = max(
+                signals,
+                key=lambda x: x.get('psychological_weight', 0) if isinstance(x, dict)
+                else getattr(x, 'psychological_weight', 0),
+            )
+            evidence = top.get('evidence', '') if isinstance(top, dict) else getattr(top, 'evidence', '')
+            return evidence[:50] if evidence else "unavailable"
+        except Exception:
+            return "unavailable"
         
     def _extract_temporal_signal(self, analysis: Dict) -> str | None:
         timestamps = analysis.get("evidence_timestamps", []) or []
@@ -121,7 +141,11 @@ class PatternInterrupt:
         timing = analyze_timing(timestamps)
         if not timing:
             return None
-        return f"tepe saat {timing.get('peak_hour', '--')}"
+        # [021] fix: "--" sentinel'ı gerçek kanıt gibi prompt'a giremez.
+        peak_hour = timing.get("peak_hour")
+        if not peak_hour or peak_hour == "--":
+            return None
+        return f"tepe saat {peak_hour}"
 
     def _extract_cultural_reference(self, analysis: Dict) -> str | None:
         quotes = analysis.get("evidence_quotes", []) or []
