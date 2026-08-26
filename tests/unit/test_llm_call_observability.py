@@ -85,7 +85,6 @@ async def test_executor_evidence_records_agent_llm_calls():
 @pytest.mark.asyncio
 async def test_gateway_cache_hit_is_logged():
     """Cache'ten dönen yanıt provider='cache' olarak kaydedilir."""
-    from agent_core.services.response_cache import build_cache_from_env
     gateway = LLMGateway()
     gateway.call_log.clear()
     # Cache anahtarı canlı kapıdan SONRA bakılır; kapıyı açıyoruz ki

@@ -10,7 +10,6 @@ Kapsam:
   gerçek gözlemi kullanır.
 - KeyEngine: rhythm vektör güveni pulse raporunun gerçek durumundan.
 """
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

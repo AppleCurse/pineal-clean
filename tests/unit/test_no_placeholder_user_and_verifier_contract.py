@@ -7,8 +7,7 @@ kanıt sözleşmesi + mirror ölçülmemiş alignment.
 - Mirror LLM fallback: alignment_score ölçülmediyse 0.0 (0.5 üretilmez),
   data_confidence=False.
 """
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

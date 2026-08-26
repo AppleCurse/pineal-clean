@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from agent_core.domain.pillar_models import FrequencyReport, SeismosReport, VoidReport
-from agent_core.domain.pillar_wave2_models import FullPillarBundle, GravityReport, KeyReport, PulseReport, StrataReport
+from agent_core.domain.pillar_wave2_models import FullPillarBundle, GravityReport, PulseReport, StrataReport
 
 from .frequency_engine import FrequencyEngine
 from .gravity_engine import GravityEngine
