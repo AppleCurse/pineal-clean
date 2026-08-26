@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
@@ -132,6 +132,34 @@ def rate_limit(key: str, bucket: str) -> bool:
     return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
+
+# W5: tarayici yetenegi probu (60sn cache). Telemetri artik import basarisi
+# degil, GERCEK capability raporlar (x_scraper / instagram_scraper / browser_installed).
+_telemetry_capability = {"ts": 0.0, "value": None}
+_telemetry_capability_lock = asyncio.Lock()
+
+async def _scraper_capability() -> dict:
+    now = time.monotonic()
+    cached = _telemetry_capability["value"]
+    if cached is not None and now - _telemetry_capability["ts"] < 60.0:
+        return cached
+    async with _telemetry_capability_lock:
+        cached = _telemetry_capability["value"]
+        if cached is not None and time.monotonic() - _telemetry_capability["ts"] < 60.0:
+            return cached
+        result = {"instagram": False, "browser": False}
+        try:
+            if InstagramGhostScraper is not None:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    exe = p.chromium.executable_path
+                    result["browser"] = bool(exe and os.path.exists(exe))
+                    result["instagram"] = result["browser"]
+        except Exception:
+            result = {"instagram": False, "browser": False}
+        _telemetry_capability["ts"] = time.monotonic()
+        _telemetry_capability["value"] = result
+        return result
 
 def get_room(client_id: str) -> dict:
     if client_id not in app.state.rooms:
@@ -350,19 +378,34 @@ class InitiatePayload(BaseModel):
     rituals: str
     playlist: str
     envies: str
-    aggressiveness: float
-    evidence_th: int
-    scraper_type: str = "x"
+    scraper_type: str = "instagram"
+    # [037] fix: aggressiveness/evidence_th kabul ediliyordu ama HİÇBİR davranışa
+    # bağlanmamıştı (ölü API sözleşmesi). Kaldırıldı; eşik ayarı gerekiyorsa
+    # DecisionConfig üzerinden gerçek davranışla bağlanmalı. Eski istemcilerin
+    # bu alanları göndermesi pydantic tarafından sessizce yok sayılır.
 
-def _effective_scraper_type(url: str, requested: str) -> str:
-    """URL'nin platformuna göre tarayıcı seç (FIX: instagram adresi X tarayıcısına
-    gitmesin). Tanınmayan adreslerde kullanıcının seçimine saygı duyar."""
-    u = (url or "").lower()
-    if "instagram.com" in u:
-        return "instagram"
-    if "x.com" in u or "twitter.com" in u:
-        return "x"
-    return requested
+# [W4.2] Tek sahiplik: platform kararları agent_core/services/platform_registry'de.
+# Rust TaskManager (scripts/run_task.py) aynı registry'yi kullanır; ikinci bir
+# karar katmanı YARATILMAZ ([009] duplication dersi). Geriye uyumluluk için
+# isimler burada da geçerli.
+from agent_core.services.platform_registry import (
+    effective_scraper_type as _effective_scraper_type,
+    scrape_instagram,
+)
+# Geriye uyumluluk re-export'u: Dalga 1 sözleşme testleri bu adı backend.api'den
+# içe aktarıyor ([024]/[025]/[026] mapping testleri).
+from agent_core.services.platform_registry import (  # noqa: F401
+    ig_target_profile_update as _ig_target_profile_update,
+)
+
+
+def _new_task_id() -> str:
+    """[029] fix: saniye-çözünürlüklü op_HHMMSS çakışıyordu; aynı saniyede iki
+    görev (farklı client'lar dahil) aynı memory dosyasında birleşiyordu.
+    Tarihi saniye + uuid4 öneki -> CanonicalMemory task_id regex'i ile uyumlu."""
+    import uuid
+    return f"op_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
 
 async def run_mission(req: InitiatePayload):
     client_id = req.client_id
@@ -370,9 +413,12 @@ async def run_mission(req: InitiatePayload):
     vault = get_vault(client_id)
     
     try:
-        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else ["Gece stüdyo kayıtları", "Analog ses tasarımı"]
-        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else ["Dark Jazz", "Ambient"]
-        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else ["Sahici ve derin diyalog"]
+        # [009] Kullanıcı göndermediyse ASLA örnek/placeholder ritüel ÜRETME.
+        # Boş kullanıcı verisi -> boş listeler; MirrorOfTruth "user_data_missing"
+        # fallback'iyle çalışır. Sahte ritüel ile kullanıcı frekansı kirletilmez.
+        user_rituals = [r.strip() for r in req.rituals.split(",") if r.strip()] if req.rituals else []
+        user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else []
+        user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else []
 
         payload = {
             "user_profile": {
@@ -399,112 +445,47 @@ async def run_mission(req: InitiatePayload):
                 broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
-        if req.url:
-            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
+        if effective_type == "x":
+            # Never run Pineal on an empty X profile. Preserve the request and
+            # ask the user to authorize a distinct, auditable alternative.
+            room = get_room(client_id)
+            room["pending_alternative_authorization"] = {
+                "url": req.url,
+                "requested_at": datetime.now().isoformat(),
+                "alternatives": ["public_web_search"],
+            }
+            broadcast_log(client_id, "WARNING", "X (TWITTER) KAZIMASI DESTEKLENMİYOR: alternatif public-web araştırması için yetki bekleniyor; analiz başlatılmadı.")
+            broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
+            return
+        if req.url and effective_type == "unsupported_web":
+            # [023] fix: tanınmayan platformda URL segmentini Instagram adı gibi
+            # kullanıp yanlış hedefi kazımak YASAK. Tahmin üretme, açıkça dur.
+            broadcast_log(
+                client_id, "WARNING",
+                f"PLATFORM DESTEKLENMİYOR: {req.url} — yalnızca Instagram kazıması var; "
+                "tanınmayan URL tahmine dayalı kazınmaz, analiz başlatılmadı.",
+            )
+            broadcast_result_error(
+                client_id, "unsupported_platform",
+                "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
+            )
+            return
+        if req.url and effective_type == "instagram":
+            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [INSTAGRAM]")
             try:
-                from playwright.async_api import async_playwright
-                try:
-                    from playwright_stealth import Stealth
-                    stealth_engine = Stealth()
-                except Exception:
-                    stealth_engine = None
-
-                async with async_playwright() as p:
-                    browser = None
-                    ctx = None
-                    page = None
-                    try:
-                        launch_kwargs = {"headless": True, "args": ["--disable-blink-features=AutomationControlled"]}
-                        chrome_paths = [
-                            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-                        ]
-                        for cp in chrome_paths:
-                            if os.path.exists(cp):
-                                launch_kwargs["executable_path"] = cp
-                                break
-
-                        browser = await p.chromium.launch(**launch_kwargs)
-                        ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-                        
-                        is_x_url = "x.com" in req.url.lower() or "twitter.com" in req.url.lower()
-                        clean_username = req.url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
-
-                        if effective_type == "instagram" and InstagramGhostScraper:
-                            ctx = await browser.new_context(**ctx_kwargs)
-                            if cookie and "sessionid" in cookie:
-                                parsed = []
-                                for part in cookie.split(";"):
-                                    if "=" in part:
-                                        k, v = part.split("=", 1)
-                                        parsed.append({"name": k.strip(), "value": v.strip(), "domain": ".instagram.com", "path": "/"})
-                                if parsed:
-                                    await ctx.add_cookies(parsed)
-                            
-                            page = await ctx.new_page()
-                            if stealth_engine:
-                                await stealth_engine.apply_stealth_async(page)
-                            ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
-                            ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
-                            
-                            payload["target_profile"].update({
-                                "username": "@" + ig_data.username,
-                                "bio": ig_data.biography or "",
-                                "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram Profili: {ig_data.full_name or ig_data.username}"],
-                                "images": [p.display_url for p in ig_data.posts],
-                                "followers": ig_data.follower_count or 0,
-                                "is_private": ig_data.is_private
-                            })
-                            
-                        elif effective_type == "x" and scrape_readonly:
-                            data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                            payload["target_profile"].update({k: v for k, v in data.items() if v})
-
-                        elif effective_type == "cross" and InstagramGhostScraper:
-                            # Try Instagram first
-                            ctx = await browser.new_context(**ctx_kwargs)
-                            page = await ctx.new_page()
-                            if stealth_engine:
-                                await stealth_engine.apply_stealth_async(page)
-                            ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
-                            try:
-                                ig_data = await ig_scraper.scrape_async(clean_username, playwright_page=page)
-                                payload["target_profile"].update({
-                                    "username": "@" + ig_data.username,
-                                    "bio": ig_data.biography or "",
-                                    "posts": [p.caption for p in ig_data.posts if p.caption] or [f"Instagram: {ig_data.full_name or ig_data.username}"],
-                                    "images": [p.display_url for p in ig_data.posts],
-                                    "followers": ig_data.follower_count or 0,
-                                    "is_private": ig_data.is_private
-                                })
-                            except Exception as ig_err:
-                                if scrape_readonly and is_x_url:
-                                    x_data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                                    payload["target_profile"].update({k: v for k, v in x_data.items() if v})
-                                else:
-                                    raise ig_err
-                                
-                        elif scrape_readonly:
-                            data = await asyncio.to_thread(scrape_readonly, req.url, cookies=cookie)
-                            payload["target_profile"].update({k: v for k, v in data.items() if v})
-                    finally:
-                        if page:
-                            try: await page.close()
-                            except: pass
-                        if ctx:
-                            try: await ctx.close()
-                            except: pass
-                        if browser:
-                            try: await browser.close()
-                            except: pass
-                        
+                # [W4.2] Kazıma tek sahiplikli platform_registry'de; Rust
+                # TaskManager (run_task.py) da aynı fonksiyonu kullanır.
+                payload["target_profile"].update(await scrape_instagram(
+                    req.url, cookie,
+                    log=lambda lvl, msg: broadcast_log(client_id, lvl, msg),
+                ))
                 broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"UPLINK KOPTU: {str(e)[:100]}")
                 if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
                     raise e
-        
-        task_id = f"op_{datetime.now().strftime('%H%M%S')}"
+
+        task_id = _new_task_id()
         for attempt in range(1, 4):
             try:
                 broadcast_log(client_id, "INFO", f"OPERASYON BAŞLATILIYOR (Deneme {attempt}/3)...")
@@ -517,6 +498,13 @@ async def run_mission(req: InitiatePayload):
                 broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
                 if attempt == 3:
                     broadcast_log(client_id, "ERROR", "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI.")
+                    # [028] fix: terminal durum MUTLAKA WS'ye düşer; exception'ı
+                    # yutmak UI'ı sonsuz 'işleniyor' durumunda asılı bırakır.
+                    broadcast_result_error(
+                        client_id, "failed",
+                        "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI (3/3).",
+                    )
+                    return
     except InsufficientEvidenceError:
         broadcast_result_error(client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT")
     except Exception as e:
@@ -550,6 +538,18 @@ def broadcast_result(client_id, res):
         "reading": find(res.evidence_chain, "human_behavior"),
         "reso": find(res.evidence_chain, "resonance_calc"),
         "hook": find(res.evidence_chain, "pattern_interrupt"),
+        # W4: zincir durumu final result'ta da korunur; UI snapshot bilgisini
+        # kaybetmesin diye planned/completed/runs buraya da girer.
+        "planned_agents": getattr(res, "planned_agents", []) or [],
+        "completed_agents": getattr(res, "completed_agents", []) or [],
+        "runs": {
+            name: {
+                "status": getattr(run, "status", None),
+                "confidence": getattr(run, "confidence", None),
+                "error_message": getattr(run, "error_message", None),
+            }
+            for name, run in (getattr(res, "agent_runs", None) or {}).items()
+        },
         "follower_audit": _dump_field(getattr(res, "follower_audit", None)),
         "timing_forensics": _dump_field(getattr(res, "timing_forensics", None)),
         "depth_report": _dump_field(getattr(res, "depth_report", None)),
@@ -645,12 +645,23 @@ async def api_override(req: OverridePayload):
 async def api_telemetry(client_id: str):
     executor = get_executor(client_id)
     vault = get_vault(client_id)
+    capability = await _scraper_capability()
     return {
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
-        "scraper": scrape_readonly is not None,
+        # geriye uyumlu anahtar; artik import basarisi degil, GERCEK yetenek
+        "scraper": capability["instagram"],
         "vault": "x_cookie" in vault or bool(vault.get("or_key")),
-        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None))
+        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
+        # W5: gercek capability raporu
+        "x_scraper": False,  # B4: X kazimasi devre disi birakildi
+        "instagram_scraper": capability["instagram"],
+        "browser_installed": capability["browser"],
+        # P2-MALİYET: oturum boyu tahmini harcama + aktif limit
+        "llm_spend_usd": round(float(getattr(executor.llm_gateway, "spend_usd", 0.0)), 6),
+        "llm_spend_cap_usd": float(getattr(executor.llm_gateway, "spend_cap_usd", 0.0)),
+        # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
+        "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }
 
 @app.post("/api/experimental/shadow/analyze")
@@ -716,34 +727,169 @@ async def aspasia_chat(payload: AspasiaChatPayload):
     resp = await aspasia.chat(payload.user_message, room, payload.model_override, payload.image_data)
     return resp.model_dump()
 
+class AlternativeAuthorizationPayload(BaseModel):
+    client_id: str
+    alternative: str
+    approved: bool
+
+
+def _extract_handle_from_url(url: str) -> str:
+    """X/Instagram URL'sinden kullanıcı adı (subject) çıkarır."""
+    import re
+    if not url:
+        return ""
+    needle = re.search(r"(?:instagram\.com|x\.com|twitter\.com)/([^/?#]+)", url)
+    if needle:
+        return needle.group(1).strip().lstrip("@").lower()
+    return url.split("?")[0].rstrip("/").split("/")[-1].replace("@", "").lower()
+
+
+async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, Any]:
+    """Yetki verilmiş alternatif: kanıt kaynaklı public-web araması.
+
+    Sözleşme (sahte veri YASAK):
+    - Biyografi/gönderi/kişilik ÜRETİLMEZ; yalnızca gerçek arama kayıtları
+      döner (source_url + provider + content).
+    - Subject matching: hedef kullanıcı adı kaynak URL'sinde veya içeriğinde
+      geçmeyen sonuçlar düşürülür (yanlış kişi eşleşmesi engeli).
+    - Sağlayıcı yok/çöktü -> available=False; sonuç yok -> no_results.
+    """
+    handle = _extract_handle_from_url(url)
+    if not handle:
+        return {
+            "status": "invalid_target", "available": False,
+            "query": "", "results": [], "matched_username": "",
+            "total_results_searched": 0,
+            "searched_at": datetime.now().isoformat(),
+            "note": "URL'den hedef kullanıcı adı çıkarılamadı.",
+        }
+
+    query = f'"{handle}"'
+    outcome = await search_engine.search(query, num_results=8)
+    if not getattr(outcome, "available", False):
+        return {
+            "status": "unavailable", "available": False, "query": query,
+            "results": [], "matched_username": handle,
+            "total_results_searched": 0,
+            "searched_at": datetime.now().isoformat(),
+            "note": getattr(outcome, "error", None) or "Arama sağlayıcısı kullanılamadı.",
+        }
+
+    raw = getattr(outcome, "results", []) or []
+    matched = [
+        {
+            "source_url": r.source_url,
+            "provider": r.provider,
+            "content": r.content,
+            "subject_match": True,
+        }
+        for r in raw
+        if handle in (r.source_url or "").lower()
+        or handle in (r.content or "").lower()
+    ]
+    if matched:
+        status = "ok"
+        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti."
+    elif raw:
+        status = "no_subject_match"
+        note = f"Arama yapıldı ({len(raw)} sonuç) ama hiçbiri hedef kullanıcı adıyla eşleşmedi; sonuç gösterilmiyor (yanlış kişi eşleşmesi engeli)."
+    else:
+        status = "no_results"
+        note = "Arama yapıldı, hiç sonuç döndü."
+
+    return {
+        "status": status,
+        "available": True,
+        "query": query,
+        "results": matched,
+        "matched_username": handle,
+        "total_results_searched": len(raw),
+        "searched_at": datetime.now().isoformat(),
+        "note": note,
+    }
+
+
+@app.post("/api/scraper/authorize-alternative")
+async def authorize_scraper_alternative(req: AlternativeAuthorizationPayload):
+    room = get_room(req.client_id)
+    pending = room.get("pending_alternative_authorization")
+    if not pending:
+        return {"status": "no_pending_authorization"}
+    if not req.approved or req.alternative not in pending["alternatives"]:
+        room.pop("pending_alternative_authorization", None)
+        return {"status": "declined"}
+    # Authorization is recorded; provider execution is a separate explicit
+    # route and must not fabricate an X profile from unrelated sources.
+    room["authorized_alternatives"] = room.get("authorized_alternatives", []) + [{
+        "alternative": req.alternative,
+        "url": pending["url"],
+        "authorized_at": datetime.now().isoformat(),
+    }]
+
+    if req.alternative == "public_web_search":
+        executor = get_executor(req.client_id)
+        research = await _run_public_web_research(pending["url"], executor.search_engine)
+        room["web_research"] = research
+        room.pop("pending_alternative_authorization", None)
+        broadcast_log(
+            req.client_id, "INFO",
+            f"ALTERNATİF ARAŞTIRMA: {research['note']}",
+        )
+        return {"status": "research_completed", "alternative": req.alternative,
+                "research": research}
+
+    room.pop("pending_alternative_authorization", None)
+    return {"status": "authorized", "alternative": req.alternative}
+
+
 class IntervenePayload(BaseModel):
     client_id: str
     action_type: str
     target_agent: Optional[str] = None
-    parameters: dict = {}
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+
+
+class InterventionRecord(BaseModel):
+    client_id: str
+    action_type: str
+    target_agent: Optional[str] = None
+    parameters: dict = Field(default_factory=dict)
+    reason: str = ""
+    requested_at: str
+    outcome: str
+
 
 @app.post("/api/executor/intervene")
 async def executor_intervene(req: IntervenePayload):
-    """Kullanıcının doğrudan müdahale komutunu PinealExecutor üzerinde çalıştırır"""
+    """Record intervention requests without mutating shared executor safety state."""
     room = get_room(req.client_id)
-    executor = room.get("executor")
-    
-    if req.action_type == "OVERRIDE_CONFIDENCE":
-        executor.uncertainty.evaluate = lambda result, agent_name: type('UncertaintyResult', (), {'confidence': 1.0, 'is_suspicious': False, 'reason': 'Mösyö müdahalesi ile esnetildi'})()
-        broadcast_log(req.client_id, "WARNING", "MÜDAHALE: Güven kısıtlaması kaldırıldı (Override).")
-        return {"status": "overridden", "message": "Güven eşiği Mösyö emriyle 1.0'e sabitlendi."}
-        
-    elif req.action_type == "SKIP_AGENT" and req.target_agent:
-        if req.target_agent in executor.agents:
-            del executor.agents[req.target_agent]
-            broadcast_log(req.client_id, "WARNING", f"MÜDAHALE: Ajan devre dışı bırakıldı [{req.target_agent}].")
-            return {"status": "skipped", "message": f"{req.target_agent} ajan devre dışı."}
+    record = InterventionRecord(
+        client_id=req.client_id,
+        action_type=req.action_type,
+        target_agent=req.target_agent,
+        parameters=req.parameters,
+        reason=req.reason,
+        requested_at=datetime.now().isoformat(),
+        outcome="review_required",
+    )
+    room.setdefault("interventions", []).append(record.model_dump())
 
-    elif req.action_type == "HALT":
-        broadcast_log(req.client_id, "ERROR", "MÜDAHALE: Operasyon Mösyö emriyle DURDURULDU.")
-        return {"status": "halted", "message": "Operasyon durduruldu."}
+    # These actions previously rewrote uncertainty or deleted agents from the
+    # room's shared executor. They are now auditable requests, not bypasses.
+    if req.action_type in {"OVERRIDE_CONFIDENCE", "SKIP_AGENT", "HALT"}:
+        broadcast_log(req.client_id, "WARNING", f"MÜDAHALE KAYDEDİLDİ: {req.action_type}; otomatik uygulanmadı.")
+        return {
+            "status": "review_required",
+            "message": "Talep kaydedildi. Kanıt/güvenlik kuralları otomatik olarak değiştirilmedi.",
+            "intervention": record.model_dump(),
+        }
 
-    return {"status": "acknowledged", "message": "Müdahale emri alındı."}
+    return {
+        "status": "acknowledged",
+        "message": "Müdahale talebi kaydedildi; uygulanmadan önce inceleme gerekir.",
+        "intervention": record.model_dump(),
+    }
 
 class InterpreterPayload(BaseModel):
     client_id: str
@@ -753,6 +899,11 @@ class InterpreterPayload(BaseModel):
 @app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
+    import os
+    if os.getenv("ENABLE_INTERPRETER", "false").lower() != "true":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Interpreter endpoint is disabled by default for security.")
+        
     room = get_room(req.client_id)
     executor = room.get("executor")
     interpreter_agent = executor.agents.get("interpreter")

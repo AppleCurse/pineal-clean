@@ -27,7 +27,9 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # Network
-reqwest = { version = "0.11", features = ["json"] }
+# [W4.1] rustls: native-tls (openssl-sys) CI/runner'da libssl-dev ister;
+# rustls-tls saf Rust -> sistem bağımlılığı yok. HTTPS davranışı aynı.
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 
 # Logging
 tracing = "0.1"
@@ -38,10 +40,17 @@ chrono = { version = "0.4", features = ["serde"] }
 # UUID for task isolation
 uuid = { version = "1.0", features = ["v4", "serde"] }
 ndarray = "0.17.2"
-md5 = "0.8.1"
+# [048] fix: adli telemetri hash'i SHA-256 (MD5 değil)
+sha2 = "0.10"
 
-# Tauri
-tauri = { version = "2" }
+# Tauri — [W4.1] optional: rust_core, masaüstü kabuğu OLMADAN da (CI'da webkit
+# sistem bağımlılıkları olmadan) derlenip test edilebilsin. src-tauri bu
+# feature'ı açar.
+tauri = { version = "2", optional = true }
+
+[features]
+default = []
+tauri = ["dep:tauri"]
 
 [dev-dependencies]
 tokio-test = "0.4"

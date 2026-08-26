@@ -73,10 +73,11 @@ async def test_search_engine_fallback_duckduckgo(monkeypatch):
     monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     engine = SearchEngine(tavily_key="", serpapi_key="", exa_key="")
-    async def fake_ddg(query, num):
+    async def fake_ddg(query, num, **kwargs):
         return [SearchResult(query=query, content="Sos Music Production Records", source_url="https://sosmusic.com", provider="duckduckgo")]
     monkeypatch.setattr(engine, "_search_duckduckgo", fake_ddg)
     
-    res = await engine.search("Sos Music")
-    assert len(res) == 1
-    assert res[0].provider == "duckduckgo"
+    outcome = await engine.search("Sos Music")
+    assert outcome.status == "OK"
+    assert len(outcome.results) == 1
+    assert outcome.results[0].provider == "duckduckgo"

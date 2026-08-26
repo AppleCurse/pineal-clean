@@ -49,14 +49,15 @@ async def test_aspasia_chat_mocked_llm_high(monkeypatch):
     from agent_core.services.llm_gateway import LLMGateway
     monkeypatch.setattr(
         LLMGateway, "query",
-        AsyncMock(return_value="Düşüncelerimizi sıraya dizelim, Mösyö. Sistem ayakta."),
+        AsyncMock(return_value="Tamam, sistem ayakta. Şu an ajanlar sırayla çalışıyor."),
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         r = await ac.post("/api/aspasia/chat", json=_payload("c_http_fix_3"))
     assert r.status_code == 200
     data = r.json()
     assert data["confidence_assessment"] == "high"
-    assert "Mösyö" in data["message"]
+    assert "sistem ayakta" in data["message"].lower()
+    assert "mösyö" not in data["message"].lower()
 
 # --- HERMETIC TEST GUARD: blocks live LLM calls ---
 import pytest as _pytest

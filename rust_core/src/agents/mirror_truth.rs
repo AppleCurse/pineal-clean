@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use sha2::Digest;
 use crate::agent_pipeline::{AgentNode, AnalysisResult, HaltReason};
 use crate::uncertainty::{ConfidenceLevel, UncertaintyEngine};
 use crate::event_bus::{AgentEvent, EventBus};
@@ -25,20 +26,20 @@ impl MirrorTruthAgent {
         Self { event_bus }
     }
 
-    /// LLM API Çağrısı (Dinamik Frekans Analizi)
-    async fn call_llm(&self, prompt: &str) -> Result<String, String> {
-        let is_deep = prompt.contains("kitap") || prompt.contains("kahve") || prompt.contains("yalnizlik");
-        let core_freq = if is_deep { "derin_sakin" } else { "arayici_dinamik" };
-        let persona = if is_deep { "sosyal_sakin" } else { "dışa_dönük" };
-
-        let reflection = serde_json::json!({
-            "user_core_frequency": core_freq,
-            "surface_persona": persona,
-            "alignment_score": 0.88,
-            "authentic_anchors": ["rituel_uyumu", "frekans_rezonansi"]
-        });
-
-        Ok(reflection.to_string())
+    /// LLM API Çağrısı.
+    ///
+    /// [041] fix: eski gövde HTTP çağrısı YOKKEN prompt'ta "kitap/kahve"
+    /// geçip geçmediğine bakıp SABİT JSON (alignment_score=0.88, sabit
+    /// anchor'lar) döndürüyordu — sahte LLM. Rust tarafında yapılandırılmış
+    /// gerçek istemci olmadığı sürece dürüstçe REDDEDİLİR; sahte yansıma
+    /// ÜRETİLMEZ. (Gerçek analiz yolu: scripts/run_task.py -> Python
+    /// MirrorOfTruth, [W4.2].)
+    async fn call_llm(&self, _prompt: &str) -> Result<String, String> {
+        Err(
+            "LLM_UNAVAILABLE: Rust ajanında yapılandırılmış gerçek LLM istemcisi \
+             yok; sahte MirrorReflection ÜRETİLMEZ"
+                .to_string(),
+        )
     }
 }
 
@@ -70,8 +71,20 @@ impl AgentNode for MirrorTruthAgent {
             rituals
         );
 
-        // 4. LLM Çağrısı
-        let llm_json_str = self.call_llm(&prompt).await.map_err(|_e| HaltReason::NetworkTimeout)?;
+        // 4. LLM Çağrısı ([041]: başarısızlık yutulmaz, dürüst HALT olarak yükselir)
+        let llm_json_str = match self.call_llm(&prompt).await {
+            Ok(text) => text,
+            Err(reason) => {
+                let _ = self.event_bus.publish(AgentEvent::ErrorHalt {
+                    task_id,
+                    agent_name: self.name().to_string(),
+                    error_code: "LLM_UNAVAILABLE".to_string(),
+                    error_message: reason.clone(),
+                    severity: crate::event_bus::Severity::Critical,
+                });
+                return Err(HaltReason::InsufficientEvidence(reason));
+            }
+        };
 
         // 5. UNCERTAINTY ENGINE: LLM Halüsinasyon Kontrolü
         let required_fields = vec![
@@ -110,7 +123,7 @@ impl AgentNode for MirrorTruthAgent {
                     task_id,
                     agent_name: self.name().to_string(),
                     step_name: "Uncertainty_Check_Passed".to_string(),
-                    output_hash: "pass_hash".to_string(),
+                    output_hash: format!("{}:{}:uncertainty_pass", task_id, self.name()),
                 });
             }
             Err(e) => {
@@ -123,16 +136,29 @@ impl AgentNode for MirrorTruthAgent {
              HaltReason::LlmParseError(e.to_string())
         })?;
 
+        // [042] fix: gerçek süre, gerçek hash (SHA-256), türetilmiş güven.
+        let started = std::time::Instant::now();
+        let payload = serde_json::to_string(&reflection).unwrap();
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(payload.as_bytes());
+        let result_hash = format!("{:x}", hasher.finalize());
+
         let _ = self.event_bus.publish(AgentEvent::TaskCompleted {
             task_id,
             agent_name: self.name().to_string(),
-            final_result_hash: "final_hash".to_string(),
-            duration_ms: 120,
+            final_result_hash: result_hash,
+            duration_ms: started.elapsed().as_millis() as u64,
         });
 
+        // Güven sabit 0.95 DEĞİL: uncertainty kanıt skorundan türetilir.
+        let confidence = match engine.evaluate(&llm_data) {
+            Ok(ConfidenceLevel::Pass(evidence)) => evidence.score as f32 / 100.0,
+            _ => 0.0,
+        };
+
         Ok(AnalysisResult {
-            confidence: 0.95,
-            payload: serde_json::to_string(&reflection).unwrap(),
+            confidence,
+            payload,
         })
     }
 }

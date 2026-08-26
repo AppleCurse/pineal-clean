@@ -102,8 +102,8 @@ async def test_gateway_caches_repeated_identical_query(tmp_path, monkeypatch):
     fake_client.chat.completions.create = AsyncMock(side_effect=fake_create)
     gw.client = fake_client
 
-    r1 = await gw.query("aynı prompt", model="anthropic/claude-sonnet-4.5")
-    r2 = await gw.query("aynı prompt", model="anthropic/claude-sonnet-4.5")
+    r1 = await gw.query("aynı prompt", model="upstage/solar-pro4")
+    r2 = await gw.query("aynı prompt", model="upstage/solar-pro4")
 
     assert r1 == r2 == "aynı yanıt"
     assert call_count == 1, "ikinci çağrı cache'ten gelmeli, ağ'a yalnızca 1 kez gidilmeli"
@@ -114,8 +114,8 @@ async def test_gateway_caches_repeated_identical_query(tmp_path, monkeypatch):
 async def test_gateway_does_not_cross_contaminate_models(tmp_path, monkeypatch):
     gw = _live_gateway(tmp_path, monkeypatch)
     answers = {
-        "anthropic/claude-sonnet-4.5": "CLAUDE YANITI",
-        "deepseek/deepseek-chat": "DEEPSEEK YANITI",
+        "upstage/solar-pro4": "SOLAR YANITI",
+        "inclusionai/ling-3.0-flash": "LING YANITI",
     }
 
     async def fake_create(*args, **kwargs):
@@ -125,9 +125,9 @@ async def test_gateway_does_not_cross_contaminate_models(tmp_path, monkeypatch):
     gw.client = AsyncMock()
     gw.client.chat.completions.create = AsyncMock(side_effect=fake_create)
 
-    assert await gw.query("soru", model="anthropic/claude-sonnet-4.5") == "CLAUDE YANITI"
+    assert await gw.query("soru", model="upstage/solar-pro4") == "SOLAR YANITI"
     # Aynı prompt, farklı model -> kendi yanıtını getirmeli, diğerini cache'den çalmamalı
-    assert await gw.query("soru", model="deepseek/deepseek-chat") == "DEEPSEEK YANITI"
+    assert await gw.query("soru", model="inclusionai/ling-3.0-flash") == "LING YANITI"
 
 
 @pytest.mark.asyncio
@@ -138,8 +138,8 @@ async def test_gateway_does_not_cache_vision_queries(tmp_path, monkeypatch):
         return_value=type("R", (), {"choices": [type("C", (), {"message": type("M", (), {"content": "gorsel yorumu"})()})()]})()
     )
     img = "data:image/png;base64,AAAA"
-    await gw.query("görece bak", model="anthropic/claude-sonnet-5", images=[img])
-    await gw.query("görece bak", model="anthropic/claude-sonnet-5", images=[img])
+    await gw.query("görece bak", model="google/gemini-3.7-flash", images=[img])
+    await gw.query("görece bak", model="google/gemini-3.7-flash", images=[img])
 
     assert gw.client.chat.completions.create.await_count == 2, "vision istekleri asla cache'lenmemeli"
     assert gw.cache.hits == 0
@@ -155,7 +155,7 @@ async def test_gateway_cache_disabled_by_env(tmp_path, monkeypatch):
     gw.client.chat.completions.create = AsyncMock(
         return_value=type("R", (), {"choices": [type("C", (), {"message": type("M", (), {"content": "x"})()})()]})()
     )
-    await gw.query("p", model="m")
-    await gw.query("p", model="m")
+    await gw.query("p", model="upstage/solar-pro4")
+    await gw.query("p", model="upstage/solar-pro4")
     assert gw.client.chat.completions.create.await_count == 2
     assert isinstance(gw.cache, NullCache)

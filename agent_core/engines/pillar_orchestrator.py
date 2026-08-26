@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from agent_core.domain.pillar_models import FrequencyReport, SeismosReport, VoidReport
-from agent_core.domain.pillar_wave2_models import FullPillarBundle, GravityReport, KeyReport, PulseReport, StrataReport
+from agent_core.domain.pillar_wave2_models import FullPillarBundle, GravityReport, PulseReport, StrataReport
 
 from .frequency_engine import FrequencyEngine
 from .gravity_engine import GravityEngine
@@ -15,6 +15,15 @@ from .strata_engine import StrataEngine
 from .void_engine import VoidEngine
 
 logger = logging.getLogger(__name__)
+
+
+class PillarComponentError(RuntimeError):
+    """A deterministic pillar component failed; never convert this to success-like output."""
+
+    def __init__(self, component: str, cause: Exception):
+        super().__init__(f"{component} failed: {type(cause).__name__}: {cause}")
+        self.component = component
+        self.cause = cause
 
 
 class PillarOrchestrator:
@@ -37,18 +46,22 @@ class PillarOrchestrator:
             (self.pulse, PulseReport, "PULSE"),
         ]
 
-        async def safe(engine, model, name):
+        async def run_component(engine, _model, name):
             try:
                 return await engine.analyze(data)
             except Exception as e:
-                logger.warning("%s error: %s", name, e)
-                return model(machine_note=f"{name} error: {type(e).__name__}: {str(e)[:120]}")
+                logger.exception("%s component failed", name)
+                raise PillarComponentError(name, e) from e
 
-        f, s, v, st, g, p = await asyncio.gather(*(safe(*x) for x in specs))
+        # Insufficient input is represented by each engine's typed
+        # INSUFFICIENT_DATA report. Exceptions are actual failures and must
+        # reach PinealExecutor's critical 7-pillar policy.
+        f, s, v, st, g, p = await asyncio.gather(*(run_component(*x) for x in specs))
         try:
             k = await self.key.analyze(freq=f, seismos=s, void=v, strata=st, gravity=g, pulse=p)
         except Exception as e:
-            k = KeyReport(machine_note=f"KEY error: {type(e).__name__}: {str(e)[:120]}")
+            logger.exception("KEY component failed")
+            raise PillarComponentError("KEY", e) from e
         return FullPillarBundle(
             frequency=f, seismos=s, void=v, strata=st, gravity=g, pulse=p, key=k
         ).as_snapshot_fields()

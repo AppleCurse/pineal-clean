@@ -24,8 +24,10 @@ class DarkTriadAnalyzer:
             for trait, words in self.MARKERS.items()
         }
         
-        # Exploitability hesapla
-        exploit = 0.5
+        # Exploitability hesapla: markör YOKSA 0.0 (sahte "nötr 0.5" üretilmez).
+        # Ek bulanıklaştırma işaretleri yok; skor yalnızca gerçek kelime
+        # işaretlerinden türetilir.
+        exploit = 0.0
         if scores['narcissism'] > 0.7 and scores['machiavellianism'] < 0.4:
             exploit = 0.9
         elif scores['machiavellianism'] > 0.6:
@@ -39,10 +41,15 @@ class DarkTriadAnalyzer:
         )
     
     def generate_strategy(self, profile: DarkTriadProfile) -> Dict:
+        if all(getattr(profile, t, 0.0) == 0.0 for t in ("machiavellianism", "narcissism", "psychopathy")):
+            # Hiç gözlemlenebilir işaret yok; strateji ÜRETİLMEZ.
+            return {'vector': 'unavailable', 'tactic': 'Gözlemlenebilir karanlık üçlü işareti bulunamadı.'}
         if profile.narcissism > 0.7:
             return {'vector': 'mirroring', 'tactic': 'Özel ve seçilmiş hissettir'}
         elif profile.machiavellianism > 0.6:
             return {'vector': 'alliance', 'tactic': 'Karşılıklı çıkar vurgusu'}
         elif profile.psychopathy > 0.5:
             return {'vector': 'thrill', 'tactic': 'Risk ve heyecan'}
-        return {'vector': 'empathy', 'tactic': 'Duygusal rezonans'}
+        # Kısmi işaretler var ama eşik geçilmedi: yine de empathy UYDURMA;
+        # strateji belirsiz işaretlenir ki aşağı akışta kanıt sayılmasın.
+        return {'vector': 'unobserved', 'tactic': 'İşaretler eşiğin altında; strateji türetilmedi.'}

@@ -62,12 +62,14 @@ class DepthAnalyst:
             cleaned_dict, stats = guard_report(rep_dict, input_data)
             cleaned_dict["quote_guard"] = stats
             return DepthReport(**cleaned_dict)
-        except Exception as e:
+        except Exception:
             # Fallback
             return DepthReport(
-                reality_index=0.6,
-                reality_rationale=f"Derinlik analizi otomatik koruma modunda tamamlandı: {str(e)[:100]}",
+                reality_index=0.0,
+                reality_rationale="",
                 reality_findings=[],
                 contradictions=[],
-                essence_one_liner="Derinlik analizi tamamlandı."
+                essence_one_liner="",
+                data_confidence=False,
+                fallback_reason="llm_unavailable"
             )

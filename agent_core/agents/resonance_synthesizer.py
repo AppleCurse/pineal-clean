@@ -22,8 +22,21 @@ class ResonanceSynthesizerAgent:
         cognitive_data = payload.get("cognitive", {})
         sacred_rules = payload.get("sacred_rules", "")
 
-        user_bio = user_profile.get("bio", "Analitik gözlemci.")
+        if not any((passions_data, friction_data, cognitive_data)):
+            return AuthenticBridge(
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="target_context_unavailable",
+            )
+
+        user_bio = user_profile.get("bio", "")
         user_posts = user_profile.get("posts", [])
+        if not user_bio and not user_posts:
+            return AuthenticBridge(
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="user_context_unavailable",
+            )
         user_context = f"Kullanıcı Biyografisi: {user_bio}\nKullanıcı Paylaşımları: {', '.join(user_posts)}"
 
         target_context = f"""
@@ -45,15 +58,17 @@ ve karşı tarafın sınırlarına saygı duyan, sahici ve derinlikli bir ilk so
 Özel İletişim Kuralları:
 "{sacred_rules}"
 
+Confidence kuralı: confidence alanını yalnızca sağlanan profile ait doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
+
 Aşağıdaki JSON formatında yanıt ver:
 {{
   "shared_passions": ["Her iki tarafın da ortak ilgi duyduğu veya rezonans kurabileceği 1-3 konu"],
   "complementary_perspectives": ["Birbirini zenginleştirebilecek farklı bakış açıları"],
-  "resonance_score": 0.85, // 0.0 ile 1.0 arası genel sahici uyum skoru
+  "resonance_score": 0.0, // 0.0 ile 1.0 arası; yalnız sağlanan kanıttan türet
   "authentic_opening_topic": "İletişimin başlayacağı en doğal ve derinlikli konu başlığı",
   "conversation_starter_rationale": "Neden bu konunun seçildiğinin mantıksal ve saygılı açıklaması",
   "suggested_opening_message": "Doğrudan karşı tarafa gönderilebilecek, samimi, merak uyandırıcı ve saygılı mesaj taslağı",
-  "confidence": 0.90
+  "confidence": 0.0
 }}
 """
         try:
@@ -61,17 +76,20 @@ Aşağıdaki JSON formatında yanıt ver:
                 prompt=prompt,
                 schema=AuthenticBridge,
                 task="dialogue",
-                temperature=0.3
+                temperature=0.3,
+                agent_name="resonance_synthesizer"
             )
-            return result
+            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
         except Exception as e:
             logger.warning(f"ResonanceSynthesizer LLM hatası: {e}")
             return AuthenticBridge(
                 shared_passions=[],
                 complementary_perspectives=[],
                 resonance_score=0.0,
-                authentic_opening_topic="UNKNOWN",
-                conversation_starter_rationale="NO_EVIDENCE",
-                suggested_opening_message="UNAVAILABLE",
-                confidence=0.0
+                authentic_opening_topic="",
+                conversation_starter_rationale="",
+                suggested_opening_message="",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="llm_unavailable",
             )

@@ -14,8 +14,23 @@ class CognitiveRouter:
     """
     
     async def analyze(self, input_data: Dict) -> RoutePlan:
-        has_target = 'target_profile' in input_data
-        has_user = 'user_profile' in input_data
+        target = input_data.get("target_profile") or {}
+        user = input_data.get("user_profile") or {}
+        if not isinstance(target, dict):
+            target = {}
+        if not isinstance(user, dict):
+            user = {}
+
+        # A present-but-empty object is not analysis-ready input. Route only
+        # agents that can receive actual target/user evidence.
+        has_target = bool(
+            target.get("username") or target.get("name") or target.get("bio")
+            or target.get("posts") or target.get("images")
+        )
+        has_user = bool(
+            user.get("bio") or user.get("posts") or user.get("private_rituals")
+            or user.get("late_night_playlist") or user.get("secret_envies")
+        )
         
         agents = []
         reasoning = []
@@ -27,8 +42,9 @@ class CognitiveRouter:
         
         # Hedef varsa 360 derece analiz et
         if has_target:
-            agents.append('osint_investigator')
-            reasoning.append("Derin Web ve OSINT Taraması")
+            # OSINT is a forensic stamp executed once by PinealExecutor after
+            # the routed analysis. Keeping it out of this route prevents a
+            # second provider call and AgentRun overwrite.
 
             agents.append('autonomous_verifier')
             reasoning.append("Otonom Teyit (Arama & Kanıt)")

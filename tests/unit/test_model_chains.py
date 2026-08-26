@@ -44,6 +44,7 @@ async def test_query_chain_fallback_on_server_error():
 
     res = await gw.query_chain("test prompt", task="depth")
     assert res == "OK from z-ai/glm-5.2"
+    assert "OK from z-ai/glm-5.2" in res
     assert call_count == 2
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ async def test_llm_gateway_no_flag_raises_error(monkeypatch):
     gateway = LLMGateway()
     
     with pytest.raises(RuntimeError) as exc:
-        await gateway.query("Test", tier=1, model="gpt-4")
+        await gateway.query("Test", tier=1, model="upstage/solar-pro4")
         
     assert "REAL_LLM_CALL_NOT_EXECUTED" in str(exc.value)
 
@@ -44,7 +44,7 @@ async def test_llm_gateway_rate_limit_retry(monkeypatch):
     gateway = LLMGateway()
     gateway.client = MockClient(fails=2, exception_msg="429 Too Many Requests")
     
-    res = await gateway.query("Test", tier=1, model="gpt-4")
+    res = await gateway.query("Test", tier=1, model="upstage/solar-pro4")
     assert res == "success"
     assert gateway.client.chat.completions.attempts == 3
 
@@ -56,7 +56,7 @@ async def test_llm_gateway_auth_error(monkeypatch):
     gateway.client = MockClient(fails=1, exception_msg="401 Unauthorized")
     
     with pytest.raises(RuntimeError) as exc:
-        await gateway.query("Test", tier=1, model="gpt-4")
+        await gateway.query("Test", tier=1, model="upstage/solar-pro4")
         
     assert "LLM API Key rejected" in str(exc.value)
     assert gateway.client.chat.completions.attempts == 1

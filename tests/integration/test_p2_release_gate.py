@@ -16,15 +16,11 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
     if name == "PassionProfile":
         from agent_core.domain.memory_models import PassionProfile
         return PassionProfile(
-            core_passions=["Mimari tasarımları estetik ve işlevsellikle birleştirmek", "Görsel ve kentsel algı üzerine derinlemesine analizler yapmak"],
-            energizing_topics=["Minimalist kentsel dokular ve binalar", "Şehir planlamanın insan psikolojisine etkileri", "Sessiz mekan tasarımları"],
-            passion_categories=["Estetik", "Mimari Tasarım", "Kentsel Psikoloji"],
-            intensity_indicators=["Estetik her şeydir vurgusuyla net bir tavır sergilemesi", "Sürekli mekan ve huzur algısına referans vermesi"],
-            anti_passions=["Yüzeysel tasarımlar", "Gürültülü ve karmaşık yapılar"],
-            evidence_strength="Güçlü (birden fazla gönderide tutarlı bir estetik algısı vurgulanmış)",
-            flow_triggers=["Sokak fotoğrafları çekmek"],
+            core_passions=["Mimari ve kentsel estetik", "Analog fotografi"],
+            energizing_topics=["Minimalist mekan tasarimi"],
+            flow_triggers=["Sokak cekimleri"],
             sentiment_polarity=0.8,
-            evidence_quotes=["Estetik her şeydir."],
+            evidence_quotes=["Estetik her seydir."],
             confidence=0.9
         )
     elif name == "FrictionProfile":
@@ -58,19 +54,11 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
         )
     elif name == "MirrorReflection":
         return MirrorReflection(
-            user_core_frequency="derin ruh ve iç dünyaya yönelik yaşam tarzı detayları",
-            surface_persona="pozitif ve enerjik dış görünüm, sosyal medya imajı için oluşturulmuş yüz",
+            user_core_frequency="derin tasarim ve estetik arayisi",
+            surface_persona="analitik, olculu ve mesafeli",
             alignment_score=0.9,
-            authentic_anchors=["yalnızlık ve iç huzur", "doğa yürüyüşleri ve sessizlik", "uzun uzun kitap okumak", "derin müzikler"]
-        )
-    elif name == "OSINTFootprint":
-        from agent_core.agents.osint_investigator import OSINTFootprint
-        return OSINTFootprint(
-            associated_platforms=["Instagram", "LinkedIn", "Twitter", "Medium", "GitHub", "Kişisel Blog", "Substack"],
-            digital_footprint_score=0.9,
-            behavioral_signals=["Sürekli sabah erken saatlerde paylaşım yapmak", "Cuma akşamları eve kapanmak ve bunu belirtmek", "Aşırı düzenli ve estetik içerikler"],
-            risk_indicators=["Sosyal izolasyon", "Aşırı mükemmeliyetçilik ve kontrol isteği", "Tükenmişlik sinyalleri"],
-            confidence=0.85
+            authentic_anchors=["estetik detaylar", "tasarim felsefesi", "sehir yuruyusleri"],
+            confidence=0.9
         )
     elif name == "VerifierReport":
         return VerifierReport(
@@ -95,7 +83,9 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
             compliance_score=100.0,
             dialogue_tree=[
                 ScenarioResponse(scenario_type="agresif", expected_target_reaction="Ne diyorsun?", our_counter_move="Sadece bir gözlem.")
-            ]
+            ],
+        data_confidence=True,  # gerçek LLM sonucu simülasyonu: açık beyan ([022])
+        fallback_reason=None
         )
     elif name == "ClaimList":
         from agent_core.agents.autonomous_verifier import Claim
@@ -124,10 +114,11 @@ async def test_p2_release_gate_e2e_integration():
     executor.search_engine.tavily_key = "mock_tavily_key_for_test"
     
     # Mock search_engine to avoid real network call and empty results
-    from agent_core.services.search_engine import SearchResult
-    executor.search_engine.search = AsyncMock(return_value=[
-        SearchResult(query="dummy", content="Sadece pozitif enerji", source_url="http://mock.com")
-    ])
+    from agent_core.services.search_engine import SearchOutcome, SearchResult
+    executor.search_engine.search = AsyncMock(return_value=SearchOutcome(
+        results=[SearchResult(query="dummy", content="Sadece pozitif enerji", source_url="http://mock.com")],
+        status="OK", available=True,
+    ))
     
     # Input fixture that triggers both user and target routing logic
     task_input = {
@@ -145,7 +136,11 @@ async def test_p2_release_gate_e2e_integration():
     }
     
     from agent_core.domain.pipeline_status import PipelineStatus
-    with patch("agent_core.services.llm_gateway.LLMGateway.query_json", new=AsyncMock(side_effect=mock_query_json)):
+    async def _query_json_chain(prompt, schema=None, **kwargs):
+        return await mock_query_json(prompt, schema=schema, **kwargs)
+
+    with patch("agent_core.services.llm_gateway.LLMGateway.query_json", new=AsyncMock(side_effect=mock_query_json)), \
+         patch("agent_core.services.llm_gateway.LLMGateway.query_json_chain", new=AsyncMock(side_effect=_query_json_chain)):
         # Run execution
         result = await executor.execute_task(task_input, task_id="p2_release_gate")
 

@@ -23,10 +23,12 @@ async def test_auditor_empty_visual_evidence_early_return():
     }
     res = await agent.execute(payload)
     assert isinstance(res, AuthenticityProfile)
-    assert res.confidence == 0.1
-    assert res.authenticity_score == 1.0
+    assert res.confidence == 0.0
+    assert res.authenticity_score == 0.0
     assert res.visual_text_gaps == []
     assert res.supported_claims == []
+    assert res.data_confidence is False
+    assert res.fallback_reason == "insufficient_evidence"
 
 
 @pytest.mark.asyncio
@@ -39,8 +41,10 @@ async def test_auditor_empty_bio_and_posts_early_return():
     }
     res = await agent.execute(payload)
     assert isinstance(res, AuthenticityProfile)
-    assert res.confidence == 0.1
-    assert res.authenticity_score == 1.0
+    assert res.confidence == 0.0
+    assert res.authenticity_score == 0.0
+    assert res.data_confidence is False
+    assert res.fallback_reason == "insufficient_evidence"
 
 
 @pytest.mark.asyncio
@@ -98,9 +102,11 @@ async def test_auditor_llm_exception_fallback_and_logging(caplog):
         res = await agent.execute(payload)
     
     assert isinstance(res, AuthenticityProfile)
-    assert res.confidence == 0.2
-    assert res.authenticity_score == 0.5
-    assert "Analiz sırasında hata oluştu." in res.visual_text_gaps
+    assert res.confidence == 0.0
+    assert res.authenticity_score == 0.0
+    assert res.visual_text_gaps == []
+    assert res.data_confidence is False
+    assert res.fallback_reason == "llm_unavailable"
     
     # logger.warning çağrısının hata metnini içerdiğini doğrula
     assert any("AuthenticityAuditor LLM hatası: Gateway timeout error" in record.message for record in caplog.records)

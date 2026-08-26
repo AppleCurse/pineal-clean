@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import aiohttp
 import os
 from typing import Dict, Any, Optional
@@ -15,7 +16,8 @@ class OsintProfile(BaseModel):
     dark_web_hits: int = 0
     confidence: float = 1.0
     data_confidence: bool = True          # False → LLM kullanılamadı veya API yoktu
-    fallback_reason: Optional[str] = None # "no_api_key" | "llm_unavailable" | None
+    fallback_reason: Optional[str] = None
+    error_code: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -43,7 +45,6 @@ class OsintInvestigatorAgent:
             "User-Agent": random.choice(user_agents),
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
-            "X-Forwarded-For": f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}",
             "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
@@ -60,14 +61,20 @@ class OsintInvestigatorAgent:
         username = target.get("username", "")
 
         if not username:
-            return OsintProfile(confidence=1.0)
+            return OsintProfile(
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="no_target_identity",
+                error_code="NO_TARGET_IDENTITY",
+            )
 
         clean_username = username.lstrip("@")
         
-        # Gerçek bir API anahtarı yoksa Mock veri dön (Testlerin kırılmaması ve 
-        # API maliyeti oluşturmaması için SOTA simülasyonu)
+        # [011] Gerçek API anahtarı yoksa MOCK veri dönülmez: dürüst boş
+        # fallback döner (confidence=0.0, data_confidence=False). Sahte
+        # e-posta/telefon/oturum üretmek yasak.
         if not self.osint_api_key:
-            logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için analiz atlanıyor (Fallback mode).")
+            logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için analiz atlanıyor.")
             # Return empty/unknown state due to lack of API key, avoiding LLM hallucinations.
             return OsintProfile(
                 connected_emails=[],
@@ -76,7 +83,8 @@ class OsintInvestigatorAgent:
                 digital_footprint_score=0.0,
                 dark_web_hits=0,
                 confidence=0.0,
-                data_confidence=False
+                data_confidence=False,
+                fallback_reason="provider_credentials_unavailable",
             )
         else:
             try:
@@ -88,16 +96,21 @@ class OsintInvestigatorAgent:
                             emails = data.get("emails", [])
                             phones = data.get("phones", [])
                             platforms = data.get("platforms", [])
+                            observed_fields = sum(bool(value) for value in (emails, phones, platforms))
                             return OsintProfile(
                                 connected_emails=emails,
                                 connected_phones=phones,
                                 associated_platforms=platforms,
-                                confidence=0.9,
-                                data_confidence=True
+                                # Coverage, not an invented provider-trust score.
+                                confidence=round(observed_fields / 3, 3),
+                                data_confidence=True,
                             )
-                        else:
-                            logger.warning(f"[OSINT] Canlı API hatası: HTTP {resp.status} - {await resp.text()}")
-                            return OsintProfile(confidence=1.0, data_confidence=False, fallback_reason="api_error")
+                        logger.warning(f"[OSINT] Canlı API hatası: HTTP {resp.status} - {await resp.text()}")
+                        error_code = "AUTH_FAILED" if resp.status in (401, 403) else "RATE_LIMITED" if resp.status == 429 else "PROVIDER_ERROR"
+                        return OsintProfile(confidence=0.0, data_confidence=False, fallback_reason="api_error", error_code=error_code)
+            except asyncio.TimeoutError as e:
+                logger.warning(f"[OSINT] Canlı API timeout: {e}")
+                return OsintProfile(confidence=0.0, data_confidence=False, fallback_reason="api_error", error_code="TIMEOUT")
             except Exception as e:
                 logger.warning(f"[OSINT] Canlı API bağlantı hatası: {e}")
-                return OsintProfile(confidence=1.0, data_confidence=False, fallback_reason="api_error")
+                return OsintProfile(confidence=0.0, data_confidence=False, fallback_reason="api_error", error_code="NETWORK_ERROR")

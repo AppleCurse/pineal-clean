@@ -6,13 +6,18 @@ from agent_core.agents.mirror_truth import MirrorReflection
 from agent_core.agents.human_behavior import DigitalColdReading, MicroSignal
 from agent_core.agents.autonomous_verifier import VerifierReport, VerificationResult
 from agent_core.agents.pattern_interrupt import GeneratedMessage
+from agent_core.services.uncertainty_engine import UncertaintyReport
+from agent_core.services.canonical_memory import CanonicalMemory
 
 @pytest.mark.asyncio
-async def test_real_resonance_calculator_execution_in_executor():
+async def test_real_resonance_calculator_execution_in_executor(tmp_path):
     executor = PinealExecutor()
+    executor.memory = CanonicalMemory(str(tmp_path))
     assert isinstance(executor.agents["resonance_calc"], ResonanceCalculator)
     
-    executor.uncertainty.evaluate = MagicMock(return_value=MagicMock(confidence=0.95, is_suspicious=False))
+    executor.uncertainty.evaluate = MagicMock(
+        return_value=UncertaintyReport(confidence=0.95, is_suspicious=False, reason="test")
+    )
     
     mock_mirror_res = MirrorReflection(
         user_core_frequency="derin",
@@ -37,11 +42,21 @@ async def test_real_resonance_calculator_execution_in_executor():
         strategy="test strategy",
         confidence=0.9,
         compliance_score=0.9,
-        dialogue_tree=[]
+        dialogue_tree=[],
+        data_confidence=True,  # gerçek LLM sonucu simülasyonu: açık beyan ([022])
+        fallback_reason=None
     )
     
     executor.agents["mirror_truth"].execute = AsyncMock(return_value=mock_mirror_res)
     executor.agents["autonomous_verifier"].execute = AsyncMock(return_value=mock_verifier_res)
+    # This test isolates executor-to-calculator wiring. Supply explicitly
+    # calculated test vectors; production must not invent neutral defaults.
+    executor._calculate_authentic_vector = AsyncMock(
+        side_effect=[
+            {"depth": 0.8, "energy": 0.4, "achilles_heel": "test", "core_wound": "test", "dark_detail": "test"},
+            {"depth": 0.7, "energy": 0.5, "achilles_heel": "test", "core_wound": "test", "dark_detail": "test"},
+        ]
+    )
     executor.agents["human_behavior"].execute = AsyncMock(return_value=mock_human_res)
     executor.agents["pattern_interrupt"].execute = AsyncMock(return_value=mock_pattern_res)
     
