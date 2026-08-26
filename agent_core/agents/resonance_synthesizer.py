@@ -79,7 +79,14 @@ Aşağıdaki JSON formatında yanıt ver:
                 temperature=0.3,
                 agent_name="resonance_synthesizer"
             )
-            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
+            has_bridge = bool(
+                result.shared_passions or result.suggested_opening_message
+            )
+            has_valid_evidence = has_bridge and (getattr(result, "confidence", 0.0) > 0.0)
+            return result.model_copy(update={
+                "data_confidence": has_valid_evidence,
+                "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
+            })
         except Exception as e:
             logger.warning(f"ResonanceSynthesizer LLM hatası: {e}")
             return AuthenticBridge(

@@ -76,7 +76,14 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
                 temperature=0.3,
                 agent_name="passion_mapper"
             )
-            return result.model_copy(update={"data_confidence": True, "fallback_reason": None})
+            has_passions = bool(
+                result.core_passions or result.energizing_topics or result.evidence_quotes
+            )
+            has_valid_evidence = has_passions and (getattr(result, "confidence", 0.0) > 0.0)
+            return result.model_copy(update={
+                "data_confidence": has_valid_evidence,
+                "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
+            })
         except Exception as e:
             logger.warning(f"PassionMapper LLM hatası: {e}")
             return PassionProfile(
