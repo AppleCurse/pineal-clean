@@ -30,6 +30,11 @@ class DepthAnalyst:
     def __init__(self, llm_gateway):
         self.llm_gateway = llm_gateway
 
+    async def execute(self, input_data, memory, llm_gateway):
+        """Standard agent interface wrapper."""
+        evidence_chain = getattr(memory, "evidence_chain", []) if memory else input_data.get("evidence_chain", [])
+        return await self.analyze(input_data, evidence_chain)
+
     async def analyze(self, input_data: Dict[str, Any], evidence_chain: List[Dict[str, Any]]) -> DepthReport:
         tp = input_data.get("target_profile", {})
         visual = input_data.get("visual_evidence", {})

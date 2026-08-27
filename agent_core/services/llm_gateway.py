@@ -92,6 +92,10 @@ class LLMGateway:
         # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
         # kaydı. Evidence chain'e ajan bazında yazılır (task_executor).
         self.call_log: List[dict] = []
+        # P2-9 PROVENANCE: son başarılı çağrının modeli. Executor bunu
+        # AgentRun.output_summary["_provenance"] içine damgalar; UI bu
+        # damga olmadan "gerçek LLM çıktısı" rozeti gösteremez.
+        self.last_call_meta: dict = {}
         self._rebuild()
         self.cache = build_cache_from_env()
 
@@ -326,6 +330,7 @@ class LLMGateway:
             cached = self.cache.get(cache_key)
             if cached is not None:
                 self._log_call("query", selected_model, "cache", cache_hit=True)
+                self.last_call_meta = {"model": selected_model, "cached": True, "provider": "cache"}
                 return cached
 
         # [017] fix: ücretli çağrı öncesi fiyat guard'ı. Cache hit ücretsizdir;
@@ -359,6 +364,11 @@ class LLMGateway:
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
+                self.last_call_meta = {
+                    "model": selected_model,
+                    "cached": False,
+                    "provider": "local" if is_local_request else "openrouter",
+                }
                 self._log_call(
                     "query", selected_model,
                     "local" if is_local_request else "openrouter",
