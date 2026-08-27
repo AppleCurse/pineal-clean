@@ -55,7 +55,8 @@ class PatternInterrupt:
                 data_confidence=False,
                 fallback_reason="insufficient_grounded_evidence",
             )
-        detail = evidence[0]
+        top_signal = self._extract_micro_signal(t_dict)
+        detail = top_signal if (top_signal and top_signal != 'unavailable') else evidence[0]
         
         target_json = target_analysis.model_dump_json(indent=2) if hasattr(target_analysis, 'model_dump_json') else str(target_analysis)
         user_json = user_truth.model_dump_json(indent=2) if hasattr(user_truth, 'model_dump_json') else str(user_truth)

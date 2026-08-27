@@ -160,8 +160,13 @@ class ShadowExecutor:
                 'sacred_rules': task_input.get("sacred_rules", "")
             }
             pattern_result = await self.pattern.execute(pattern_input, None, self.llm_gateway)
-            if pattern_result and pattern_result.message:
+            if pattern_result and getattr(pattern_result, "message", None):
                 pattern_message = pattern_result.message
+        except Exception as e:
+            log.warning("ShadowExecutor: Pattern LLM atlandi: %s", e)
+
+        if not pattern_message or pattern_message == "unavailable":
+            pattern_message = strategy.get("tactic") or strategy.get("vector") or "Dogal ve dengeli ilk temas."
         except Exception as e:
             log.warning("ShadowExecutor: Pattern LLM atlandı: %s", e)
 

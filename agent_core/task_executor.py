@@ -24,6 +24,7 @@ try:
     from agent_core.agents.interpreter_agent import InterpreterAgent
     from agent_core.agents.authenticity_auditor import AuthenticityAuditorAgent
     from agent_core.agents.osint_investigator import OsintInvestigatorAgent
+    from agent_core.agents.depth_analyst import DepthAnalyst
     from agent_core.shadow.shadow_executor import ShadowExecutor
     from agent_core.config_loader import DecisionConfig
 except Exception:
@@ -100,6 +101,7 @@ class PinealExecutor:
             "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
             "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
             "shadow_executor": ShadowExecutor(llm_gateway=self.llm_gateway),
+            "depth_analyst": DepthAnalyst(self.llm_gateway),
         }
 
     @staticmethod
@@ -542,6 +544,8 @@ class PinealExecutor:
                 if agent_name == "resonance_calc" and hasattr(result, "compatibility_score") and result.compatibility_score < 0.70:
                     self._log("ERROR", "[" + task_id + "] FREKANS UYUSMAZLIGI: " + str(round(result.compatibility_score, 2)))
                     status.status = "halted_frequency"
+                    status.halted_reason = "Frekans uyusmazligi"
+                    status.completed_at = datetime.now(timezone.utc)
                     await self.memory.merge_evidence(task_id, status.evidence_chain)
                     self._snapshot(status)
                     return status
@@ -699,8 +703,7 @@ class PinealExecutor:
 
             # --- P1 + P7 + P8 DERİNLİK VE GERÇEKLİK ANALİZİ (QuoteGuard Korumalı) ---
             try:
-                from agent_core.agents.depth_analyst import DepthAnalyst
-                depth_agent = DepthAnalyst(self.llm_gateway)
+                depth_agent = self.agents.get("depth_analyst") or DepthAnalyst(self.llm_gateway)
                 depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
                 status.depth_report = depth_rep.model_dump()
                 q_stats = depth_rep.quote_guard or {}

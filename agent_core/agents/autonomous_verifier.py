@@ -96,6 +96,10 @@ class AutonomousVerifier:
             identity = name or (f"@{username.lstrip('@')}" if username else "")
             if identity:
                 query = f"{identity} {query}"
+            elif bio:
+                bio_snippet = bio.split(".")[0].strip()[:40]
+                if bio_snippet and bio_snippet != claim.claim_text:
+                    query = f"{bio_snippet} {query}"
 
             outcome = await self.search_engine.search(query, num_results=2)
             if not outcome.available:
