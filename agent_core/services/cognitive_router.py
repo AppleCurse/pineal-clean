@@ -65,16 +65,21 @@ class CognitiveRouter:
                 agents.append('authenticity_auditor')
                 reasoning.append("Özgünlük ve Tutarlılık Denetimi")
             
-            # Kullanıcı da hedef de varsa rezonans ve sahici köprü hesapla
-            if has_user:
-                agents.append('resonance_calc')
-                reasoning.append("Sahici Değer ve Uyum Hesabı")
-                
-                agents.append('pattern_interrupt')
-                reasoning.append("İletişim Deseni")
+        # Kullanıcı da hedef de varsa rezonans ve sahici köprü hesapla
+        if has_user:
+            agents.append('resonance_calc')
+            reasoning.append("Sahici Değer ve Uyum Hesabı")
+            
+            agents.append('pattern_interrupt')
+            reasoning.append("İletişim Deseni")
 
-                agents.append('resonance_synthesizer')
-                reasoning.append("Sahici İletişim Köprüsü")
+            agents.append('resonance_synthesizer')
+            reasoning.append("Sahici İletişim Köprüsü")
+        
+        # Interpreter: Kullanıcı profili varsa sonuçları yorumlamak için
+        if has_user:
+            agents.append('interpreter')
+            reasoning.append("Açıklayıcı Yorum ve Bağlam")
         
         return RoutePlan(
             agents=agents,

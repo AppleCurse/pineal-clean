@@ -30,6 +30,20 @@ class DepthAnalyst:
     def __init__(self, llm_gateway):
         self.llm_gateway = llm_gateway
 
+    async def execute(self, input_data: Dict[str, Any], memory: Any = None, llm_gateway: Any = None) -> DepthReport:
+        """
+        Task executor tarafından çağrılmak üzere execute() arayüzü.
+        analyze() fonksiyonunu çağırarak aynı işlevi yerine getirir.
+        """
+        # evidence_chain parametresi executor'dan gelmiyor, input_data'dan türetilir
+        evidence_chain = []
+        if input_data.get("evidence_chain"):
+            evidence_chain = input_data.get("evidence_chain")
+        elif input_data.get("visual_evidence"):
+            evidence_chain = [{"type": "visual", "data": input_data.get("visual_evidence")}]
+        
+        return await self.analyze(input_data, evidence_chain)
+    
     async def analyze(self, input_data: Dict[str, Any], evidence_chain: List[Dict[str, Any]]) -> DepthReport:
         tp = input_data.get("target_profile", {})
         visual = input_data.get("visual_evidence", {})
