@@ -509,6 +509,9 @@
         <div class="screen-card" style="border-color: rgba(245,158,11,0.4);">
           <div style="font-size: 10px; font-weight: 700; color: var(--accent-amber); margin-bottom: 6px;">
             {t[$currentLang].passionsTitle}
+            {#if holisticProfile.passions?.data_confidence === false}
+              <span style="font-size: 8px; font-weight: 800; background: #ef4444; color: #fff; padding: 1px 4px; border-radius: 3px; margin-left: 4px;" title="{holisticProfile.passions.fallback_reason || ''}">[FALLBACK]</span>
+            {/if}
           </div>
           {#if holisticProfile.passions?.core_passions?.length}
             <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
@@ -532,6 +535,9 @@
         <div class="screen-card" style="border-color: rgba(239,68,68,0.4);">
           <div style="font-size: 10px; font-weight: 700; color: var(--accent-red); margin-bottom: 6px;">
             {t[$currentLang].frictionsTitle}
+            {#if holisticProfile.frictions?.data_confidence === false}
+              <span style="font-size: 8px; font-weight: 800; background: #ef4444; color: #fff; padding: 1px 4px; border-radius: 3px; margin-left: 4px;" title="{holisticProfile.frictions.fallback_reason || ''}">[FALLBACK]</span>
+            {/if}
           </div>
           {#if holisticProfile.frictions?.sensitivities?.length}
             <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
@@ -555,6 +561,9 @@
         <div class="screen-card" style="border-color: rgba(6,182,212,0.4);">
           <div style="font-size: 10px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 6px;">
             {t[$currentLang].cognitiveTitle}
+            {#if holisticProfile.cognitive?.data_confidence === false}
+              <span style="font-size: 8px; font-weight: 800; background: #ef4444; color: #fff; padding: 1px 4px; border-radius: 3px; margin-left: 4px;" title="{holisticProfile.cognitive.fallback_reason || ''}">[FALLBACK]</span>
+            {/if}
           </div>
           <div style="font-size: 9px; color: var(--text-main); display: flex; flex-direction: column; gap: 3px;">
             <div>{t[$currentLang].toneLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.communication_tone || 'Dengeli'}</b></div>
@@ -570,6 +579,12 @@
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--accent-green);">
               {t[$currentLang].bridgeTitle}
+              <!-- P1-6: model tahmini mi, yoksa fallback mi — gizlenemez -->
+              {#if holisticProfile.bridge.data_confidence === false || holisticProfile.bridge.fallback_reason}
+                <span style="font-size: 9px; font-weight: 800; background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 6px;" title="{holisticProfile.bridge.fallback_reason || 'data_confidence=false'}">
+                  [FALLBACK — KANIT DEĞİL: {holisticProfile.bridge.fallback_reason || 'düşük güven'}]
+                </span>
+              {/if}
             </span>
             <span style="font-size: 10px; color: var(--gold); font-weight: 700;">
               %{ (holisticProfile.bridge.resonance_score * 100).toFixed(0) } {t[$currentLang].resonanceScore}
@@ -781,6 +796,16 @@
           <div style="display: flex; align-items: center; gap: 8px;">
             <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #a78bfa;">
               🕳️ 5. DAMGA: GÖLGE PROFİLİ
+              <!-- P1-6/P2-9: fallback veya güvensiz çıktı açıkça işaretlenir -->
+              {#if shadowProfile.data_confidence === false || shadowProfile.fallback_reason}
+                <span style="font-size: 9px; font-weight: 800; background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 6px;" title="{shadowProfile.fallback_reason || 'data_confidence=false'}">
+                  [FALLBACK — KANIT DEĞİL]
+                </span>
+              {:else if shadowProfile._provenance?.source === 'llm' || shadowProfile._provenance?.source === 'llm_cache'}
+                <span style="font-size: 9px; font-weight: 800; background: rgba(16,185,129,0.25); border: 1px solid #10b981; color: #6ee7b7; padding: 2px 6px; border-radius: 4px; margin-left: 6px;" title="LLM: {shadowProfile._provenance.model}">
+                  [LLM: {shadowProfile._provenance.model?.split('/').pop()}]
+                </span>
+              {/if}
             </span>
             <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
               Manipülasyon Skoru: %{((shadowProfile.dark_profile?.narcissism || 0) * 100).toFixed(0)}
@@ -879,6 +904,33 @@
                   <span style="color: var(--text-main); font-size: 9px;">{run.confidence.toFixed(2)}</span>
                 {/if}
               </div>
+              <!-- P2-9 PROVENANCE: bu çıktının kökeni. Damga yoksa kanıt sayılmaz. -->
+              {#if isCompleted && run?.output_summary?._provenance}
+                {@const prov = run.output_summary._provenance}
+                <div style="margin-top: 2px;">
+                  {#if prov.source === 'llm'}
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(16,185,129,0.2); border: 1px solid #10b981; color: #6ee7b7; padding: 1px 4px; border-radius: 3px;" title="Gerçek LLM çağrısı: {prov.model}">
+                      LLM ✓ {prov.model?.split('/').pop() || ''}
+                    </span>
+                  {:else if prov.source === 'llm_cache'}
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(6,182,212,0.2); border: 1px solid #06b6d4; color: #67e8f9; padding: 1px 4px; border-radius: 3px;" title="Önbellekten gelen LLM yanıtı: {prov.model}">
+                      CACHE {prov.model?.split('/').pop() || ''}
+                    </span>
+                  {:else if prov.source === 'deterministic'}
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(212,175,55,0.2); border: 1px solid var(--gold); color: var(--gold); padding: 1px 4px; border-radius: 3px;" title="Yerel hesaplama — LLM yok, tahmin yok">
+                      DETERMİNİSTİK
+                    </span>
+                  {:else if prov.source === 'fallback'}
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(239,68,68,0.25); border: 1px solid #ef4444; color: #fca5a5; padding: 1px 4px; border-radius: 3px;" title="Fallback üretim: {prov.fallback_reason} — kanıt DEĞİL">
+                      ⚠ FALLBACK
+                    </span>
+                  {:else}
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(100,116,139,0.2); border: 1px solid #64748b; color: #94a3b8; padding: 1px 4px; border-radius: 3px;" title="Köken izlenemedi">
+                      ? KÖKEN YOK
+                    </span>
+                  {/if}
+                </div>
+              {/if}
               <div style="height: 4px; background: #1a120b; border-radius: 2px; overflow: hidden; margin-top: 3px;">
                 <div style="height: 100%; width: {isCompleted ? '100%' : isRunning ? '50%' : isHalted ? '100%' : '0%'}; background: {isCompleted ? '#10b981' : isHalted ? '#ef4444' : isRunning ? '#f59e0b' : 'transparent'}; transition: width 0.3s ease;"></div>
               </div>
