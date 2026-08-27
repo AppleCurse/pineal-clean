@@ -132,7 +132,17 @@ class ShadowExecutor:
         try:
             existing_target_analysis = task_input.get("target_analysis") or {}
             if existing_target_analysis and isinstance(existing_target_analysis, dict):
-                p_analysis = existing_target_analysis
+                p_analysis = dict(existing_target_analysis)
+                if not p_analysis.get("micro_signals"):
+                    p_analysis["micro_signals"] = [
+                        {
+                            'signal_type': 'defense',
+                            'confidence': 0.85,
+                            'location': 'behavioral',
+                            'evidence': f"Strateji vektörü: {strategy.get('vector', 'direct')}",
+                            'psychological_weight': 0.7,
+                        }
+                    ]
             else:
                 p_analysis = {
                     'surface_identity': task_input.get('target_profile', {}).get('bio', '')[:50],
@@ -163,12 +173,11 @@ class ShadowExecutor:
             if pattern_result and getattr(pattern_result, "message", None):
                 pattern_message = pattern_result.message
         except Exception as e:
-            log.warning("ShadowExecutor: Pattern LLM atlandi: %s", e)
-
-        if not pattern_message or pattern_message == "unavailable":
-            pattern_message = strategy.get("tactic") or strategy.get("vector") or "Dogal ve dengeli ilk temas."
-        except Exception as e:
             log.warning("ShadowExecutor: Pattern LLM atlandı: %s", e)
+
+        # Fallback mekanizması: pattern_message boşsa veya unavailable ise strateji taktiğini kullan
+        if not pattern_message or pattern_message == "unavailable":
+            pattern_message = strategy.get('tactic') or strategy.get('vector') or "Doğal ve dengeli ilk temas."
 
         # 6. Birleştir
         final_message = self._synthesize(
@@ -202,5 +211,6 @@ class ShadowExecutor:
         """Tüm katmanları birleştir"""
         presup_intro = presup[0]['sentence'] if presup else ""
         nlp_command = nlp_seq[1]['text'] if len(nlp_seq) > 1 else ""
-        
-        return f"{presup_intro} {base_msg} {nlp_command}"
+
+        parts = [p for p in (presup_intro, base_msg, nlp_command) if p and p.strip()]
+        return " ".join(parts).strip()
