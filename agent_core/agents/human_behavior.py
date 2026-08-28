@@ -29,15 +29,14 @@ class MicroSignal(BaseModel):
 
 
 class DigitalColdReading(BaseModel):
-    surface_identity: str
-    detected_wound: str
-    defense_mechanism: str
+    observations: List[str] = Field(description="Somut gözlemler")
+    possible_interpretations: List[str] = Field(description="Gözlemlerin olası psikolojik anlamları")
+    confidence: float = Field(ge=0.0, le=1.0)
+    alternative_interpretations: List[str] = Field(description="Farklı bağlamlarda olası alternatif yorumlar")
+    unsupported_claims: List[str] = Field(description="Kanıtla desteklenmeyen veya çelişen varsayımlar")
     micro_signals: List[MicroSignal]
     achilles_score: float = Field(ge=0.0, le=100.0)
     resonance_potential: float = Field(ge=0.0, le=1.0)
-    # [022] Model-level evidence contract: yorum (wound/defense/achilles)
-    # ÖLÇÜMLÜ gözlemlere dayanır. LLM yorumu üretilemediyse
-    # data_confidence=False + fallback_reason; bu çıktı kanıt sayılmaz.
     data_confidence: bool = True
     fallback_reason: Optional[str] = None
 
@@ -77,8 +76,82 @@ class HumanBehaviorAnalyzer:
         # 3. Visual micro-analysis (remote URLs only; capped)
         visual_signals: List[MicroSignal] = []
 
+        import urllib.parse
+        import socket
+        import ipaddress
+        
         async def _fetch_and_analyze_image(client: httpx.AsyncClient, image_url: str) -> List[MicroSignal]:
             if not self._is_http_url(image_url):
+                return []
+            try:
+                loop = asyncio.get_running_loop()
+                url = image_url
+                redirects = 0
+                while redirects < 5:
+                    parsed = urllib.parse.urlparse(url)
+                    if not parsed.hostname:
+                        return []
+                        
+                    # DNS / IP check for SSRF
+                    try:
+                        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                        addr_info = await loop.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
+                        for _, _, _, _, sockaddr in addr_info:
+                            ip_obj = ipaddress.ip_address(sockaddr[0])
+                            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast or ip_obj.is_reserved or ip_obj.is_link_local:
+                                logging.warning(f"SSRF Prevention: Blocked private IP {sockaddr[0]} for {url}")
+                                return []
+                    except Exception as e:
+                        logging.warning(f"DNS resolve failed for {url}: {e}")
+                        return []
+                        
+                    request = client.build_request("GET", url)
+                    response = await client.send(request, stream=True)
+                    
+                    if 300 <= response.status_code < 400:
+                        url_header = response.headers.get("Location")
+                        response.close()
+                        if not url_header:
+                            return []
+                        url = urllib.parse.urljoin(str(request.url), url_header)
+                        redirects += 1
+                        continue
+                        
+                    if response.status_code != 200:
+                        response.close()
+                        return []
+                        
+                    ctype = response.headers.get("Content-Type", "")
+                    if not ctype.startswith("image/"):
+                        response.close()
+                        return []
+                        
+                    clength = response.headers.get("Content-Length")
+                    if clength and int(clength) > self.MAX_IMAGE_BYTES:
+                        response.close()
+                        return []
+                        
+                    chunks = []
+                    downloaded = 0
+                    async for chunk in response.aiter_bytes(8192):
+                        downloaded += len(chunk)
+                        if downloaded > self.MAX_IMAGE_BYTES:
+                            response.close()
+                            return []
+                        chunks.append(chunk)
+                        
+                    response.close()
+                    content = b"".join(chunks)
+                    
+                    arr = np.frombuffer(content, dtype=np.uint8)
+                    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if image is not None:
+                        return self._analyze_visual_micro_img(image)
+                    return []
+                    
+                return []
+            except Exception as exc:
+                logging.warning(f"Visual analysis failed for {image_url}: {exc}")
                 return []
             try:
                 response = await client.get(image_url)
@@ -96,7 +169,7 @@ class HumanBehaviorAnalyzer:
 
         try:
             async with httpx.AsyncClient(
-                follow_redirects=True,
+                follow_redirects=False,
                 timeout=httpx.Timeout(10.0, connect=5.0),
             ) as client:
                 # Use a shared httpx.AsyncClient to enable connection pooling for concurrent requests
@@ -139,7 +212,7 @@ class HumanBehaviorAnalyzer:
             "GERÇEK METRİKLER (OpenCV ve Linguistic Analiz Sonuçları):\n"
             f"{json.dumps(hard_data, ensure_ascii=False, indent=2)}\n\n"
             f"{sacred_rules}\n\n"
-            "Bu verileri analiz et, mikro sinyalleri yakala ve Aşil tendonunu (hassas noktasını) "
+            "Bu verileri analiz et, mikro sinyalleri yakala ve psikolojik yorumunu gözlem/hipotez şeklinde "
             "tespit et. Beklenen formata (JSON) uygun cevap ver. "
             "Bu kanıtları temkinli biçimde özetle ve beklenen JSON formatında cevap ver."
         )
@@ -257,7 +330,7 @@ class HumanBehaviorAnalyzer:
             if tension_level > 50:
                 signals.append(
                     MicroSignal(
-                        signal_type="tension",
+                        signal_type="visual_edge_density",
                         confidence=min(tension_level / 100.0, 1.0),
                         location="shoulder_region",
                         evidence=f"Anatomik omuz bölgesi kenar yoğunluğu (tension): {tension_level:.2f}",
@@ -306,11 +379,11 @@ class HumanBehaviorAnalyzer:
         if passive_count > 3:
             signals.append(
                 MicroSignal(
-                    signal_type="contradiction",
-                    confidence=0.8,
-                    location="passive_voice",
+                    signal_type="passive_voice_observation",
+                    confidence=0.6,
+                    location="linguistic",
                     evidence=f"Pasif kipi kullanım: {passive_count}",
-                    psychological_weight=0.85,
+                    psychological_weight=0.3,
                 )
             )
 

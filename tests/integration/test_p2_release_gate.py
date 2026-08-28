@@ -68,9 +68,11 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
         )
     elif name == "DigitalColdReading":
         return DigitalColdReading(
-            surface_identity="sosyal",
-            detected_wound="anlasilmama",
-            defense_mechanism="mizah",
+            observations=["Test gözlemi"],
+            possible_interpretations=["Test hipotezi"],
+            alternative_interpretations=[],
+            unsupported_claims=[],
+            confidence=0.8,
             micro_signals=[MicroSignal(signal_type="authentic", confidence=0.9, location="text_subtext", evidence="test", psychological_weight=90.0)],
             achilles_score=85.0,
             resonance_potential=0.9

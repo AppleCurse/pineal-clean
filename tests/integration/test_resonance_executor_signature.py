@@ -26,9 +26,11 @@ async def test_real_resonance_calculator_execution_in_executor(tmp_path):
         authentic_anchors=["felsefe"]
     )
     mock_human_res = DigitalColdReading(
-        surface_identity="test",
-        detected_wound="yalnizlik",
-        defense_mechanism="maske",
+        observations=["Test gözlemi"],
+        possible_interpretations=["Test hipotezi"],
+        alternative_interpretations=[],
+            unsupported_claims=[],
+            confidence=0.8,
         micro_signals=[MicroSignal(signal_type="authentic", confidence=0.9, location="bio", evidence="gercek", psychological_weight=0.8)],
         achilles_score=85.0,
         resonance_potential=0.8

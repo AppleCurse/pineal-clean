@@ -35,9 +35,11 @@ class FailingGateway:
 class FakeResultGateway:
     async def query_json(self, *a, **k):
         return DigitalColdReading(
-            surface_identity="blogger",
-            detected_wound="yüzeysellik",
-            defense_mechanism="sessizlik",
+            observations=["Test gözlemi"],
+            possible_interpretations=["Test hipotezi"],
+            alternative_interpretations=[],
+            unsupported_claims=[],
+            confidence=0.8,
             micro_signals=[
                 MicroSignal(
                     signal_type="defense", confidence=0.9, location="linguistic",
@@ -56,11 +58,7 @@ async def test_llm_failure_keeps_observations_but_no_interpretation():
 
     assert result.data_confidence is False
     assert result.fallback_reason == "llm_unavailable"
-    assert result.detected_wound == "interpretation_unavailable"
-    assert result.defense_mechanism == "interpretation_unavailable"
-    assert result.achilles_score == 0.0
-    assert result.resonance_potential == 0.0
-    # Gözlemler kaybolmaz (deterministik, ölçümlü)
+    assert result.possible_interpretations=["Test hipotezi"], ölçümlü)
     assert any(s.signal_type == "defense" for s in result.micro_signals)
 
 

@@ -145,8 +145,11 @@ class ShadowExecutor:
                     ]
             else:
                 p_analysis = {
-                    'surface_identity': task_input.get('target_profile', {}).get('bio', '')[:50],
-                    'detected_wound': strategy['vector'],
+                    'observations': [],
+                    'possible_interpretations': [strategy['vector']],
+                    'confidence': 0.85,
+                    'alternative_interpretations': [],
+                    'unsupported_claims': [],
                     'resonance_potential': dark.exploitability,
                     'micro_signals': [
                         {

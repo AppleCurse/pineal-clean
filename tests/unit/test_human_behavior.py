@@ -143,9 +143,11 @@ async def test_execute():
     from agent_core.agents.human_behavior import DigitalColdReading
     mock_llm = MagicMock()
     mock_llm.query_json = AsyncMock(return_value=DigitalColdReading(
-        surface_identity="test",
-        detected_wound="yüzeysellik",
-        defense_mechanism="sessizlik",
+        observations=["Test gözlemi"],
+        possible_interpretations=["Test hipotezi"],
+        alternative_interpretations=[],
+            unsupported_claims=[],
+            confidence=0.8,
         micro_signals=[],
         achilles_score=10.0,
         resonance_potential=0.5,
