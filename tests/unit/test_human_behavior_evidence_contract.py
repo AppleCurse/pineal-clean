@@ -58,7 +58,7 @@ async def test_llm_failure_keeps_observations_but_no_interpretation():
 
     assert result.data_confidence is False
     assert result.fallback_reason == "llm_unavailable"
-    assert result.possible_interpretations == ["Test hipotezi"]
+    assert result.possible_interpretations == []
     assert any(s.signal_type == "defense" for s in result.micro_signals)
 
 

@@ -192,9 +192,9 @@ class HumanBehaviorAnalyzer:
         # 5. Evidence gate: hiç gözlem yoksa LLM'e "yorum" ürettirmek yok.
         if not all_signals and not contradictions and not bio.strip():
             return DigitalColdReading(
-                surface_identity="observation_unavailable",
-                detected_wound="interpretation_unavailable",
-                defense_mechanism="interpretation_unavailable",
+                observations=[ ],
+                possible_interpretations=[ ], confidence=0, alternative_interpretations=[ ],
+                unsupported_claims=[ ],
                 micro_signals=[],
                 achilles_score=0.0,
                 resonance_potential=0.0,
@@ -228,9 +228,9 @@ class HumanBehaviorAnalyzer:
                 "gözlemler döndürülüyor.", type(exc).__name__,
             )
             return DigitalColdReading(
-                surface_identity=text_data.get("claimed_identity", "") or "observation_unavailable",
-                detected_wound="interpretation_unavailable",
-                defense_mechanism="interpretation_unavailable",
+                observations=[ ],
+                possible_interpretations=[ ], confidence=0, alternative_interpretations=[ ],
+                unsupported_claims=[ ],
                 micro_signals=all_signals,
                 achilles_score=0.0,
                 resonance_potential=0.0,
