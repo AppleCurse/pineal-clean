@@ -44,3 +44,4 @@ cache/
 memory/*.db
 
 .venv/
+test_mem/
