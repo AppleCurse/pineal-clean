@@ -147,10 +147,3 @@ class PatternInterrupt:
         if not peak_hour or peak_hour == "--":
             return None
         return f"tepe saat {peak_hour}"
-
-    def _extract_cultural_reference(self, analysis: Dict) -> str | None:
-        quotes = analysis.get("evidence_quotes", []) or []
-        for quote in quotes:
-            if isinstance(quote, str) and quote.strip():
-                return quote.strip()[:80]
-        return None

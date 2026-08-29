@@ -10,13 +10,3 @@ class PipelineStatus(str, Enum):
     HALTED_CRITICAL = "halted_critical"
     HALTED_FREQUENCY = "halted_frequency"
     FAILED = "failed"
-
-    def is_success(self) -> bool:
-        return self in (PipelineStatus.COMPLETED, PipelineStatus.PARTIALLY_COMPLETED)
-    
-    def is_halted(self) -> bool:
-        return self in (
-            PipelineStatus.HALTED_INSUFFICIENT_EVIDENCE, 
-            PipelineStatus.HALTED_CRITICAL, 
-            PipelineStatus.HALTED_FREQUENCY
-        )

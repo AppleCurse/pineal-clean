@@ -1,0 +1,14 @@
+# İKİNCİ ADIM kurulum dosyası — requirements.txt'TEN SONRA çalıştırılır:
+#   pip install -r requirements.txt && pip install -r requirements-osint.txt
+#
+# Neden ayrı: crawl4ai psutil>=6.1.1, open-interpreter psutil<6.0.0 BEYAN
+# eder; iki aralık tek pip işleminde ResolutionImpossible. Kaynak okuması +
+# çalışma zamanı kanıtı: open-interpreter yalnız virtual_memory/disk_usage,
+# crawl4ai yalnız Process/process_iter kullanır — her ikisi de her psutil
+# sürümünde çalışır (aşırı-katı metadata). Bu adım psutil'i >=6.1.1'e
+# yükseltir; open-interpreter'ın gerçek API kullanımı testlerle korunur
+# (tests/unit/test_consolidation_faz1_5.py::TestDeclaredLibrariesInstalled).
+#
+# Public-web sayfadan LLM-dostu metin (Apache-2.0). Kapı: ENABLE_CRAWL4AI
+# (varsayılan kapalı); renderer=http (default) tarayıcı binary'si gerektirmez.
+crawl4ai>=0.9.2

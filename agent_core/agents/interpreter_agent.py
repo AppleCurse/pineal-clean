@@ -3,11 +3,6 @@ from typing import Dict, Any, List, Optional
 import asyncio
 import os
 
-class CodeExecutionChunk(BaseModel):
-    type: str  # "code", "output", "error", "message"
-    format: str  # "python", "shell", "text"
-    content: str
-
 class InterpreterResult(BaseModel):
     prompt: str
     code_blocks: List[str] = []

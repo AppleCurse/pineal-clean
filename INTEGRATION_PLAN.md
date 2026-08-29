@@ -329,3 +329,70 @@ Raporun "kanıta dayalı/eksiksiz" öz-iddiası örneklenen iddiaların ~yarıs�
    koşulu UI'da belgelenmeden eklenmez (FAZ 6 koşulu aynen duruyor).
 4. Watchlist'e yeni eklendi: OSINT-D2, OWASP SocialOSINTAgent,
    ScrapeGraphAI (crawl4ai zaten mevcut; LLM-pipeline bağımlılığı).
+
+
+---
+
+## 11. Sahte-veri/ölü-kod tam temizliği (bu commit)
+
+Talep: "tek satır sahte veri / mock / işe yaramaz harf kalmasın." Yöntem ve
+sonuç (tüm dosya ağacı: agent_core, backend, scripts/, rust_core, android
+main, frontend src, live_llm_gate.py):
+
+### Sweep sonuçları (kanıt)
+
+- **Mock/fake KULLANIMI production'da: SIFIR.** AST-bazlı tarayıcı
+  (yorumlar algılayamaz): mock import'u ya da Mock/AsyncMock/MagicMock
+  çağrısı yok. Literal sweep (alper/johndoe/test@/fakeUser/mockData vb.)
+  Python+Kotlin+Svelte+Rust+Shell'de boş. 37+8 eşleşmenin TAMAMI
+  anti-uydurma yorumları ("sahte ... ÜRETİLMEZ" yasaklarını belgeleyen).
+- Hardcoded API-key kalıbı: yok. TODO/FIXME/XXX/HACK (py): 0.
+- Assert'siz test dosyası: 0. (zaten ölü) agent_core/p2p + db/reflection.sql
+  git geçmişinde yok — koruma testi geri dönüşü kilitler.
+
+### Silinen ölü kod (her biri: vulture işareti + tam-repo sıfır-referans kanıtı)
+
+- `interpreter_agent.CodeExecutionChunk` (kullanılmayan pydantic model)
+- `pattern_interrupt._extract_cultural_reference` (çağrılmayan yardımcı)
+- `pipeline_status.is_success/is_halted` (çağrılmayan metotlar; is_*
+  eşleşmeleri rust_core'a aittir — reqwest/struct, ilgisiz)
+- `canonical_memory.ProfileMemory` (kullanılmayan model)
+- `hindsight_memory.get_task_history/delete_task_semantic` (çağrılmayan API)
+- `seismos_engine.burst_factor/style_z_threshold` parametreleri (hiçbir
+  çağırıcı geçmiyor; hiçbir atanma yok)
+- `human_behavior` erişilemez ikinci try-blok (ilk try her yoldan dönüyor)
+- `backend/api` kullanılmayan `scrape_readonly` import'u
+- Korunanlar (vulture yanlış-pozitifleri): pydantic field_validator'lar
+  (url_must_be_real/posts_must_be_real dekoratörle bağlı), FastAPI
+  dekoratörlü uç fonksiyonları, test-kapsamlı metotlar (get_stats vb.)
+
+### Ders (dürüst kayıt): kapsam kusuru ve geri alma
+
+`build_user_context` ilk referans taramamda 0 çıktı çünkü grep kapsamım
+scripts/'i KAPSAMIYORDU; silince CLI entegrasyon testleri ImportError verdi
+(kanıt: test_run_task_cli). GERİ YÜKLENDİ. Ders: sıfır-referans hükmü tüm
+ağaç (scripts/, rust_core/, android/, frontend/) ile verilir.
+
+### requirements: psutil adjudikasyonu düzeltildi (kendi FAZ 4 kusurum)
+
+`psutil>=5.9.6,<6.0.0` pini + crawl4ai `>=6.1.1` beyanı TAZE kurulumda
+ResolutionImpossible üretiyordu (tek işlem sözleşmesi bozuktu). Çözüm:
+requirements.txt tek-işlemde kurulur (crawl4ai'siz); crawl4ai ikinci adımda
+`requirements-osint.txt` ile gelir. Çalışma-zamanı kanıtı (psutil 7.2.2):
+open-interpreter import + virtual_memory/disk_usage OK; crawl4ai +
+async_dispatcher OK. Kalıcı test: TestPsutilAdjudicationRuntime.
+
+### Yeni koruma: tests/unit/test_no_mock_in_production.py
+
+- Production Python'da mock import/çağrısı = FAIL (AST; yorumlar etkisiz)
+- Dedektör canlılık kanıtı: tests/'te en az 1 mock bulmalı (sahte-geçer
+  koruma testi imkânsız)
+- frontend/android sahte-veri kalıbı taraması; ölü dosyaların geri dönüş
+  yasağı; psutil iki-adım çalışma-zamanı sözleşmesi (7 test)
+
+### Doğrulama
+
+- ruff PASS; pytest **450/450 PASS** (443+7 koruma)
+- Kanonik smoke (taze venv, silinmiş ölü kodla): 3 deneysel uç disabled +
+  stealth görünümü + root 200 + WS pipeline birebir (halted_evidence/
+  [mirror_truth])

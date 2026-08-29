@@ -153,19 +153,6 @@ class HumanBehaviorAnalyzer:
             except Exception as exc:
                 logging.warning(f"Visual analysis failed for {image_url}: {exc}")
                 return []
-            try:
-                response = await client.get(image_url)
-                response.raise_for_status()
-                if len(response.content) > self.MAX_IMAGE_BYTES:
-                    logging.warning("Skipping oversized image: %s", image_url)
-                    return []
-                arr = np.frombuffer(response.content, dtype=np.uint8)
-                image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if image is not None:
-                    return self._analyze_visual_micro_img(image)
-            except (httpx.HTTPError, ValueError) as exc:
-                logging.warning("Visual analysis failed for %s: %s", image_url, exc)
-            return []
 
         try:
             async with httpx.AsyncClient(

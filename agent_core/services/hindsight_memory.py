@@ -256,35 +256,6 @@ class HindsightMemory(CanonicalMemory):
         results.sort(key=lambda x: x["similarity"], reverse=True)
         return results[:top_k]
 
-    async def get_task_history(self, task_id: str) -> List[Dict[str, Any]]:
-        """Bir göreve ait tüm indekslenmiş kanıtları döndürür."""
-        self._validate_task_id(task_id)
-        conn = self._connect()
-        try:
-            rows = conn.execute(
-                "SELECT metadata, created_at FROM semantic_memories "
-                "WHERE task_id = ? ORDER BY created_at ASC",
-                (task_id,),
-            ).fetchall()
-        finally:
-            conn.close()
-
-        return [
-            {"content": json.loads(meta) if meta else {}, "created_at": ts}
-            for meta, ts in rows
-        ]
-
-    async def delete_task_semantic(self, task_id: str) -> int:
-        """Bir görevin anlamsal indeks kayıtlarını siler."""
-        self._validate_task_id(task_id)
-        conn = self._connect()
-        try:
-            cur = conn.execute("DELETE FROM semantic_memories WHERE task_id = ?", (task_id,))
-            conn.commit()
-            return cur.rowcount
-        finally:
-            conn.close()
-
     def get_stats(self) -> Dict[str, Any]:
         try:
             conn = self._connect()

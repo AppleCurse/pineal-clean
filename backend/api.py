@@ -32,11 +32,6 @@ except Exception:
     from task_executor import PinealExecutor, InsufficientEvidenceError
 
 try:
-    from scraper import scrape_readonly
-except Exception:
-    scrape_readonly = None
-
-try:
     from agent_core.scraper.instagram_ghost import InstagramGhostScraper
 except Exception:
     InstagramGhostScraper = None
