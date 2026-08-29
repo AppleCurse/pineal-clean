@@ -98,6 +98,7 @@ docker compose up --build
 ### C) Manuel
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-osint.txt   # 2. adım: crawl4ai (psutil meta-çatışması için ayrı dosya; opsiyonel)
 python -m playwright install chromium  # ZORUNLU ADIM (Docker dışı manuel kurulumlarda)
 cd frontend && npm ci && npm run build && cd ..
 uvicorn backend.api:app --host 0.0.0.0 --port 8000
@@ -119,6 +120,12 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan `google/gemini-3.7-flash`; VisionAnalyzer ve görselli Aspasia istekleri). |
 | `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
+| `ENABLE_MAIGRET`, `ENABLE_HOLEHE`, `ENABLE_CRAWL4AI` | Deneysel OSINT kapıları — **hepsi default KAPALI**; kapalıyken pipeline davranışı değişmez. Limit/timeout alt değişkenleri `.env.example`'da. |
+| `STEALTH_PROVIDER` | `playwright_stealth` (default) \| `invisible` \| `cloak` \| `none`. invisible/cloak yalnız binary yolu gösterilirse kullanılabilir (indirme yapmaz): `INVISIBLE_BROWSER_BINARY`, `CLOAK_BROWSER_EXECUTABLE`. |
+
+Deneysel uçlar: `POST /api/experimental/{maigret/scan, holehe/scan, crawl/fetch, socid/extract}` ve
+`GET /api/experimental/stealth`. Sözleşme: kullanılamayan tarama `available:false` + makine-okunur
+sebep döner; veri ASLA uydurulmaz. Kanıt zinciri ve araç hükümleri: `INTEGRATION_PLAN.md`.
 
 Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 

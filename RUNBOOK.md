@@ -5,7 +5,7 @@
 |---|---|---|
 | Windows | `baslat.bat` | venv + pip + frontend build (dist yoksa) + uvicorn:8000 |
 | Docker | `docker compose up --build` | Playwright/Chromium dahil; `pineal_memory` volume |
-| Manuel | `pip install -r requirements.txt` → `cd frontend && npm ci && npm run build` → `uvicorn backend.api:app --port 8000` | |
+| Manuel | `pip install -r requirements.txt && pip install -r requirements-osint.txt` → `cd frontend && npm ci && npm run build` → `uvicorn backend.api:app --port 8000` | İkinci dosya crawl4ai içindir (psutil meta-çatışması nedeniyle iki adım) |
 | Dev (vite) | `frontend/.env`: `VITE_API_BASE=http://127.0.0.1:8000` → `npm run dev` | :5173 → :8000 |
 
 ## Anahtarlar (`.env` veya UI Kasası)
@@ -48,6 +48,23 @@ cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
 CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest),
 frontend (check + build + dist doğrulama), smoke (uvicorn + curl).
+
+Süitte kalıcı korumalar: `test_no_mock_in_production.py` (production'da mock yasağı,
+AST-bazlı; dedektör canlılık kanıtı içerir), `test_consolidation_faz1_5.py`
+(default-kapı sözleşmesi + beyan→kurulu zinciri).
+
+## Deneysel OSINT kapıları (FAZ 1-5)
+- `ENABLE_MAIGRET` / `ENABLE_HOLEHE` / `ENABLE_CRAWL4AI` — **default KAPALI**;
+  kapalıyken davranış değişmez (uçlar dürüst `disabled` döner). Ayrıntılı alt
+  değişkenler `.env.example`'da; kurulum ikinci adım dosyası:
+  `pip install -r requirements-osint.txt` (crawl4ai; psutil meta-çatışması).
+- `STEALTH_PROVIDER=playwright_stealth|invisible|cloak|none` — seçici kapı DEĞİL:
+  default bugünkü davranış. invisible/cloak binary İNDİRMEZ; `INVISIBLE_BROWSER_BINARY`
+  / `CLOAK_BROWSER_EXECUTABLE` yolu gösterilmezse dürüst `binary_missing` döner
+  (`GET /api/experimental/stealth` ile sorgulanır).
+- Dürüstlük sözleşmesi: tarama kullanılamazsa `available:false` + makine-okunur
+  sebep; "iz/kayıt yok" iddiası yalnız sıfır-hata taramada; mock/uydurma yasak
+  (testle korunur).
 
 Canlı LLM gate (manuel, gerçek anahtar gerektirir):
 ```
