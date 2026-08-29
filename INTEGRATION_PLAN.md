@@ -247,3 +247,42 @@ Yüzey sözleşmesi (`test_consolidation_faz1_5.py`):
   holehe 6/6 provider_errors, crawl fetch_error — dürüst, uydurma yok
 - DEFAULT pozür (kanonik): üç deneysel uç `disabled`; WS pipeline birebir
   aynı (halted_evidence, planned=[mirror_truth]); root/socid 200
+
+
+---
+
+## 9. Araç-liste denetimi #2 — "Yeraltı/nadir OSINT araçları" (bu commit)
+
+Kullanıcı listesi kanıt sayılmaz: 5 iddia GitHub API + repo/PyPI kaynak
+okumasıyla doğrulandı (ölçüm tarihi: 2026-08-29). Mesajlar README çevirisi
+olduğu için önceki denetime kıyasla uydurma oranı düşük; yine de üç kayda
+değer bulgu var (aşağıda).
+
+| # | Liste adı | Gerçek repo (çözümlenen) | Ölçülen (GitHub API) | İddia hükmü | Pipeline hükmü |
+|---|---|---|---|---|---|
+| 1 | OpenOSINT "1,5k, 19 araç, MIT, MCP" | OpenOSINT/OpenOSINT | **1490★, MIT, Python**, push 26 Ağu 2026 (aktif), repo **Mayıs 2026'da yaratılmış** (4 aylık) | 19 araç ✓ — projenin KENDİ commit'i sayı kaymasını (16/18/19) koddan türetilen sayı + docs-consistency testiyle düzeltmiş; MCP ✓; MIT ✓; "halüsinasyon yapısal olarak imkânsız" = vendor pazarlaması (araç çıktıları gerçek binary'lerden; rapor/özet katmanı hâlâ LLM üretimi); **ÇELİŞKİ:** "web UI üçüncü taraftan tamamen arındırılmış" — Bright Data SERP/Web Unlocker (ticari) + IP2Location sponsor entegrasyonları mevcut | FAZ 2/3 ile işlevsel çakışma (holehe/sherlock/maigret wrapper'ı); LLM+API-key gerektiren AGENT wrapper → **gömme YOK; izlemede** |
+| 2 | "arayıcı" 861 | **seekr-osint/seekr** | **861★ birebir, GPL-3.0**, Go, push 16 Haz 2026 (created 2022-12) | Listenin her maddesi README'nin birebir çevirisi: no-API-keys ✓, Go+BadgerDB ✓, desktop+web ✓, GitHub-to-email ✓, Guide ✓, hesap kartları ✓, tema/eklenti ✓ | Uygulama (kütüphane değil) + **GPL-3.0** → gömme yok; kişi-hedef DB/kart konsepti ürün ilhamı olabilir. **İzlemede** |
+| 3 | "kullanıcı tarayıcı" 3.4k | **kaifcodec/user-scanner** | **3433★, MIT, Python**, push 28 Ağu (dün), created Eki 2025 | 455+ vektör (175+/280+) ✓ birebir; 2-in-1 ✓; ayrıca MCP server + cross-scan pivot + metadata scraping | FAZ 2/3 ile TAM çakışma ama **tek entegrasyon adayı**: MIT+Python, ek değer = metadata+pivot. Şart: yerinde dürüstlük-davranış denetimi (holehe tipi rateLimit maskesi taraması) — karar kullanıcıya ait |
+| 4 | xurlfind3r 719 | **hueristiq/xurlfind3r** | **719★ birebir, MIT**, Go, push 23 Şub 2026 | Pasif-only ✓ (repo açıklaması birebir) | Domain-URL keşfi (bug bounty recon) — kişi-odaklı pipeline'da karşılığı yok. **Uygulanamaz/izlemede** |
+| 5 | "korku veren-osint-arsenal" 2.6k | **rawfilejson/awesome-osint-arsenal** | **2643★, MIT, Shell**, push 29 Ağu (bugün), created Nis 2026, 34 commit | 100+ araç / tek komut / SOCMINT-GEOINT-ağ-darkweb-adli ✓ birebir (install.sh, osint.sh, forensics.sh, tools.json) | Kali hedefli **installer script koleksiyonu** — pipeline'a gömülemez kategori (seçkili requirements zaten mevcut). Kaynak-liste değeri var |
+
+### Denetim bulguları (kontrast önceki listeyle)
+
+1. Bu listede önceki gibi tamamen uydurma araç YOK — 5/5 gerçek; Türkçe
+   adlar ("arayıcı", "kullanıcı tarayıcı", "korku veren") orijinal adların
+   (seekr, user-scanner, awesome-osint-arsenal) makine çevirisi.
+2. Yıldız sayıları 5/5 doğru ölçüldü (1490→"1,5k", 861, 3433→"3,4k",
+   719 birebir, 2643→"2,6k").
+3. CONTRADICTION: OpenOSINT "üçüncü taraf isteklerinden tamamen arındırılmış"
+   iddiası ticari Bright Data + sponsor API entegrasyonlarıyla çelişiyor;
+   "halüsinasyon imkânsız" iddiası güçlendirilmiş pazarlama (araç katmanı
+   gerçek; rapor katmanı LLM). İlginç paralellik: sayı kaymasını koddan
+   türetilmiş sayı + regresyon testiyle kapatmaları bizim docs-consistency
+   yaklaşımımızın aynısı.
+4. Yaş riski: #1 (4 aylık), #3 (10 aylık), #5 (5 aylık) hypergrowth tek-ön
+   repo'lar; #2 (2022) ve #4 (2021) oturmuş projeler.
+
+**Entegrasyon kararı bilinçli olarak AÇIKTA:** yalnız #3 (user-scanner)
+koşullu aday; yerinde doğrulama protokolü (kur → introspeksiyon → dürüstlük
+davranış testi → FAZ2/3 kapıları arkasında alternatif sağlayıcı) kullanıcı
+onayıyla başlar. #1/#2 gömme-red (çakışma/licence), #4/#5 kategori-dışı.
