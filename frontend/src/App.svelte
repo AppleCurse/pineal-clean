@@ -6,28 +6,39 @@
 
   let ws: WebSocket;
 
-  let telemetryData = null;
-  let tasksData = null;
+  type TelemetryPayload = Record<string, unknown>;
+  type TasksPayload = { tasks: Array<{ task_id: string; evidence_count?: number }>; active_tasks?: string[] };
+
+  let telemetryData: TelemetryPayload | null = null;
+  let tasksData: TasksPayload | null = null;
 
   async function fetchTelemetry() {
     try {
-      let res = await fetch('/api/telemetry');
+      const res = await fetch(`/api/telemetry?client_id=${$clientId}`);
+      if (!res.ok) return;
       telemetryData = await res.json();
-    } catch(e) {}
+    } catch (_e) {
+      /* ignore network errors in debug panel */
+    }
   }
   
   async function fetchTasks() {
     try {
-      let res = await fetch(`/api/tasks?client_id=${$clientId}`);
+      const res = await fetch(`/api/tasks?client_id=${$clientId}`);
+      if (!res.ok) return;
       tasksData = await res.json();
-    } catch(e) {}
+    } catch (_e) {
+      /* ignore */
+    }
   }
   
-  async function deleteTask(taskId) {
+  async function deleteTask(taskId: string) {
     try {
-      await fetch(`/api/tasks/${taskId}?client_id=${$clientId}`, {method: 'DELETE'});
-      fetchTasks();
-    } catch(e) {}
+      await fetch(`/api/tasks/${taskId}?client_id=${$clientId}`, { method: 'DELETE' });
+      await fetchTasks();
+    } catch (_e) {
+      /* ignore */
+    }
   }
 
 
@@ -144,13 +155,13 @@
     {#if tasksData}
       <div style="background: #111; padding:10px; border-radius: 4px; border: 1px solid #333; font-size: 11px; margin-top: 10px;">
         <h4 style="margin: 0 0 5px 0; color:var(--gold);">TASKS (RETENTION):</h4>
-        {#each tasksData.tasks as task}
+        {#each (tasksData.tasks ?? []) as task}
            <div style="display:flex; gap:10px; margin-bottom:5px; align-items:center;">
               <span>{task.task_id} ({task.evidence_count} evidence)</span>
               <button class="btn-dark" style="color:red; border: 1px solid red; padding: 2px 6px;" on:click={() => deleteTask(task.task_id)}>DELETE</button>
            </div>
         {/each}
-        {#if tasksData.tasks.length === 0}
+        {#if (tasksData.tasks ?? []).length === 0}
           <p style="margin:0; color:#ccc;">No tasks found.</p>
         {/if}
       </div>

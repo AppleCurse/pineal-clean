@@ -31,7 +31,7 @@
 | 429 (initiate/aspasia) | Rate limit — 1 dk bekle (bilinçli koruma) |
 | 401 tüm API çağrıları | `PINEAL_TOKEN` tanımlı ama UI/istemci göndermiyor → `VITE_PINEAL_TOKEN` eşle veya token'ı kaldır |
 | Scrape 429/403 (Instagram) | Platform limit/cookie: Kasaya güncel cookie gir |
-| X (Twitter) hedefi | Kazıma devre dışı (B4): `XScraperUnsupportedError`; WS logunda "DESTEKLENMİYOR" görünür, analiz boş hedefle sürer |
+| X (Twitter) hedefi | Kazıma devre dışı (B4): analiz **başlamaz** (`awaiting_authorization`); alternatif için `POST /api/scraper/authorize-alternative` |
 | WS bağlanmıyor | Token kipinde `?token=` gerekli; port 8000 dışındaysa `VITE_API_BASE` tanımla |
 
 ## Görev verisi
@@ -41,7 +41,7 @@
 ## Test / Kalite kapıları
 ```
 ruff check .          # gerçek hata kapısı (E9+F)
-pytest -q             # 223 test (bu revizyon itibarıyla): unit+integration+e2e+ws sıra+güvenlik+protokol
+pytest -q             # unit+integration+e2e+ws sıra+güvenlik+protokol
                       # güncel sayı: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
@@ -59,6 +59,6 @@ Bu script 360° zincirinin gerçek LLM ile uçtan uca doğrulamasıdır.
 
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
-- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur — derlenmeyen/bağlantısız deneysel kod).
+- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` CI'da derlenir ama Python ürün yoluna bağlı değildir).
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.
 - X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda ZORUNLU adım: `python -m playwright install chromium` (Docker imajı otomatik kurar).

@@ -9,7 +9,7 @@ Kararları `PinealExecutor` + `CognitiveRouter` verir; **Aspasia** karar verici 
 sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 
 > Bu depo güncel olarak şu yeni bileşenleri içermektedir:
-> `rust_core/` (Rust katmanı — derlenmeyen/CI'da koşmayan, Python'a bağlanmamış deneysel kod; dosyada birim testleri mevcut), 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
+> `rust_core/` (Rust katmanı — Python ürün yoluna bağlı değil; CI rust-core job'u cargo check/test çalıştırır), 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
 > i18n çift dil desteği (TR/EN) ve yeni OSINTInvestigatorAgent & AuthenticityAuditorAgent zincirleri.
 
 ---
@@ -122,8 +122,8 @@ Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 
 ## 6. Testler
 ```bash
-pytest                          # 223 test (bu revizyon itibarıyla): unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
-                                # Güncel sayı için: pytest --collect-only -q | tail -1
+pytest                          # unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+                                # Güncel sayı: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build
 ```
 
