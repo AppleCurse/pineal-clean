@@ -124,3 +124,46 @@ yokluk yalnız sıfır-hata koşulunda iddia edilir. Canlı: 6 gerçek modül /
 Alternatif (FAZ 6 koşullu): blackbird'ün alt kaynağı WhatsMyName (WHNS)
 veri setinin kendi lisansı ayrıca incelenerek çekirdek tarayıcı doğrudan
 değerlendirilebilir. Karar: red, kanıtlarıyla belgeli.
+
+
+---
+
+## 6. FAZ 4 uygulaması (bu commit) — Crawl4AI
+
+- `agent_core/services/crawl_enricher.py`: public-web sayfa → LLM-dostu
+  metin. Kapı `ENABLE_CRAWL4AI` (default kapalı); `CRAWL4AI_RENDERER`
+  (`http` default — AsyncHTTPCrawlerStrategy, tarayıcı binary'si GEREKMEZ;
+  `browser` — Playwright, binary yoksa dürüst `browser_missing`),
+  `CRAWL4AI_MAX_CHARS` (8000, max 50000), `CRAWL4AI_TIMEOUT` (20s),
+  `CRAWL4AI_RESEARCH_LIMIT` (2, max 5). SSRF guard: socid ile aynı
+  `is_safe_url`. Önbellek `CacheMode.BYPASS` (taze çekim, yanılsama yok).
+- `POST /api/experimental/crawl/fetch` — deneysel uç.
+- `_run_public_web_research` zenginleştirmesi: kapı açıkken eşleşen ilk
+  N sonuç `fetch_readable` ile çekilir; **yalnız available=True** sonuçlara
+  `crawl` alanı eklenir; hata alan EKLEMEZ (socid deseniyle aynı dürüst boş).
+- `quote_guard.guard_report` korpus genişlemesi: `input_data.public_web_sources`
+  (yalnız dict + boş olmayan `text`) gerçek çekilmiş sayfa metni olarak
+  korpusa girer; alan yoksa korpus BİREBİR aynı (anti-halüsinasyon davranışı
+  değişmez; gerçek public-web alıntıları artık doğrulanabilir).
+- requirements: `crawl4ai>=0.9.2` (Apache-2.0, PyPI metadata doğrulandı).
+
+### PSUTIL ÇATIŞMA ADJUDİKASYONU (kanıtla çözüldü)
+
+pip çatışması: crawl4ai `psutil>=6.1.1` BEYAN eder; open-interpreter
+`psutil<6.0.0` ister. Kaynak okuması: crawl4ai yalnız `Process()` +
+`process_iter()` kullanıyor (async_dispatcher.py, browser_manager.py,
+utils.py); open-interpreter yalnız `virtual_memory()` + `disk_usage()`.
+Çalışma zamanı kanıtı (psutil 5.9.8): her iki paketin gerçek çağrıları da
+sorunsuz. Karar: `psutil>=5.9.6,<6.0.0` pini (open-interpreter beyanına
+saygı; crawl4ai kullanımı 5.9.8'de doğrulandı, import + API testleri PASS).
+
+### Doğrulama (kanıt)
+
+- ruff PASS; pytest **419/419 PASS** (400+19 yeni)
+- Canlı (ağ kapalı sandbox): gerçek http çekim → `fetch_error` + gerçek
+  hata notu ("Cannot connect to host") — içerik UYDURULMADI; ssrf_blocked
+  (169.254.169.254) ve invalid_url canlı doğrulandı
+- FAZ1-3 regresyon uçları 200 + dürüst provider_errors (21/21 maigret,
+  6/6 holehe); pipeline default kapalı → davranış değişmedi
+- Not: `_run_public_web_research` FAZ 1'den beri backend/api.py:814'te
+  mevcut (ilk grep yalnız agent_core/ taramıştı — çelişki değil, kapsam hatası)

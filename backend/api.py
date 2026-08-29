@@ -719,6 +719,22 @@ async def holehe_scan(payload: HoleheScanPayload):
     return result.model_dump()
 
 
+class CrawlFetchPayload(BaseModel):
+    url: str
+
+
+@app.post("/api/experimental/crawl/fetch")
+async def crawl_fetch(payload: CrawlFetchPayload):
+    """Public-web sayfasını crawl4ai ile LLM-dostu metne çevirir (FAZ 4).
+
+    Kapı: ENABLE_CRAWL4AI=true (varsayılan kapalı; renderer=http tarayıcı
+    binary'si gerektirmez). Dürüst sonuç: içerik çekilemezse `available:false`
+    + makine-okunur sebep; ASLA uydurma içerik döner. SSRF guard'lı.
+    """
+    from agent_core.services.crawl_enricher import fetch_readable
+    return (await fetch_readable(payload.url)).model_dump()
+
+
 @app.post("/api/experimental/socid/extract")
 async def socid_extract(payload: SocidExtractPayload):
     """Profil URL'sinden yapılandırılmış kimlik kaydı çıkarır (socid-extractor).
@@ -872,9 +888,32 @@ async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, An
     except Exception as exc:  # zenginleştirme asıl sonucu asla bozmasın
         logger.warning("socid enrichment skipped: %s: %s", type(exc).__name__, str(exc)[:80])
         socid_note = ""
+    # [FAZ 4] Crawl4AI okunabilir-metin zenginleştirmesi. Kapı:
+    # ENABLE_CRAWL4AI (varsayılan kapalı → davranış birebir aynı). Yalnız
+    # available=True sonuçlar `crawl` alanına girer; hatalar alan EKLEMEZ
+    # (dürüst boş) ve asıl araştırma sonucunu asla bozmaz.
+    crawl_note = ""
+    try:
+        from agent_core.services.crawl_enricher import (
+            fetch_readable,
+            is_enabled as crawl_enabled,
+            research_limit,
+        )
+        if crawl_enabled() and matched:
+            crawled = 0
+            for m in matched[:research_limit()]:
+                res = await fetch_readable(m["source_url"])
+                if res.available:
+                    m["crawl"] = res.model_dump()
+                    crawled += 1
+            if crawled:
+                crawl_note = f" {crawled} sonuca crawl4ai ile okunabilir metin çekildi."
+    except Exception as exc:  # zenginleştirme asıl sonucu asla bozmasın
+        logger.warning("crawl4ai enrichment skipped: %s: %s", type(exc).__name__, str(exc)[:80])
+
     if matched:
         status = "ok"
-        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti." + socid_note
+        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti." + socid_note + crawl_note
     elif raw:
         status = "no_subject_match"
         note = f"Arama yapıldı ({len(raw)} sonuç) ama hiçbiri hedef kullanıcı adıyla eşleşmedi; sonuç gösterilmiyor (yanlış kişi eşleşmesi engeli)."

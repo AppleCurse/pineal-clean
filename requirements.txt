@@ -24,3 +24,12 @@ maigret>=0.6.5
 # bağımlılık olarak). Kapı: ENABLE_HOLEHE (varsayılan kapalı); istisnaları
 # rateLimit maskesi hata sayılır, kapalı ağda 'kayıtlı değil' iddia edilmez.
 holehe>=1.61
+# Public-web sayfadan LLM-dostu metin (Apache-2.0). Kapı: ENABLE_CRAWL4AI
+# (varsayılan kapalı); renderer=http (default) tarayıcı binary'si gerektirmez.
+crawl4ai>=0.9.2
+# psutil çatışma adjudikasyonu (kanıt: kaynak okuması + çalışma zamanı testi,
+# psutil 5.9.8): crawl4ai psutil>=6.1.1 BEYAN eder ama gerçekte yalnız
+# Process()/process_iter() kullanır (5.9.8 ile sorunsuz doğrulandı);
+# open-interpreter psutil<6.0.0 ister (virtual_memory/disk_usage). Aşırı katı
+# metadata çatışması; open-interpreter'ın beyanına saygı için pin'lenir.
+psutil>=5.9.6,<6.0.0

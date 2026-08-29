@@ -63,6 +63,14 @@ def guard_report(report: Dict[str, Any], input_data: Dict[str, Any]) -> Tuple[Di
     if timing.get("machine_note"):
         source_texts.append(str(timing.get("machine_note")))
 
+    # [FAZ 4] Public-web kaynak metinleri (crawl4ai zenginleştirmesinden
+    # available=True iken çağıranın koyduğu gerçek sayfa metinleri). Alan
+    # yoksa korpus BİREBİR aynı kalır — mevcut guard davranışı değişmez.
+    for src in (input_data.get("public_web_sources") or []):
+        text = src.get("text") if isinstance(src, dict) else None
+        if isinstance(text, str) and text.strip():
+            source_texts.append(text[:20000])
+
     corpus = _source_corpus(source_texts)
     stats = {
         "checked": 0,
