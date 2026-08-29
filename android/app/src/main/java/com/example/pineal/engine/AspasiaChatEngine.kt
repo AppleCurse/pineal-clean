@@ -32,6 +32,9 @@ class AspasiaChatEngine {
             Kullanıcı Adı: @${it.username}
             Motivasyonlar & İlgi Alanları: ${it.passions.corePassions.joinToString()}
             Bilişsel Ton (Cognitive): ${it.cognitive.communicationTone}
+
+            -- KARANLIK PROFİL (SHADOW) --
+            Narsisizm Eğilimi: ${it.shadowProfile.darkProfile.narcissism.level}
             
             -- KARANLIK PROFİL (SHADOW) --
             Narsisizm Eğilimi: ${it.shadowProfile.darkProfile.narcissism.level} 
@@ -41,6 +44,11 @@ class AspasiaChatEngine {
             Psikopati Eğilimi: ${it.shadowProfile.darkProfile.psychopathy.level}
             Psikopati Kanıtı: ${it.shadowProfile.darkProfile.psychopathy.semanticEvidence}
             Manipülasyon Stratejisi: ${it.shadowProfile.strategy}
+
+            -- İLETİŞİM KÖPRÜSÜ (AUTHENTIC BRIDGE) --
+            Önerilen İlk Giriş (Kanca): ${it.bridge?.suggestedOpeningMessage ?: ""}
+            Taktiksel Açıklama: ${it.bridge?.conversationStarterRationale ?: ""}
+
             
             -- İLETİŞİM KÖPRÜSÜ (AUTHENTIC BRIDGE) --
             Önerilen İlk Giriş (Kanca): ${it.bridge?.suggestedOpeningMessage ?: ""}
@@ -50,6 +58,7 @@ class AspasiaChatEngine {
             $hypothesesStr
             """.trimIndent()
         } ?: """
+            Şu an aktif bir profil analiz edilmedi.
             Şu an aktif bir profil analiz edilmedi. 
             -- CANLI SENTEZ AĞI (COGNITIVE HYPOTHESES) --
             $hypothesesStr
@@ -58,6 +67,7 @@ class AspasiaChatEngine {
         val systemPrompt = if (language == AppLanguage.TR) {
             """
             Sen Pineal-Gland sisteminin Bilişsel Danışmanı (Cognitive Advisor) Aspasia'sın.
+
             
             GÖREV VE KURALLAR (STRICT ROLE ENFORCEMENT):
             1. Sen kullanıcının/profilin psikolojik dinamiklerini (Semantic Evidence) derinlemesine analiz eden, destekleyici ve elit bir asistansın.
@@ -71,6 +81,7 @@ class AspasiaChatEngine {
         } else {
             """
             You are Aspasia, the Cognitive Advisor of the Pineal-Gland system.
+
             
             MISSION & RULES (STRICT ROLE ENFORCEMENT):
             1. You know the target's psychological vulnerabilities (Semantic Evidence).

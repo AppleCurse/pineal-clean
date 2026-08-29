@@ -13,6 +13,7 @@ interface ReconDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHypotheses(hypotheses: List<HypothesisEntity>)
+
     
     @Query("DELETE FROM recon_hypotheses WHERE targetId = :targetId")
     suspend fun clearTarget(targetId: String)

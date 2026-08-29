@@ -121,6 +121,7 @@ class PinealViewModel(
         _uiState.update { it.copy(selectedTab = tab) }
     }
 
+    fun setTargetUrl(url: String) {
     fun setTargetUrl(url: String) { 
         _uiState.update { it.copy(targetUrl = url) }
         if (url.isNotBlank()) loadTargetHypotheses(url)
@@ -143,6 +144,7 @@ class PinealViewModel(
     }
 
     fun togglePlatform(platform: String) {
+        _uiState.update {
         _uiState.update { 
             val current = it.selectedPlatforms.toMutableSet()
             if (current.contains(platform)) {
@@ -264,6 +266,9 @@ class PinealViewModel(
         viewModelScope.launch {
             try {
                 reconEngine.injectEvidence(newInfo, state.apiKey, "USER_INPUT")
+
+                val currentHypotheses = reconEngine.liveReconState.value
+                val entities = currentHypotheses.map {
                 
                 val currentHypotheses = reconEngine.liveReconState.value
                 val entities = currentHypotheses.map { 
@@ -278,6 +283,7 @@ class PinealViewModel(
                 }
                 repository.clearTargetHypotheses(state.targetUrl)
                 repository.saveHypotheses(entities)
+
                 
                 _uiState.update { it.copy(isProcessing = false) }
             } catch (e: Exception) {
@@ -285,6 +291,11 @@ class PinealViewModel(
             }
         }
     }
+
+    fun loadTargetHypotheses(targetId: String) {
+        viewModelScope.launch {
+            repository.getHypotheses(targetId).collect { entities ->
+                val hypotheses = entities.map {
     
     fun loadTargetHypotheses(targetId: String) {
         viewModelScope.launch {
@@ -328,6 +339,7 @@ class PinealViewModel(
 
         viewModelScope.launch {
             kotlinx.coroutines.delay(600)
+
             
             val replyText = aspasiaEngine.generateResponse(
                 userMessage = text,

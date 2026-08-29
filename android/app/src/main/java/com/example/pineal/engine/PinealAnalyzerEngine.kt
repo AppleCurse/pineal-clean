@@ -54,6 +54,9 @@ class PinealAnalyzerEngine {
         try {
             val prompt = """
                 Sen uzman bir bilişsel profil analisti (Pineal Gland v3.0) sistemisin.
+                Aşağıda verilen bilgilere dayanarak verilen kişinin psikolojik, sosyal ve davranışsal profilini pozitif, vizyoner ve gelişim odaklı bir dille çıkarman gerekiyor.
+                Tüm çıkarımlarının bir 'LLM Tahmini' (Inference) olduğunu kabul ederek, mantıklı, tutarlı ve derinlikli bir JSON üretmelisin.
+
                 Aşağıda verilen bilgilere dayanarak verilen kişinin psikolojik, sosyal ve davranışsal profilini pozitif, vizyoner ve gelişim odaklı bir dille çıkarman gerekiyor. 
                 Tüm çıkarımlarının bir 'LLM Tahmini' (Inference) olduğunu kabul ederek, mantıklı, tutarlı ve derinlikli bir JSON üretmelisin.
                 
@@ -63,6 +66,14 @@ class PinealAnalyzerEngine {
                 - Dinlediği Müzikler / Çalma Listesi (Kullanıcı girdisi): $playlist
                 - Kıskançlık / Özendiği Şeyler (Kullanıcı girdisi): $envies
                 - Biyometrik/Dijital Ayak İzi Kaynakları (Seçilen Platformlar): ${platforms.joinToString(", ")}
+
+                (Not: Analizi yaparken seçilen bu platformların psikolojik doğasını göz önünde bulundur.
+                Örn: LinkedIn profesyonel maske ve hiyerarşi, X/Twitter reaktif dürtüsellik, Instagram estetik/sosyal onay,
+                TikTok trend odaklılık, Snapchat geçicilik, Bluesky/Mastodon niş komünite göstergesidir.)
+
+                Çıktın SADECE JSON formatında olmalı. Başka metin veya markdown (```json) EKLEME.
+                JSON yapısı aşağıdaki data sınıflarının özelliklerini tamamen ve HİÇ EKSİKSİZ şekilde içermelidir:
+
                 
                 (Not: Analizi yaparken seçilen bu platformların psikolojik doğasını göz önünde bulundur. 
                 Örn: LinkedIn profesyonel maske ve hiyerarşi, X/Twitter reaktif dürtüsellik, Instagram estetik/sosyal onay, 
@@ -93,6 +104,7 @@ class PinealAnalyzerEngine {
 
             val apiResponse = RetrofitClient.service.generateContentPro(apiKey, request)
             var responseText = apiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+
             
             responseText = responseText.trim()
             if (responseText.startsWith("```json")) responseText = responseText.removePrefix("```json")
@@ -120,6 +132,8 @@ class PinealAnalyzerEngine {
             val promptTokens = prompt.length / 4 // Rough estimate
             val completionTokens = responseText.length / 4 // Rough estimate
             emit(PipelineEvent.TelemetryUpdate(TelemetryData(
+                cacheHitRate = "N/A (Canlı Çıkarım)",
+                cacheHits = 0,
                 cacheHitRate = "N/A (Canlı Çıkarım)", 
                 cacheHits = 0, 
                 llmCallsObserved = 1
@@ -157,11 +171,20 @@ class PinealAnalyzerEngine {
 
         try {
             val currentJsonStr = jsonParser.encodeToString(currentProfile)
+
             
             val prompt = """
                 Sen Pineal-Gland sisteminin "Bilişsel Keşif (Cognitive Recon Engine)" modülüsün.
                 Bilişsel dilbilim (cognitive linguistics) prensipleriyle profili sürekli analiz eder ve vizyon haritasını netleştirirsin.
                 Sana mevcut statik profil ve GÖZLEMLENEN YENİ VERİ / DAVRANIŞ (Bağlam) verilecektir.
+
+                MEVCUT PROFİL (JSON):
+                $currentJsonStr
+
+                GÖZLEMLENEN YENİ KANIT / KIRINTI (Kullanıcı girdisi):
+                $newEvidence
+                (Bu verinin geldiği/ilişkili olduğu platformlar: ${platforms.joinToString(", ")} - Bu platformların psikolojik doğasını (örn: X'te reaktif, LinkedIn'de maskeli) hesaba kat.)
+
                 
                 MEVCUT PROFİL (JSON):
                 $currentJsonStr
@@ -190,6 +213,7 @@ class PinealAnalyzerEngine {
 
             val apiResponse = RetrofitClient.service.generateContentPro(apiKey, request)
             var responseText = apiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+
             
             responseText = responseText.trim()
             if (responseText.startsWith("```json")) responseText = responseText.removePrefix("```json")
@@ -198,6 +222,7 @@ class PinealAnalyzerEngine {
             responseText = responseText.trim()
 
             val analyzerResponse = jsonParser.decodeFromString<AnalyzerResponse>(responseText)
+
             
             emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "[SENTEZ AĞI] Harita güncellendi, yeni veri bilişsel profile işlendi.")))
             emit(PipelineEvent.AgentUpdate("mirror_truth", "COMPLETED", analyzerResponse.bridge.resonanceScore))

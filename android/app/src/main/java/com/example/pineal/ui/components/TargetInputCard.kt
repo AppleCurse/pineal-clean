@@ -72,6 +72,7 @@ fun TargetInputCard(
             onValueChange = onEnviesChange,
             placeholder = "Envies, triggers..."
         )
+
         
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(text = "SOCIAL_FOOTPRINT_SOURCE", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)

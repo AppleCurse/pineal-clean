@@ -26,6 +26,8 @@ import androidx.compose.material.icons.Icons
         profile: HolisticProfile? = null,
         modifier: Modifier = Modifier
     ) {
+        val operationalFindings = hypotheses.filter {
+            it.status == ReconConfidence.KANITLANDI.name || it.status == ReconConfidence.KRITIK_FIRSAT.name
         val operationalFindings = hypotheses.filter { 
             it.status == ReconConfidence.KANITLANDI.name || it.status == ReconConfidence.KRITIK_FIRSAT.name 
         }
@@ -57,6 +59,7 @@ import androidx.compose.material.icons.Icons
                                     Profil: @${profile.username}
                                     Yaratıcılık: ${profile.cognitive.metrics.creativity}
                                     Liderlik: ${profile.cognitive.metrics.leadership}
+
                                     
                                     Motivasyonlar: ${profile.passions.corePassions.joinToString()}
                                     Tavsiye: ${profile.bridge?.conversationStarterRationale}
@@ -77,6 +80,7 @@ import androidx.compose.material.icons.Icons
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.5.sp
                 )
+
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 if (profile != null) {
@@ -96,6 +100,7 @@ import androidx.compose.material.icons.Icons
                     }
                 }
 
+
                 
                 if (operationalFindings.isEmpty()) {
                     Text(
@@ -111,6 +116,8 @@ import androidx.compose.material.icons.Icons
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .border(
+                                        1.dp,
+                                        if (isCritical) BloodRed.copy(alpha=0.4f) else MatrixGreenDim,
                                         1.dp, 
                                         if (isCritical) BloodRed.copy(alpha=0.4f) else MatrixGreenDim, 
                                         RoundedCornerShape(16.dp)
@@ -120,6 +127,7 @@ import androidx.compose.material.icons.Icons
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Row(
+                                        horizontalArrangement = Arrangement.SpaceBetween,
                                         horizontalArrangement = Arrangement.SpaceBetween, 
                                         modifier = Modifier.fillMaxWidth()
                                     ) {

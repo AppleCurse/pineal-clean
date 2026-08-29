@@ -45,6 +45,7 @@ fun ReconRadarCard(
                     letterSpacing = 1.sp
                 )
             }
+
             
             Spacer(modifier = Modifier.height(16.dp))
             if (hypotheses.isEmpty()) {
@@ -72,6 +73,7 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
         ReconConfidence.KRITIK_FIRSAT.name -> BloodRed
         else -> TextMuted
     }
+
     
     Surface(
         modifier = Modifier
@@ -99,6 +101,16 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
                     fontWeight = FontWeight.Bold
                 )
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = hypothesis.forensicImplication,
+                color = TextMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -113,6 +125,7 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(1.dp, MatrixGreenDim.copy(alpha=0.5f), RoundedCornerShape(16.dp)),
+                shape = RoundedCornerShape(16.dp),
                 shape = RoundedCornerShape(16.dp), 
                 color = SurfaceLighter
             ) {
@@ -123,6 +136,7 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
                     modifier = Modifier.padding(8.dp)
                 )
             }
+
             
             if (hypothesis.missingDataVectors.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))

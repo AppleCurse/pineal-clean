@@ -44,6 +44,7 @@ fun ReconInputCard(
                 color = TextMuted,
                 lineHeight = 14.sp
             )
+
             
             OutlinedTextField(
                 value = reconInput,
@@ -61,6 +62,9 @@ fun ReconInputCard(
                 ),
                 enabled = !isProcessing
             )
+
+            Button(
+                onClick = {
             
             Button(
                 onClick = { 
