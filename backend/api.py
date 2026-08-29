@@ -14,9 +14,12 @@ from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 import asyncio
 import json
+import logging
 import os
 import hashlib
 import time
+
+logger = logging.getLogger("backend.api")
 from datetime import datetime
 import sys
 
@@ -670,6 +673,22 @@ async def api_telemetry(client_id: str):
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }
 
+class SocidExtractPayload(BaseModel):
+    url: str
+
+
+@app.post("/api/experimental/socid/extract")
+async def socid_extract(payload: SocidExtractPayload):
+    """Profil URL'sinden yapılandırılmış kimlik kaydı çıkarır (socid-extractor).
+
+    Dürüst sonuç sözleşmesi: kayıt çıkmazsa `available:false` + makine-okunur
+    sebep döner; alan uydurulmaz. SSRF guard'lı (private/loopback engelli).
+    """
+    from agent_core.services.socid_enricher import extract_profile
+    record = await extract_profile(payload.url)
+    return record.model_dump()
+
+
 @app.post("/api/experimental/shadow/analyze")
 async def shadow_analyze(profile: dict):
     """Dark Triad analizi"""
@@ -793,9 +812,27 @@ async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, An
         if handle in (r.source_url or "").lower()
         or handle in (r.content or "").lower()
     ]
+    # socid-extractor zenginleştirmesi: eşleşen kaynak URL'lerden kararlı kimlik
+    # kaydı çıkmaya çalışılır. Kütüphane yok/ağ yok/kayıt yoksa alan EKLENMEZ —
+    # sonuç sözleşmesi bozulmaz (dürüst boş).
+    try:
+        from agent_core.services.socid_enricher import enrich_urls
+        socid_records = await enrich_urls([m["source_url"] for m in matched], limit=3)
+        by_url = {r.source_url: r for r in socid_records}
+        for m in matched:
+            rec = by_url.get(m["source_url"])
+            if rec is not None:
+                m["socid"] = rec.model_dump()
+        if socid_records:
+            socid_note = f" {len(socid_records)} sonuçtan yapılandırılmış kimlik kaydı çıkarıldı."
+        else:
+            socid_note = ""
+    except Exception as exc:  # zenginleştirme asıl sonucu asla bozmasın
+        logger.warning("socid enrichment skipped: %s: %s", type(exc).__name__, str(exc)[:80])
+        socid_note = ""
     if matched:
         status = "ok"
-        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti."
+        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti." + socid_note
     elif raw:
         status = "no_subject_match"
         note = f"Arama yapıldı ({len(raw)} sonuç) ama hiçbiri hedef kullanıcı adıyla eşleşmedi; sonuç gösterilmiyor (yanlış kişi eşleşmesi engeli)."
