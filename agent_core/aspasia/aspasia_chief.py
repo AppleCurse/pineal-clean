@@ -27,7 +27,6 @@ class AspasiaChief:
     def __init__(self, llm_gateway: Optional[LLMGateway] = None):
         self.llm = llm_gateway or LLMGateway()
 
-
     def build_telemetry_summary(self, room_state: Any) -> str:
         """Ajan telemetrisini ve kanıt zincirini yapılandırılmış veriden özetler."""
         if not room_state:

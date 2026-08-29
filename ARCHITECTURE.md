@@ -16,7 +16,7 @@
 | Telemetri | `agent_core/schemas/telemetry.py` + api.py kuyruğu | Pydantic event şemaları → FIFO → WebSocket (Snapshot + SearchEngine ayrımı) |
 | Aspasia | `agent_core/aspasia/aspasia_chief.py` | Gözlemci persona; telemetri özeti + sohbet (karar verici DEĞİL) |
 | Scraper | `agent_core/scraper/instagram_ghost.py` (IG) | Playwright+stealth; Pydantic V2 şema; kanıt yoksa HALT. X (`scraper.py`) **devre dışı** — `XScraperUnsupportedError` (B4) |
-| Rust Core | `rust_core/` | Deneysel: Python'a bağlanmamış, CI'da derlenmiyor (cargo yok) — ürün çalışma zamanı akışında yer almaz |
+| Rust Core | `rust_core/` | Deneysel: Python ürün çalışma zamanına bağlanmamış; CI'da `cargo check` + `cargo test` kapısı (rust-core job) çalışır ancak API/pipeline akışında yeri yoktur |
 
 ## Çalışma zamanı zincirleri
 

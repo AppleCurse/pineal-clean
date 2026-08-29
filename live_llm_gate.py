@@ -4,8 +4,8 @@ CANLI LLM RELEASE GATE (manuel — gercek OpenRouter anahtari ile).
 Calistirma (yerelde):
     OPENROUTER_API_KEY=sk-or-v1-... LIVE_LLM_E2E=1 python live_llm_gate.py
 
-GitHub Actions'ta manuel tetik:
-    .github/workflows/ci.yml  (secret: OPENROUTER_API_KEY)
+GitHub Actions notu: bu depoda ayrı bir live-gate workflow dosyası YOKTUR;
+    açmak isterseniz secret: OPENROUTER_API_KEY ile manuel workflow ekleyin.
 
 Kapsanan yol:
     input -> mirror_truth -> passion_mapper -> ... -> resonance_synthesizer

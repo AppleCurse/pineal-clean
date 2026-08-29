@@ -28,8 +28,11 @@ class LLMGateway:
         "upstage/solar-pro4": {"in": 0.03, "out": 0.12},
         "inclusionai/ling-3.0-flash": {"in": 0.021, "out": 0.063},
         "deepseek/deepseek-v4-flash": {"in": 0.14, "out": 0.28},
-        "z-ai/glm-5.2": {"in": 0.39, "out": 1.22},
-        "deepseek/deepseek-v4-pro": {"in": 0.71, "out": 1.42},
+        # 2026-08-29 canlı katalog denetimi: önceki değerler (0.10/0.10) katalog
+        # minimumlarının (~0.39/1.22) belirgin altındaydı; spend cap maliyeti
+        # olduğundan düşük sayıyordu. Muhafazakar (min-üstü) tahmin kullanılır.
+        "z-ai/glm-5.2": {"in": 0.50, "out": 1.50},
+        "deepseek/deepseek-v4-pro": {"in": 0.75, "out": 1.50},
         "google/gemini-3.7-flash": {"in": 0.375, "out": 1.875}
     }
     
@@ -84,7 +87,8 @@ class LLMGateway:
         self.circuit_opened_at = 0.0
         self.live_unlocked = False
         self.total_cost = 0.0
-        # P2-MALİYET: kümülatif harcama ve sert üst limit
+        # P2-MALİYET: kümülatif harcama ve sert üst limit.
+        # Default 0.0 (sınırsız) — .env.example'daki "0 = kapalı" sözleşmesiyle hizalı.
         self.spend_usd = 0.0
         self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 0.0)
         # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı

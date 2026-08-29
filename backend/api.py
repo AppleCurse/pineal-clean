@@ -196,12 +196,16 @@ def get_room(client_id: str) -> dict:
             vault["or_key"] = True
 
         tavily = vault.get("tavily_key") or os.getenv("TAVILY_API_KEY")
-        serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY", os.getenv("SERPAPI_KEY"))
+        # [FIX] .env.example/SearchEngine "SERPAPI_API_KEY" kullanır; eski
+        # "SERPAPI_KEY" yalnızca geriye uyumluluk için ikincil okunur.
+        serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY")
         exa = vault.get("exa_key") or os.getenv("EXA_API_KEY")
         if tavily or serpapi or exa:
             executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
             vault["search_keys"] = True
-        use_local = vault.get("use_local", os.getenv("USE_LOCAL_LLM", "false").lower() == "true")
+        use_local = vault.get("use_local") if "use_local" in vault else (
+            os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
+        )
         executor.llm_gateway.use_local = use_local
 
         app.state.rooms[client_id] = {
