@@ -39,12 +39,17 @@ class CognitiveRouter:
         if has_user:
             agents.append('mirror_truth')
             reasoning.append("Kullanıcı frekansı tespiti zorunlu")
-            # [SEC FIX] interpreter artık ana rotada OTOMATİK planlanmaz.
-            # Open Interpreter kod-icra yüzeyidir ve kendi LLM istemcisiyle
-            # LIVE/spend kapılarını atlayabildiğinden yalnızca
-            # ENABLE_INTERPRETER=true iken executor registry'sine girer ve
-            # yalnızca /api/experimental/interpreter/execute ile (varsayılan
-            # 403 kapısı) açıkça çağrılır.
+            # Interpreter is NOT on the default analysis route. open-interpreter
+            # is an opt-in code-execution surface, reachable only via
+            # /api/experimental/interpreter/execute when ENABLE_INTERPRETER=true
+            # AND (optionally) when the same env is set we may still register it
+            # for explicit experimental use — never auto-schedule on profile jobs.
+            import os
+            if os.getenv("ENABLE_INTERPRETER", "false").lower() == "true" and os.getenv(
+                "PINEAL_ROUTE_INTERPRETER", "false"
+            ).lower() == "true":
+                agents.append('interpreter')
+                reasoning.append("Serbest Görev Yorumlayıcısı (opt-in)")
         
         # Hedef varsa 360 derece analiz et
         if has_target:

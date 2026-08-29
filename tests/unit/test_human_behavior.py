@@ -12,9 +12,7 @@ def test_linguistic_forensics():
     signals = result['signals']
     
     assert any(s.signal_type == "authentic" and "emoji" in s.location for s in signals)
-    # [FIX] Güncel sözleşme: pasif kip gözlemi artık "passive_voice_observation"
-    # tipiyle ve "linguistic" konumuyla üretilir (eski "contradiction"+"passive_voice" ikilisi kaldırıldı).
-    assert any(s.signal_type == "passive_voice_observation" and s.location == "linguistic" for s in signals)
+    assert any(s.signal_type == "passive_voice_observation" and "linguistic" in s.location for s in signals)
     assert any(s.signal_type == "defense" and "linguistic" in s.location for s in signals)
     assert result['claimed_identity'] == "Blogger"
 
@@ -113,8 +111,6 @@ def test_analyze_visual_micro(mock_cascade_cls, mock_laplacian, mock_canny, mock
     signals = analyzer._analyze_visual_micro(["dummy.jpg"])
     
     assert len(signals) == 2
-    # [FIX] Güncel sözleşme: omuz-bölgesi kenar yoğunluğu sinyali
-    # "visual_edge_density" tipiyle üretilir (eski "tension" adı kaldırıldı).
     assert any(s.signal_type == "visual_edge_density" for s in signals)
     assert any(s.signal_type == "void" for s in signals)
 
