@@ -167,3 +167,47 @@ saygı; crawl4ai kullanımı 5.9.8'de doğrulandı, import + API testleri PASS).
   6/6 holehe); pipeline default kapalı → davranış değişmedi
 - Not: `_run_public_web_research` FAZ 1'den beri backend/api.py:814'te
   mevcut (ilk grep yalnız agent_core/ taramıştı — çelişki değil, kapsam hatası)
+
+
+---
+
+## 7. FAZ 5 uygulaması (bu commit) — STEALTH_PROVIDER seçici
+
+- `agent_core/services/stealth_provider.py`: `STEALTH_PROVIDER=
+  playwright_stealth|invisible|cloak|none` çözümleyici.
+  **Default (env yok) = playwright_stealth — MEVCUT davranış birebir**
+  (scrape_instagram bugün de try-import + apply_stealth_async yapıyordu).
+- Geçersiz değer asla sessiz değişmez: default'a döner +
+  `reason="invalid_provider:<ham>"`. Kullanılamayan seçim: `available=False`
+  + makine-okunur sebep (library_missing / binary_missing); tarama
+  stealthsiz sürer ve sebep loglanır (sahte gizlilik iddiası yok).
+- **Ağır binary indirmeleri opsiyonel:** runtime request yolunda indirme
+  ASLA tetiklenmez. invisible yalnız `INVISIBLE_BROWSER_BINARY` dosyası
+  mevcutsa available (launcher `binary_path=` ile indirmeyi atlar — kaynak
+  okumasıyla doğrulandı); cloak yalnız `CLOAK_BROWSER_EXECUTABLE` ile.
+- invisible LAUNCH-level'dır (patched Firefox + kendi async_playwright'ı);
+  registry başlatımı `p.firefox`'a geçer; page-bazlı apply ona dürüstçe
+  `launch_level_provider` der. cloak: `executable_path=` drop-in.
+- `platform_registry.scrape_instagram`: seçim + INFO/WARNING telemetri;
+  apply başarısızlığı artık taramayı düşürmez, dürüst loglanır (önceki
+  davranışta apply istisnası tüm kazımayı düşürüyordu — belgeli düzeltme).
+- `GET /api/experimental/stealth` — salt-okunur seçim/kullanılabilirlik
+  görünümü (başlatma yapmaz, indirme tetiklemez; `?provider=` ile sorgu).
+- requirements: `invisible-playwright>=0.7.4` (MIT, pip metadata doğrulandı;
+  pip paketi hafif, binary YOK).
+
+### Kanıtlar
+
+- invisible-playwright 0.7.4: "Playwright wrapper for a patched Firefox"
+  (MIT AND Apache-2.0, pip metadata); `resolve_executable(binary_path=)`
+  indirme yolunu tamamen atlar (kaynak).
+- playwright-stealth kurulu ve `Stealth().apply_stealth_async(page)` gerçek
+  init-script enjeksiyonu sahte page ile doğrulandı (test).
+- ruff PASS; pytest **434/434 PASS** (419+15 yeni)
+- Canlı: default→available; invisible/cloak→binary_missing; bogus→
+  invalid_provider; FAZ1-4 uçları regresyonsuz (maigret/holehe/crawl
+  dürüst hatalar, root 200)
+- Sınır (dürüst): chromium/patched-Firefox/cloak binary'leri bu sandbox'ta
+  YOK (CDN kısıtı; indirme denendiğinde başarısız — standing). Bu yüzden
+  gerçek launch-yolu testleri enjekte edilmiş fake playwright ile doğrulandı;
+  binary'li doğrulama deploy ortamına bırakıldı.

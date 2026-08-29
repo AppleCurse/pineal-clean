@@ -735,6 +735,18 @@ async def crawl_fetch(payload: CrawlFetchPayload):
     return (await fetch_readable(payload.url)).model_dump()
 
 
+@app.get("/api/experimental/stealth")
+async def stealth_resolve(provider: Optional[str] = None):
+    """STEALTH_PROVIDER seçimini ve dürüst kullanılabilirliği gösterir (FAZ 5).
+
+    Salt-okunur: tarayıcı başlatmaz, binary indirmeyi TETİKLEMEZ. invisible/
+    cloak yalnız operatörün env ile gösterdiği binary varsa available döner;
+    yoksa makine-okunur sebep (binary_missing / library_missing).
+    """
+    from agent_core.services.stealth_provider import resolve_stealth
+    return resolve_stealth(override=provider).model_dump()
+
+
 @app.post("/api/experimental/socid/extract")
 async def socid_extract(payload: SocidExtractPayload):
     """Profil URL'sinden yapılandırılmış kimlik kaydı çıkarır (socid-extractor).
