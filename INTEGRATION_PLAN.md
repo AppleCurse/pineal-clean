@@ -35,3 +35,38 @@
 - `POST /api/experimental/socid/extract` — kullanıcı bir profil URL'si yapıştırır, yapılandırılmış kayıt alır
 - `_run_public_web_research` zenginleştirmesi — eşleşen arama sonuçlarına (ilk 3) `socid` alanı eklenir (yalnız kayıt bulunduğunda)
 - Testler: `tests/unit/test_socid_enricher.py`
+
+
+---
+
+## 4. FAZ 2 uygulaması (bu commit) — Maigret
+
+- `agent_core/services/maigret_scanner.py`: kullanıcı-adı varlık taraması.
+  Kapı `ENABLE_MAIGRET` (default kapalı); `MAIGRET_SITES_LIMIT` (100,
+  max 500), `MAIGRET_TIMEOUT` (15s/site), `MAIGRET_TOTAL_TIMEOUT` (45s).
+  DB: paket içi maigret DB (3302 site), `ranked_sites_dict(top=N)`.
+- `POST /api/experimental/maigret/scan` — deneysel uç (kullanıcı adı
+  `^[A-Za-z0-9._-]{1,64}$` doğrulamalı).
+- `OsintInvestigatorAgent._apply_username_scan`: yalnız anahtar-yok fallback
+  yolunda; kapalıyken profil alanları DEĞİŞMEZ (yalnız provenance alanı);
+  bulunan gerçek siteler `associated_platforms`'a girer, güven = gözlenen
+  kapsama (found/scanned); güvenilir yokluk yalnız sıfır-hata koşulunda
+  iddia edilir.
+- requirements: `maigret>=0.6.5` (MIT).
+
+### ADLİ BULGU (kendi entegrasyonumuzda yakalanan halüsinasyon riski)
+
+Maigret 0.6.5'te ağ hatası durumlarında `SiteResult.status = None` dönebiliyor
+(checker future'ı istisna ile ölüyor; ilk ham testte `<Unknown (Connecting
+failure)>` görünürken ikinci koşuda None). İlk sınıflandırmamız None'ı "hata
+değil" sayıyordu → **hiç kontrol yapılmadan 'iz yok' iddia edilebilirdi.**
+Düzeltme: `status in (UNKNOWN, None)` → error_count. Canlı doğrulama:
+21 site / 21 hata → `available:false, reason:provider_errors` (uydurma yok).
+Regresyon testi: `test_none_status_is_error_not_absence`.
+
+### Doğrulama (kanıt)
+
+- ruff PASS; pytest **375/375 PASS** (360+15 yeni)
+- Gerçek kütüphane koşusu (top 10 → 21 site): `provider_errors`, dürüst
+- Uç: `invalid_username` / `disabled` / `provider_errors` canlı doğrulandı
+- Pipeline değişmedi: WS görevi aynı davranış (halted_evidence, planned=[mirror_truth])

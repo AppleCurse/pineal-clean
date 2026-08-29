@@ -677,6 +677,26 @@ class SocidExtractPayload(BaseModel):
     url: str
 
 
+class MaigretScanPayload(BaseModel):
+    username: str
+    limit: Optional[int] = None
+    timeout: Optional[int] = None
+
+
+@app.post("/api/experimental/maigret/scan")
+async def maigret_scan(payload: MaigretScanPayload):
+    """Kullanıcı adını maigret DB'sinde tarar (FAZ 2).
+
+    Kapı: ENABLE_MAIGRET=true (varsayılan kapalı). Dürüst sonuç: kayıt
+    çıkmazsa `available:false` + makine-okunur sebep; site/hesap uydurulmaz.
+    """
+    from agent_core.services.maigret_scanner import scan_username
+    result = await scan_username(
+        payload.username, limit=payload.limit, site_timeout=payload.timeout
+    )
+    return result.model_dump()
+
+
 @app.post("/api/experimental/socid/extract")
 async def socid_extract(payload: SocidExtractPayload):
     """Profil URL'sinden yapılandırılmış kimlik kaydı çıkarır (socid-extractor).

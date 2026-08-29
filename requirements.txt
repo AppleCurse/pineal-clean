@@ -17,3 +17,6 @@ aiohttp>=3.9.0
 # OSINT zenginleştirme: profil URL'sinden kararlı kimlik kaydı (MIT, hafif).
 # Kütüphane yoksa socid_enricher dürüst available:false döner (çökmez).
 socid-extractor>=0.1.0
+# OSINT kullanıcı-adı varlık taraması (3300+ site; MIT). Kapı: ENABLE_MAIGRET
+# (varsayılan kapalı); kütüphane/DB yoksa dürüst available:false döner.
+maigret>=0.6.5

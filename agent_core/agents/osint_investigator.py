@@ -33,6 +33,43 @@ class OsintInvestigatorAgent:
         # osint.industries API key vault'tan veya env'den alınabilir.
         self.osint_api_key = os.getenv("OSINT_INDUSTRIES_KEY", None)
 
+    async def _apply_username_scan(self, profile: OsintProfile, clean_username: str) -> OsintProfile:
+        """[FAZ 2] Maigret kullanıcı-adı taramasını dürüstçe birleştirir.
+
+        - Kapı (ENABLE_MAIGRET) kapalıysa / tarama kullanılamıyorsa: profil
+          alanları DEĞİŞMEZ; yalnız kanıt-provenance olarak `username_scan`
+          alanı eklenir (makine-okunur sebep ile).
+        - Tarama güvenilir tamamlandıysa: gözlenen platformlar gerçek veri
+          olarak girer; güven = gözlenen kapsama (uydurma skor yok).
+        - Güvenilir yokluk (sıfır hata + sıfır eşleşme): data_confidence=True
+          kalır, düşük skor dürüstçe sıfır; sebep 'username_scan_no_match'.
+        """
+        try:
+            from agent_core.services.maigret_scanner import scan_username
+            scan = await scan_username(clean_username)
+        except Exception as exc:  # tarama asıl OSINT sonucunu asla bozmasın
+            logger.warning("maigret scan skipped: %s: %s", type(exc).__name__, str(exc)[:80])
+            return profile
+
+        if scan.available and scan.found_sites:
+            merged = sorted({*profile.associated_platforms, *(h.site for h in scan.found_sites)})
+            coverage = (len(scan.found_sites) / scan.scanned_count) if scan.scanned_count else 0.0
+            return profile.model_copy(update={
+                "associated_platforms": merged,
+                "data_confidence": True,
+                "confidence": round(coverage, 3),
+                "fallback_reason": None if not profile.fallback_reason else profile.fallback_reason,
+                "username_scan": scan.model_dump(),
+            })
+        if scan.available and scan.scanned_count and scan.error_count == 0:
+            return profile.model_copy(update={
+                "data_confidence": True,
+                "confidence": 0.0,
+                "fallback_reason": "username_scan_no_match",
+                "username_scan": scan.model_dump(),
+            })
+        return profile.model_copy(update={"username_scan": scan.model_dump()})
+
     def _get_alf_headers(self) -> Dict[str, str]:
         import random
         user_agents = [
@@ -76,7 +113,7 @@ class OsintInvestigatorAgent:
         if not self.osint_api_key:
             logger.info(f"[OSINT] API anahtarı bulunamadı, '{clean_username}' için analiz atlanıyor.")
             # Return empty/unknown state due to lack of API key, avoiding LLM hallucinations.
-            return OsintProfile(
+            profile = OsintProfile(
                 connected_emails=[],
                 connected_phones=[],
                 associated_platforms=[],
@@ -86,6 +123,9 @@ class OsintInvestigatorAgent:
                 data_confidence=False,
                 fallback_reason="provider_credentials_unavailable",
             )
+            # [FAZ 2] ENABLE_MAIGRET kapalıysa profil alanları değişmez; kapı
+            # açıksa yalnız gerçek gözlemler dürüstçe birleştirilir.
+            return await self._apply_username_scan(profile, clean_username)
         else:
             try:
                 async with aiohttp.ClientSession() as session:
