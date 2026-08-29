@@ -46,6 +46,7 @@ fun ReconRadarCard(
                 )
             }
 
+            
             Spacer(modifier = Modifier.height(16.dp))
             if (hypotheses.isEmpty()) {
                 Text(
@@ -73,6 +74,7 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
         else -> TextMuted
     }
 
+    
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -109,11 +111,22 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = hypothesis.forensicImplication, 
+                color = TextMuted, 
+                style = MaterialTheme.typography.bodySmall
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(1.dp, MatrixGreenDim.copy(alpha=0.5f), RoundedCornerShape(16.dp)),
                 shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(16.dp), 
                 color = SurfaceLighter
             ) {
                 Text(
@@ -124,6 +137,7 @@ fun HypothesisItem(hypothesis: ForensicHypothesis) {
                 )
             }
 
+            
             if (hypothesis.missingDataVectors.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

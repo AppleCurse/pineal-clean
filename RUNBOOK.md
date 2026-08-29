@@ -16,8 +16,8 @@
 - Model varsayılanları (P2 ekonomik set; fiyatlar OpenRouter promosyonlarına tabi):
   Tier-1 `upstage/solar-pro4` (`OPENROUTER_TIER_1_MODEL`, promo 2026-09-10'a kadar),
   Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`).
-  Zincirler: depth `deepseek-v4-flash → laguna-s-2.1 → glm-5.2` · dialogue
-  `minimax-m2.7 → deepseek-v4-pro → glm-5.2` · fast `ling-3.0-flash →
+  Zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` · dialogue
+  `solar-pro4 → deepseek-v4-flash` · fast `ling-3.0-flash →
   qwen3-235b-a22b-2507` (env: `OPENROUTER_CHAIN_<TASK>`).
 - Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
 - Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı). Aşılırsa `SpendCapExceeded`.
@@ -61,4 +61,4 @@ Bu script 360° zincirinin gerçek LLM ile uçtan uca doğrulamasıdır.
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
 - Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur — derlenmeyen/bağlantısız deneysel kod).
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.
-- X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda `python -m playwright install chromium` ayrı adımdır (Docker imajı otomatik kurar).
+- X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda ZORUNLU adım: `python -m playwright install chromium` (Docker imajı otomatik kurar).

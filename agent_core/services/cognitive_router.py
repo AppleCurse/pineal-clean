@@ -39,8 +39,10 @@ class CognitiveRouter:
         if has_user:
             agents.append('mirror_truth')
             reasoning.append("Kullanıcı frekansı tespiti zorunlu")
-            agents.append('interpreter')
-            reasoning.append("Serbest Görev Yorumlayıcısı")
+            import os
+            if os.getenv("ENABLE_INTERPRETER", "false").lower() == "true":
+                agents.append('interpreter')
+                reasoning.append("Serbest Görev Yorumlayıcısı")
         
         # Hedef varsa 360 derece analiz et
         if has_target:

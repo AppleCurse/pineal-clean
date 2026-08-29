@@ -30,9 +30,9 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
    Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`),
    Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL` — listedeki
    metin modelleri vision desteklemediği için korundu).
-   Zincirler: depth `deepseek-v4-flash → laguna-s-2.1 → glm-5.2` ·
-   dialogue `minimax-m2.7 → deepseek-v4-pro → glm-5.2` ·
-   fast `ling-3.0-flash → qwen3-235b-a22b-2507` (env:
+   Zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
+   dialogue `solar-pro4 → deepseek-v4-flash` ·
+   fast `ling-3.0-flash → deepseek-v4-flash` (env:
    `OPENROUTER_CHAIN_<TASK>`).
 
 ## 2. Sistem Mimarisi (koddan doğrulanmış)
@@ -96,7 +96,7 @@ docker compose up --build
 ### C) Manuel
 ```bash
 pip install -r requirements.txt
-python -m playwright install chromium
+python -m playwright install chromium  # ZORUNLU ADIM (Docker disi manuel kurulumlarda)
 cd frontend && npm ci && npm run build && cd ..
 uvicorn backend.api:app --host 0.0.0.0 --port 8000
 ```

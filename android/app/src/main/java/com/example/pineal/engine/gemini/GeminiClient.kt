@@ -79,6 +79,7 @@ interface GeminiApiService {
         @Body request: GenerateContentRequest
     ): GenerateContentResponse
 
+    
     @POST("v1beta/models/gemini-1.5-flash:generateContent")
     suspend fun generateContentVision(
         @Query("key") apiKey: String,

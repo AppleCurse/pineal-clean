@@ -35,6 +35,9 @@ class AspasiaChatEngine {
 
             -- KARANLIK PROFİL (SHADOW) --
             Narsisizm Eğilimi: ${it.shadowProfile.darkProfile.narcissism.level}
+            
+            -- KARANLIK PROFİL (SHADOW) --
+            Narsisizm Eğilimi: ${it.shadowProfile.darkProfile.narcissism.level} 
             Narsisizm Kanıtı: ${it.shadowProfile.darkProfile.narcissism.semanticEvidence}
             Makyavelizm Eğilimi: ${it.shadowProfile.darkProfile.machiavellianism.level}
             Makyavelizm Kanıtı: ${it.shadowProfile.darkProfile.machiavellianism.semanticEvidence}
@@ -46,11 +49,17 @@ class AspasiaChatEngine {
             Önerilen İlk Giriş (Kanca): ${it.bridge?.suggestedOpeningMessage ?: ""}
             Taktiksel Açıklama: ${it.bridge?.conversationStarterRationale ?: ""}
 
+            
+            -- İLETİŞİM KÖPRÜSÜ (AUTHENTIC BRIDGE) --
+            Önerilen İlk Giriş (Kanca): ${it.bridge?.suggestedOpeningMessage ?: ""}
+            Taktiksel Açıklama: ${it.bridge?.conversationStarterRationale ?: ""}
+            
             -- CANLI SENTEZ AĞI (COGNITIVE HYPOTHESES) --
             $hypothesesStr
             """.trimIndent()
         } ?: """
             Şu an aktif bir profil analiz edilmedi.
+            Şu an aktif bir profil analiz edilmedi. 
             -- CANLI SENTEZ AĞI (COGNITIVE HYPOTHESES) --
             $hypothesesStr
         """.trimIndent()
@@ -59,6 +68,7 @@ class AspasiaChatEngine {
             """
             Sen Pineal-Gland sisteminin Bilişsel Danışmanı (Cognitive Advisor) Aspasia'sın.
 
+            
             GÖREV VE KURALLAR (STRICT ROLE ENFORCEMENT):
             1. Sen kullanıcının/profilin psikolojik dinamiklerini (Semantic Evidence) derinlemesine analiz eden, destekleyici ve elit bir asistansın.
             2. Kullanıcıya evrensel, genel geçer veya "iyi niyetli" tavsiyeler VERME.
@@ -72,6 +82,7 @@ class AspasiaChatEngine {
             """
             You are Aspasia, the Cognitive Advisor of the Pineal-Gland system.
 
+            
             MISSION & RULES (STRICT ROLE ENFORCEMENT):
             1. You know the target's psychological vulnerabilities (Semantic Evidence).
             2. DO NOT give generic, universal, or "polite" advice.

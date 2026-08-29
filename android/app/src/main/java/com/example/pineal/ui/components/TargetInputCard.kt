@@ -73,6 +73,7 @@ fun TargetInputCard(
             placeholder = "Envies, triggers..."
         )
 
+        
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(text = "SOCIAL_FOOTPRINT_SOURCE", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             val platformsList = listOf("LinkedIn", "X (Twitter)", "Instagram", "TikTok", "Bluesky", "Mastodon", "Threads", "Snapchat", "Facebook")

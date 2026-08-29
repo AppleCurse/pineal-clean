@@ -26,10 +26,7 @@ class AspasiaResponse(BaseModel):
 class AspasiaChief:
     def __init__(self, llm_gateway: Optional[LLMGateway] = None):
         self.llm = llm_gateway or LLMGateway()
-        self.preferred_model = "muse-spark-1.2-xhigh"
 
-    def set_preferred_model(self, model_name: str):
-        self.preferred_model = model_name
 
     def build_telemetry_summary(self, room_state: Any) -> str:
         """Ajan telemetrisini ve kanıt zincirini yapılandırılmış veriden özetler."""

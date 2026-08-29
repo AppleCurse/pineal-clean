@@ -122,6 +122,7 @@ class PinealViewModel(
     }
 
     fun setTargetUrl(url: String) {
+    fun setTargetUrl(url: String) { 
         _uiState.update { it.copy(targetUrl = url) }
         if (url.isNotBlank()) loadTargetHypotheses(url)
     }
@@ -144,6 +145,7 @@ class PinealViewModel(
 
     fun togglePlatform(platform: String) {
         _uiState.update {
+        _uiState.update { 
             val current = it.selectedPlatforms.toMutableSet()
             if (current.contains(platform)) {
                 current.remove(platform)
@@ -267,6 +269,9 @@ class PinealViewModel(
 
                 val currentHypotheses = reconEngine.liveReconState.value
                 val entities = currentHypotheses.map {
+                
+                val currentHypotheses = reconEngine.liveReconState.value
+                val entities = currentHypotheses.map { 
                     HypothesisEntity(
                         targetId = state.targetUrl,
                         trait = it.psychologicalTrait,
@@ -279,6 +284,7 @@ class PinealViewModel(
                 repository.clearTargetHypotheses(state.targetUrl)
                 repository.saveHypotheses(entities)
 
+                
                 _uiState.update { it.copy(isProcessing = false) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isProcessing = false, logs = it.logs + LogEntry(timeFormat.format(Date()), "ERROR", "HATA: ${e.message}")) }
@@ -290,6 +296,11 @@ class PinealViewModel(
         viewModelScope.launch {
             repository.getHypotheses(targetId).collect { entities ->
                 val hypotheses = entities.map {
+    
+    fun loadTargetHypotheses(targetId: String) {
+        viewModelScope.launch {
+            repository.getHypotheses(targetId).collect { entities ->
+                val hypotheses = entities.map { 
                     ForensicHypothesis(
                         psychologicalTrait = it.trait,
                         forensicImplication = it.implication,
@@ -329,6 +340,7 @@ class PinealViewModel(
         viewModelScope.launch {
             kotlinx.coroutines.delay(600)
 
+            
             val replyText = aspasiaEngine.generateResponse(
                 userMessage = text,
                 currentProfile = state.holisticProfile,

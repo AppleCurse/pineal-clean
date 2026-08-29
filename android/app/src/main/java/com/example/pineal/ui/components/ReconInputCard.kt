@@ -45,6 +45,7 @@ fun ReconInputCard(
                 lineHeight = 14.sp
             )
 
+            
             OutlinedTextField(
                 value = reconInput,
                 onValueChange = { reconInput = it },
@@ -64,6 +65,9 @@ fun ReconInputCard(
 
             Button(
                 onClick = {
+            
+            Button(
+                onClick = { 
                     if (reconInput.isNotBlank()) {
                         onFeedRecon(reconInput)
                         reconInput = ""

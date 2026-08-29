@@ -57,6 +57,9 @@ class PinealAnalyzerEngine {
                 Aşağıda verilen bilgilere dayanarak verilen kişinin psikolojik, sosyal ve davranışsal profilini pozitif, vizyoner ve gelişim odaklı bir dille çıkarman gerekiyor.
                 Tüm çıkarımlarının bir 'LLM Tahmini' (Inference) olduğunu kabul ederek, mantıklı, tutarlı ve derinlikli bir JSON üretmelisin.
 
+                Aşağıda verilen bilgilere dayanarak verilen kişinin psikolojik, sosyal ve davranışsal profilini pozitif, vizyoner ve gelişim odaklı bir dille çıkarman gerekiyor. 
+                Tüm çıkarımlarının bir 'LLM Tahmini' (Inference) olduğunu kabul ederek, mantıklı, tutarlı ve derinlikli bir JSON üretmelisin.
+                
                 Profil Bilgileri:
                 - Kullanıcı Adı / URL: @$cleanHandle
                 - Gözlemlenen Ritüeller (Kullanıcı girdisi): $rituals
@@ -71,6 +74,14 @@ class PinealAnalyzerEngine {
                 Çıktın SADECE JSON formatında olmalı. Başka metin veya markdown (```json) EKLEME.
                 JSON yapısı aşağıdaki data sınıflarının özelliklerini tamamen ve HİÇ EKSİKSİZ şekilde içermelidir:
 
+                
+                (Not: Analizi yaparken seçilen bu platformların psikolojik doğasını göz önünde bulundur. 
+                Örn: LinkedIn profesyonel maske ve hiyerarşi, X/Twitter reaktif dürtüsellik, Instagram estetik/sosyal onay, 
+                TikTok trend odaklılık, Snapchat geçicilik, Bluesky/Mastodon niş komünite göstergesidir.)
+                
+                Çıktın SADECE JSON formatında olmalı. Başka metin veya markdown (```json) EKLEME. 
+                JSON yapısı aşağıdaki data sınıflarının özelliklerini tamamen ve HİÇ EKSİKSİZ şekilde içermelidir:
+                
                 {
                     "depthReport": { "realityIndex": <0.0-1.0>, "essenceOneLiner": "...", "realityFindings": [ { "topic": "...", "observation": "...", "evidenceQuotes": ["..."] } ], "contradictions": [ ... ], "quoteGuard": { "kept": <sayı>, "droppedFakeQuote": <sayı> } },
                     "shadowProfile": { "manipulationRisk": "DÜŞÜK/ORTA/YÜKSEK/KRİTİK", "strategy": "...", "darkProfile": { "narcissism": { "level": "...", "semanticEvidence": "..." }, "machiavellianism": { "level": "...", "semanticEvidence": "..." }, "psychopathy": { "level": "...", "semanticEvidence": "..." } } },
@@ -94,6 +105,7 @@ class PinealAnalyzerEngine {
             val apiResponse = RetrofitClient.service.generateContentPro(apiKey, request)
             var responseText = apiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
 
+            
             responseText = responseText.trim()
             if (responseText.startsWith("```json")) responseText = responseText.removePrefix("```json")
             if (responseText.startsWith("```")) responseText = responseText.removePrefix("```")
@@ -122,6 +134,8 @@ class PinealAnalyzerEngine {
             emit(PipelineEvent.TelemetryUpdate(TelemetryData(
                 cacheHitRate = "N/A (Canlı Çıkarım)",
                 cacheHits = 0,
+                cacheHitRate = "N/A (Canlı Çıkarım)", 
+                cacheHits = 0, 
                 llmCallsObserved = 1
             )))
             emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "LLM Çıkarımı Tamamlandı. ~${promptTokens + completionTokens} token işlendi.")))
@@ -158,6 +172,7 @@ class PinealAnalyzerEngine {
         try {
             val currentJsonStr = jsonParser.encodeToString(currentProfile)
 
+            
             val prompt = """
                 Sen Pineal-Gland sisteminin "Bilişsel Keşif (Cognitive Recon Engine)" modülüsün.
                 Bilişsel dilbilim (cognitive linguistics) prensipleriyle profili sürekli analiz eder ve vizyon haritasını netleştirirsin.
@@ -170,6 +185,14 @@ class PinealAnalyzerEngine {
                 $newEvidence
                 (Bu verinin geldiği/ilişkili olduğu platformlar: ${platforms.joinToString(", ")} - Bu platformların psikolojik doğasını (örn: X'te reaktif, LinkedIn'de maskeli) hesaba kat.)
 
+                
+                MEVCUT PROFİL (JSON):
+                $currentJsonStr
+                
+                GÖZLEMLENEN YENİ KANIT / KIRINTI (Kullanıcı girdisi):
+                $newEvidence
+                (Bu verinin geldiği/ilişkili olduğu platformlar: ${platforms.joinToString(", ")} - Bu platformların psikolojik doğasını (örn: X'te reaktif, LinkedIn'de maskeli) hesaba kat.)
+                
                 GÖREVİN:
                 1. Bu yeni veriyi derinlemesine analiz et (örn: "Bu adam Chopin dinliyor" demez, "Melankolik ses dizilimlerine yönelimi..." diyerek derinlemesine bilişsel bir çıkarım yapar).
                 2. Mevcut profildeki özellikleri, çelişkileri, karanlık profil (Makyavelizm/Narsisizm/Psikopati) kanıtlarını ve iletişim kancalarını (bridge) bu YENİ KANITA GÖRE GÜNCELLE.
@@ -191,6 +214,7 @@ class PinealAnalyzerEngine {
             val apiResponse = RetrofitClient.service.generateContentPro(apiKey, request)
             var responseText = apiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
 
+            
             responseText = responseText.trim()
             if (responseText.startsWith("```json")) responseText = responseText.removePrefix("```json")
             if (responseText.startsWith("```")) responseText = responseText.removePrefix("```")
@@ -199,6 +223,7 @@ class PinealAnalyzerEngine {
 
             val analyzerResponse = jsonParser.decodeFromString<AnalyzerResponse>(responseText)
 
+            
             emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "[SENTEZ AĞI] Harita güncellendi, yeni veri bilişsel profile işlendi.")))
             emit(PipelineEvent.AgentUpdate("mirror_truth", "COMPLETED", analyzerResponse.bridge.resonanceScore))
 
