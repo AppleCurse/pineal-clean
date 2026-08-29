@@ -34,7 +34,7 @@ class LLMGateway:
     }
     
     TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["solar_pro4"])
-    TIER_2_MODEL = MODEL_REGISTRY["ling_3_flash"]
+    TIER_2_MODEL = os.getenv("OPENROUTER_TIER_2_MODEL", MODEL_REGISTRY["ling_3_flash"])
     DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", MODEL_REGISTRY["gemini_3_7_flash"])
 
     CHAINS = {
@@ -86,7 +86,7 @@ class LLMGateway:
         self.total_cost = 0.0
         # P2-MALİYET: kümülatif harcama ve sert üst limit
         self.spend_usd = 0.0
-        self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 1.0)
+        self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 0.0)
         # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
         self.unpriced_calls = 0
         # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
