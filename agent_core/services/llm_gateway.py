@@ -28,8 +28,8 @@ class LLMGateway:
         "upstage/solar-pro4": {"in": 0.03, "out": 0.12},
         "inclusionai/ling-3.0-flash": {"in": 0.021, "out": 0.063},
         "deepseek/deepseek-v4-flash": {"in": 0.14, "out": 0.28},
-        "z-ai/glm-5.2": {"in": 0.10, "out": 0.10},
-        "deepseek/deepseek-v4-pro": {"in": 0.50, "out": 1.00},
+        "z-ai/glm-5.2": {"in": 0.39, "out": 1.22},
+        "deepseek/deepseek-v4-pro": {"in": 0.71, "out": 1.42},
         "google/gemini-3.7-flash": {"in": 0.375, "out": 1.875}
     }
     

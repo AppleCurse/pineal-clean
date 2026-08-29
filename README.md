@@ -96,7 +96,7 @@ docker compose up --build
 ### C) Manuel
 ```bash
 pip install -r requirements.txt
-python -m playwright install chromium
+python -m playwright install chromium  # ZORUNLU ADIM (Docker disi manuel kurulumlarda)
 cd frontend && npm ci && npm run build && cd ..
 uvicorn backend.api:app --host 0.0.0.0 --port 8000
 ```

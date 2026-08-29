@@ -10,6 +10,10 @@ class DarkTriadProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 class DarkTriadAnalyzer:
+    """
+    NOT: Bu heuristik model ağırlıklı olarak TR markerlara dayanır.
+    Dil-agnostik kullanım için genişletilebilir.
+    """
     MARKERS = {
         'machiavellianism': ['strateji', 'taktik', 'oyun', 'kontrol', 'piyon'],
         'narcissism': ['mükemmel', 'eşsiz', 'olağanüstü', 'benzersiz', 'seçilmiş'],

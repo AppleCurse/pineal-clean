@@ -6,6 +6,31 @@
 
   let ws: WebSocket;
 
+  let telemetryData = null;
+  let tasksData = null;
+
+  async function fetchTelemetry() {
+    try {
+      let res = await fetch('/api/telemetry');
+      telemetryData = await res.json();
+    } catch(e) {}
+  }
+  
+  async function fetchTasks() {
+    try {
+      let res = await fetch(`/api/tasks?client_id=${$clientId}`);
+      tasksData = await res.json();
+    } catch(e) {}
+  }
+  
+  async function deleteTask(taskId) {
+    try {
+      await fetch(`/api/tasks/${taskId}?client_id=${$clientId}`, {method: 'DELETE'});
+      fetchTasks();
+    } catch(e) {}
+  }
+
+
   function switchLang(lang: Language) {
     currentLang.set(lang);
   }
@@ -101,6 +126,37 @@
   <main>
     <UnifiedCompactPanel />
   </main>
+
+  <!-- TELEMETRY & TASKS DEBUG -->
+  <div style="border-top: 1px solid var(--brass-border); padding: 12px; margin-top: 10px;">
+    <div style="display:flex; gap:10px; margin-bottom: 10px;">
+      <button class="btn-dark" on:click={fetchTelemetry}>[ GET TELEMETRY ]</button>
+      <button class="btn-dark" on:click={fetchTasks}>[ GET TASKS ]</button>
+    </div>
+    
+    {#if telemetryData}
+      <div style="background: #111; padding:10px; border-radius: 4px; border: 1px solid #333; font-size: 11px;">
+        <h4 style="margin: 0 0 5px 0; color:var(--gold);">TELEMETRY:</h4>
+        <pre style="margin:0; color: #ccc;">{JSON.stringify(telemetryData, null, 2)}</pre>
+      </div>
+    {/if}
+
+    {#if tasksData}
+      <div style="background: #111; padding:10px; border-radius: 4px; border: 1px solid #333; font-size: 11px; margin-top: 10px;">
+        <h4 style="margin: 0 0 5px 0; color:var(--gold);">TASKS (RETENTION):</h4>
+        {#each tasksData.tasks as task}
+           <div style="display:flex; gap:10px; margin-bottom:5px; align-items:center;">
+              <span>{task.task_id} ({task.evidence_count} evidence)</span>
+              <button class="btn-dark" style="color:red; border: 1px solid red; padding: 2px 6px;" on:click={() => deleteTask(task.task_id)}>DELETE</button>
+           </div>
+        {/each}
+        {#if tasksData.tasks.length === 0}
+          <p style="margin:0; color:#ccc;">No tasks found.</p>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
 
   <!-- FOOTER -->
   <footer style="margin-top: 20px; text-align: center; border-top: 1px solid var(--brass-border); padding-top: 12px;">
