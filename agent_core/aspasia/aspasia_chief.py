@@ -26,7 +26,12 @@ class AspasiaResponse(BaseModel):
 class AspasiaChief:
     def __init__(self, llm_gateway: Optional[LLMGateway] = None):
         self.llm = llm_gateway or LLMGateway()
+        # None → gateway tier-1 default. (Legacy hard-coded non-existent
+        # "muse-spark-1.2-xhigh" slug removed; chat() now reads this field.)
+        self.preferred_model: Optional[str] = None
 
+    def set_preferred_model(self, model_name: Optional[str]) -> None:
+        self.preferred_model = model_name
 
     def build_telemetry_summary(self, room_state: Any) -> str:
         """Ajan telemetrisini ve kanıt zincirini yapılandırılmış veriden özetler."""
@@ -148,7 +153,7 @@ Bir hata veya durma varsa hangi ajanın takıldığını, nedenini ve sonraki do
 Cümlelerin doğal, kısa, sıcak ve net olsun; "Mösyö", teatral hitaplar ve gereksiz teknik jargon kullanma.
 """
         
-        selected_model = model_override
+        selected_model = model_override or self.preferred_model
         if not selected_model and any(w in user_message.lower() for w in ["yerel", "local", "kısıtlamasız", "ollama", "lmstudio"]):
             selected_model = "local"
 

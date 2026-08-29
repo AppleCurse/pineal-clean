@@ -122,8 +122,8 @@ Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 
 ## 6. Testler
 ```bash
-pytest                          # 223 test (bu revizyon itibarıyla): unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
-                                # Güncel sayı için: pytest --collect-only -q | tail -1
+pytest                          # unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
+                                # Güncel sayı: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build
 ```
 

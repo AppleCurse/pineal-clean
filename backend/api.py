@@ -201,7 +201,12 @@ def get_room(client_id: str) -> dict:
         if tavily or serpapi or exa:
             executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
             vault["search_keys"] = True
-        use_local = vault.get("use_local", os.getenv("USE_LOCAL_LLM", "false").lower() == "true")
+        # Vault explicit value wins; otherwise honour USE_LOCAL_LLM env
+        # (do not treat missing key as False when env says true).
+        if "use_local" in vault:
+            use_local = bool(vault.get("use_local"))
+        else:
+            use_local = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
         executor.llm_gateway.use_local = use_local
 
         app.state.rooms[client_id] = {
@@ -583,7 +588,8 @@ class VaultPayload(BaseModel):
     exa_key: str = ""
     local_url: str = ""
     local_model: str = ""
-    use_local: bool = False
+    # Optional so omitted != explicit false (UI toggle must be able to turn local OFF).
+    use_local: Optional[bool] = None
     
 @app.post("/api/vault")
 async def api_vault(req: VaultPayload):
@@ -601,13 +607,15 @@ async def api_vault(req: VaultPayload):
         vault["or_key"] = True
         broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif — canlı LLM kilidi açıldı.")
         
-    if req.local_url or req.local_model or req.use_local:
+    if req.local_url or req.local_model or req.use_local is not None:
+        active = bool(req.use_local) if req.use_local is not None else bool(vault.get("use_local", False))
         executor.llm_gateway.set_local_config(
             base_url=req.local_url or None,
             model_name=req.local_model or None,
-            active=req.use_local
+            active=active,
         )
-        vault["use_local"] = req.use_local
+        if req.use_local is not None:
+            vault["use_local"] = active
         broadcast_log(req.client_id, "INFO", f"KASA: Yerel Kısıtlamasız LLM Yapılandırıldı ({req.local_model or 'Ollama/LM Studio'}).")
 
     if req.tavily_key or req.serpapi_key or req.exa_key:
