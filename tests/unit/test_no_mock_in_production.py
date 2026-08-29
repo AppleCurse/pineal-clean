@@ -122,6 +122,10 @@ class TestPsutilAdjudicationRuntime:
 
     def test_crawl4ai_psutil_consuming_modules_import(self):
         importlib = __import__("importlib")
+        pytest.importorskip(
+            "crawl4ai",
+            reason="crawl4ai ikinci-adım dosyasındadır (requirements-osint.txt); CI yalnız birinci adımı kurar",
+        )
         importlib.import_module("crawl4ai")
         importlib.import_module("crawl4ai.async_dispatcher")  # psutil kullanan modül
 
