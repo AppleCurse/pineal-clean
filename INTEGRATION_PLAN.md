@@ -286,3 +286,46 @@ değer bulgu var (aşağıda).
 koşullu aday; yerinde doğrulama protokolü (kur → introspeksiyon → dürüstlük
 davranış testi → FAZ2/3 kapıları arkasında alternatif sağlayıcı) kullanıcı
 onayıyla başlar. #1/#2 gömme-red (çakışma/licence), #4/#5 kategori-dışı.
+
+
+---
+
+## 10. Rapor denetimi #3 — "Kapsamlı Araç Analiz Raporu"nun çapraz denetimi (bu commit)
+
+Dışarıdan sunulan ~90 araçlık rapor standing kurala tabi tutuldu (önceki ajan
+raporu = kanıt değil). Kaynak dosya (`Bugün Verdiğin Depolar.txt`)
+workspace'te YOK → raporun kapsamı/yeniden üretilebilirliği DOĞRULANAMAZ;
+yalnız yapıştırılan iddialar denetlendi. Örnekleme sonucu: **7 somut hata**
+(2'si entegrasyon önerisini geçersiz kılan lisans/adres hatası, 1'i haksız
+"uydurma" suçlaması).
+
+### Rapor iddiası → kanıtlı hüküm
+
+| Rapor iddiası | Kanıtlı hüküm (GitHub API/kaynak, 2026-08-29) |
+|---|---|
+| DaProfiler = `aboul3la/DaProfiler`, ~200★ | **YANLIŞ adres** (aboul3la=Sublist3r yazarı). Gerçek: `daprofiler/DaProfiler` — **1041★, GPL-3.0, ARCHIVED** (GitHub read-only; son push Eyl 2023). "Week 3-4 DaProfiler ekle" önerisi → **VETO** |
+| undetected-chromedriver "MIT, Aktif, ✅ FALLBACK eklenmeli" | **Lisans GPL-3.0** (MIT değil); **Selenium tabanlı** (Playwright stack'iyle uyumsuz — rapor aynı gerekçeyle Zendriver'ı reddetmiş, çifte standart); 12.8k★ ama son push Tem 2025. Öneri → **VETO** (gömme = GPL + paralel stack; FAZ 5 seçici zaten mevcut) |
+| OSINT-D2 "GitHub'da yok, UYDURMA" | **YANLIŞ — repo VAR:** `Doble-2/osint-d2` (265★, MIT, Python, Oca 2026, push Haz 2026; agentic + 6-boyut profilleme açıklaması raporunkinin aynısı). Ama küçük/genç + harici LLM (DeepSeek default) + ScrapingAnt ticari proxy → **izlemede** |
+| OWASP/Social-OSINT-Agent "Aktif" | **Adres YANLIŞ (API 404)**; proje gerçek: `bm-github/owasp-social-osint-agent` + OWASP Incubator sayfası (MIT; X/Reddit/GitHub/Bluesky/HN/Mastodon + OpenAI-uyumlu LLM). → **izlemede** (dış-LLM bağımlı wrapper) |
+| browser-use "79k★" | **BAYAT: 111.658★** ölçüldü (MIT, bugün push). Sonuç (şimdilik red) yine de makul |
+| ScrapeGraphAI = `ScrapGraphAI/scrapgraphai` ~2k | **Adres formu YANLIŞ** (tire eksik). Gerçek: `ScrapeGraphAI/Scrapegraph-ai` (MIT). Yıldız ölçülmedi — "~2k" güvenilmez |
+| CloakBrowser "wrapper... Stealth Provider'a eklendi (Chrome)" | Fork (wrapper değil); "eklendi" aşırı: FAZ 5'te kapı+kural var (`CLOAK_BROWSER_EXECUTABLE`), binary yoksa dürüst `binary_missing` — çalışan entegrasyon DEĞİL |
+| "Dolphin-2.9 zaten varsayılan" | **DOĞRULANDI:** `llm_gateway.py:61` default `dolphin-llama3:latest` (nüans: `USE_LOCAL_LLM` default false) |
+| World Monitor 59.2k / SL Crime Wall "UYDURMA" | Benim aramam YOK — raporun red hükmü de kanıtsız. Red kararı eylem olarak benimsenir, hüküm kanıtsız kalır |
+| "~90 araç, 81 doğrulanmış, 32 uygun" | Kaynak dosya olmadığından **yeniden üretilemez** |
+| FAZ 1-5 tablosu, OpenOSINT/seekr/user-scanner/xurlfind3r/arsenal satırları, Blackbird/Snoop/Kaz→Goose/Agent-Reach/GPTCache/Obscura hükümleri | Önceki bağımsız denetimlerimle **tutarlı** (bu kısımlar doğru) |
+
+### Sonuç ve düzeltilmiş strateji
+
+Raporun "kanıta dayalı/eksiksiz" öz-iddiası örneklenen iddiaların ~yarısında
+çöktü — kullanım şekli: fikir kaynağı EVET, yetki kaynağı HAYIR.
+
+1. Tek koşullu entegrasyon adayı DEĞİŞMEDİ: **user-scanner** (MIT/Python/
+   3433★) — yerinde dürüstlük-davranış denetimi (holehe-tipi rateLimit
+   maskesi testi) sonrası FAZ 2/3 alternatif sağlayıcı olabilir.
+2. Rapordaki "Hafta 1-2 uc-fallback" ve "Week 3-4 DaProfiler" önerileri
+   kanıtla VETO edildi (GPL-3.0 lisans / archived repo).
+3. GHunt/GitFive "deneysel eklenebilir" ifadesi eksik: operatör-cookie ön
+   koşulu UI'da belgelenmeden eklenmez (FAZ 6 koşulu aynen duruyor).
+4. Watchlist'e yeni eklendi: OSINT-D2, OWASP SocialOSINTAgent,
+   ScrapeGraphAI (crawl4ai zaten mevcut; LLM-pipeline bağımlılığı).
