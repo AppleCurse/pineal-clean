@@ -59,6 +59,6 @@ Bu script 360° zincirinin gerçek LLM ile uçtan uca doğrulamasıdır.
 
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
-- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` mevcuttur — derlenmeyen/bağlantısız deneysel kod).
+- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` CI'da derlenir ama Python ürün yoluna bağlı değildir).
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.
 - X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda ZORUNLU adım: `python -m playwright install chromium` (Docker imajı otomatik kurar).
