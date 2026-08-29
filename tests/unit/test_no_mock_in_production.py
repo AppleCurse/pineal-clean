@@ -16,6 +16,7 @@ Sözleşme:
   dönmemeli.
 """
 import ast
+import pytest
 import re
 from pathlib import Path
 
