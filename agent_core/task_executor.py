@@ -97,12 +97,19 @@ class PinealExecutor:
             "resonance_calc": ResonanceCalculator(),
             "pattern_interrupt": PatternInterrupt(),
             "autonomous_verifier": AutonomousVerifier(self.search_engine),
-            "interpreter": InterpreterAgent(self.llm_gateway),
             "authenticity_auditor": AuthenticityAuditorAgent(self.llm_gateway),
             "osint_investigator": OsintInvestigatorAgent(self.llm_gateway),
             "shadow_executor": ShadowExecutor(llm_gateway=self.llm_gateway),
             "depth_analyst": DepthAnalyst(self.llm_gateway),
         }
+        # [SEC FIX] Interpreter (Open Interpreter kod-icra yığını) varsayılan
+        # registry'de YOKTUR; yalnızca açıkça ENABLE_INTERPRETER=true ile
+        # yüklenir. Ana pipeline rotası da bu ajanı artık planlamaz
+        # (cognitive_router). /api/experimental/interpreter/execute zaten
+        # aynı env kapısıyla varsayılan 403 döner.
+        import os as _os
+        if _os.getenv("ENABLE_INTERPRETER", "false").lower() == "true":
+            self.agents["interpreter"] = InterpreterAgent(self.llm_gateway)
 
     @staticmethod
     def _hash_evidence_result(result: BaseModel) -> str:

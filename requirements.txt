@@ -10,5 +10,30 @@ opencv-python-headless>=4.8.0,<5.0.0
 numpy>=1.26.0
 aiofiles>=23.2.1
 python-dotenv>=1.0.0
-PyYAML
-aiohttp
+# Aşağıdaki ikisi doğrudan kaynak tarafından import edilir (beyan açığı kapatıldı);
+# PyYAML: config_loader.yaml — open-interpreter transitif çekse de açık beyan edilir.
+PyYAML>=6.0.1
+aiohttp>=3.9.0
+# OSINT zenginleştirme: profil URL'sinden kararlı kimlik kaydı (MIT, hafif).
+# Kütüphane yoksa socid_enricher dürüst available:false döner (çökmez).
+socid-extractor>=0.1.0
+# OSINT kullanıcı-adı varlık taraması (3300+ site; MIT). Kapı: ENABLE_MAIGRET
+# (varsayılan kapalı); kütüphane/DB yoksa dürüst available:false döner.
+maigret>=0.6.5
+# OSINT e-posta kayıt taraması (deneysel; GPL-3.0 — kod gömülmeden yalnız
+# bağımlılık olarak). Kapı: ENABLE_HOLEHE (varsayılan kapalı); istisnaları
+# rateLimit maskesi hata sayılır, kapalı ağda 'kayıtlı değil' iddia edilmez.
+holehe>=1.61
+# [KALDIRILDI -> requirements-osint.txt] crawl4ai psutil>=6.1.1 BEYAN eder;
+# open-interpreter (yukarıda) psutil<6.0.0 BEYAN eder. İki metadata aralığı
+# aynı pip işleminde ResolutionImpossible — bu dosya TEK İŞLEMDE kurulabilir
+# olmalı (taze-kurulum sözleşmesi; test: test_declared_libraries + psutil
+# çalışma-zamanı). crawl4ai İKİNCİ ADIM olarak kurulur:
+#   pip install -r requirements.txt && pip install -r requirements-osint.txt
+# Kanıt (kaynak okuması + çalışma zamanı): open-interpreter yalnız
+# virtual_memory/disk_usage kullanır, crawl4ai yalnız Process/process_iter —
+# her ikisi de her psutil sürümünde çalışır; çatışma aşırı-katı beyandır.
+# Stealth sağlayıcı seçenekleri (STEALTH_PROVIDER; default playwright_stealth).
+# invisible-playwright (MIT): patched Firefox launch-level wrapper; pip paketi
+# hafiftir, binary İNDİRMEZ — binary opsiyoneldir (INVISIBLE_BROWSER_BINARY).
+invisible-playwright>=0.7.4

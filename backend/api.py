@@ -14,9 +14,12 @@ from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 import asyncio
 import json
+import logging
 import os
 import hashlib
 import time
+
+logger = logging.getLogger("backend.api")
 from datetime import datetime
 import sys
 
@@ -27,11 +30,6 @@ try:
     from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
 except Exception:
     from task_executor import PinealExecutor, InsufficientEvidenceError
-
-try:
-    from scraper import scrape_readonly
-except Exception:
-    scrape_readonly = None
 
 try:
     from agent_core.scraper.instagram_ghost import InstagramGhostScraper
@@ -196,7 +194,9 @@ def get_room(client_id: str) -> dict:
             vault["or_key"] = True
 
         tavily = vault.get("tavily_key") or os.getenv("TAVILY_API_KEY")
-        serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY", os.getenv("SERPAPI_KEY"))
+        # [FIX] .env.example/SearchEngine "SERPAPI_API_KEY" kullanır; eski
+        # "SERPAPI_KEY" yalnızca geriye uyumluluk için ikincil okunur.
+        serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY")
         exa = vault.get("exa_key") or os.getenv("EXA_API_KEY")
         if tavily or serpapi or exa:
             executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
@@ -674,6 +674,92 @@ async def api_telemetry(client_id: str):
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }
 
+class SocidExtractPayload(BaseModel):
+    url: str
+
+
+class MaigretScanPayload(BaseModel):
+    username: str
+    limit: Optional[int] = None
+    timeout: Optional[int] = None
+
+
+@app.post("/api/experimental/maigret/scan")
+async def maigret_scan(payload: MaigretScanPayload):
+    """Kullanıcı adını maigret DB'sinde tarar (FAZ 2).
+
+    Kapı: ENABLE_MAIGRET=true (varsayılan kapalı). Dürüst sonuç: kayıt
+    çıkmazsa `available:false` + makine-okunur sebep; site/hesap uydurulmaz.
+    """
+    from agent_core.services.maigret_scanner import scan_username
+    result = await scan_username(
+        payload.username, limit=payload.limit, site_timeout=payload.timeout
+    )
+    return result.model_dump()
+
+
+class HoleheScanPayload(BaseModel):
+    email: str
+    limit: Optional[int] = None
+    timeout: Optional[int] = None
+
+
+@app.post("/api/experimental/holehe/scan")
+async def holehe_scan(payload: HoleheScanPayload):
+    """E-postanın sitelerdeki kaydını holehe ile tarar (FAZ 3, deneysel).
+
+    Kapı: ENABLE_HOLEHE=true (varsayılan kapalı). Dürüst sonuç: kayıt
+    çıkmazsa `available:false` + makine-okunur sebep; site uydurulmaz.
+    holehe'nin istisnaları rateLimit olarak maskelemesi hata sayılır —
+    kapalı ağda asla "kayıtlı değil" iddia edilmez.
+    """
+    from agent_core.services.holehe_scanner import scan_email
+    result = await scan_email(
+        payload.email, limit=payload.limit, site_timeout=payload.timeout
+    )
+    return result.model_dump()
+
+
+class CrawlFetchPayload(BaseModel):
+    url: str
+
+
+@app.post("/api/experimental/crawl/fetch")
+async def crawl_fetch(payload: CrawlFetchPayload):
+    """Public-web sayfasını crawl4ai ile LLM-dostu metne çevirir (FAZ 4).
+
+    Kapı: ENABLE_CRAWL4AI=true (varsayılan kapalı; renderer=http tarayıcı
+    binary'si gerektirmez). Dürüst sonuç: içerik çekilemezse `available:false`
+    + makine-okunur sebep; ASLA uydurma içerik döner. SSRF guard'lı.
+    """
+    from agent_core.services.crawl_enricher import fetch_readable
+    return (await fetch_readable(payload.url)).model_dump()
+
+
+@app.get("/api/experimental/stealth")
+async def stealth_resolve(provider: Optional[str] = None):
+    """STEALTH_PROVIDER seçimini ve dürüst kullanılabilirliği gösterir (FAZ 5).
+
+    Salt-okunur: tarayıcı başlatmaz, binary indirmeyi TETİKLEMEZ. invisible/
+    cloak yalnız operatörün env ile gösterdiği binary varsa available döner;
+    yoksa makine-okunur sebep (binary_missing / library_missing).
+    """
+    from agent_core.services.stealth_provider import resolve_stealth
+    return resolve_stealth(override=provider).model_dump()
+
+
+@app.post("/api/experimental/socid/extract")
+async def socid_extract(payload: SocidExtractPayload):
+    """Profil URL'sinden yapılandırılmış kimlik kaydı çıkarır (socid-extractor).
+
+    Dürüst sonuç sözleşmesi: kayıt çıkmazsa `available:false` + makine-okunur
+    sebep döner; alan uydurulmaz. SSRF guard'lı (private/loopback engelli).
+    """
+    from agent_core.services.socid_enricher import extract_profile
+    record = await extract_profile(payload.url)
+    return record.model_dump()
+
+
 @app.post("/api/experimental/shadow/analyze")
 async def shadow_analyze(profile: dict):
     """Dark Triad analizi"""
@@ -797,9 +883,50 @@ async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, An
         if handle in (r.source_url or "").lower()
         or handle in (r.content or "").lower()
     ]
+    # socid-extractor zenginleştirmesi: eşleşen kaynak URL'lerden kararlı kimlik
+    # kaydı çıkmaya çalışılır. Kütüphane yok/ağ yok/kayıt yoksa alan EKLENMEZ —
+    # sonuç sözleşmesi bozulmaz (dürüst boş).
+    try:
+        from agent_core.services.socid_enricher import enrich_urls
+        socid_records = await enrich_urls([m["source_url"] for m in matched], limit=3)
+        by_url = {r.source_url: r for r in socid_records}
+        for m in matched:
+            rec = by_url.get(m["source_url"])
+            if rec is not None:
+                m["socid"] = rec.model_dump()
+        if socid_records:
+            socid_note = f" {len(socid_records)} sonuçtan yapılandırılmış kimlik kaydı çıkarıldı."
+        else:
+            socid_note = ""
+    except Exception as exc:  # zenginleştirme asıl sonucu asla bozmasın
+        logger.warning("socid enrichment skipped: %s: %s", type(exc).__name__, str(exc)[:80])
+        socid_note = ""
+    # [FAZ 4] Crawl4AI okunabilir-metin zenginleştirmesi. Kapı:
+    # ENABLE_CRAWL4AI (varsayılan kapalı → davranış birebir aynı). Yalnız
+    # available=True sonuçlar `crawl` alanına girer; hatalar alan EKLEMEZ
+    # (dürüst boş) ve asıl araştırma sonucunu asla bozmaz.
+    crawl_note = ""
+    try:
+        from agent_core.services.crawl_enricher import (
+            fetch_readable,
+            is_enabled as crawl_enabled,
+            research_limit,
+        )
+        if crawl_enabled() and matched:
+            crawled = 0
+            for m in matched[:research_limit()]:
+                res = await fetch_readable(m["source_url"])
+                if res.available:
+                    m["crawl"] = res.model_dump()
+                    crawled += 1
+            if crawled:
+                crawl_note = f" {crawled} sonuca crawl4ai ile okunabilir metin çekildi."
+    except Exception as exc:  # zenginleştirme asıl sonucu asla bozmasın
+        logger.warning("crawl4ai enrichment skipped: %s: %s", type(exc).__name__, str(exc)[:80])
+
     if matched:
         status = "ok"
-        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti."
+        note = f"{len(matched)}/{len(raw)} sonuç hedef kullanıcı adıyla eşleşti." + socid_note + crawl_note
     elif raw:
         status = "no_subject_match"
         note = f"Arama yapıldı ({len(raw)} sonuç) ama hiçbiri hedef kullanıcı adıyla eşleşmedi; sonuç gösterilmiyor (yanlış kişi eşleşmesi engeli)."

@@ -89,30 +89,48 @@ async def scrape_instagram(
     emit = log or (lambda level, msg: None)
     username = extract_username(url)
 
-    from playwright.async_api import async_playwright
-    try:
-        from playwright_stealth import Stealth
-        stealth_engine = Stealth()
-    except Exception:
-        stealth_engine = None
+    # [FAZ 5] STEALTH_PROVIDER seçici: default (env yok) = playwright_stealth
+    # (bugünkü davranış); invisible/cloak yalnız binary operator tarafından
+    # gösterildiyse available; kullanılamayan seçim dürüst loglanır ve tarama
+    # stealthsiz devam eder (sahte gizlilik iddiası yok).
+    from agent_core.services.stealth_provider import (
+        apply_page_stealth,
+        browser_kind,
+        launch_overrides,
+        resolve_stealth,
+        use_invisible_module,
+    )
+    selection = resolve_stealth()
+    emit("INFO", "STEALTH provider=%s available=%s%s" % (
+        selection.provider, selection.available,
+        (" reason=" + selection.reason) if selection.reason else "",
+    ))
 
-    async with async_playwright() as p:
+    if use_invisible_module(selection):
+        from invisible_playwright.async_api import async_playwright as pw_factory
+    else:
+        from playwright.async_api import async_playwright as pw_factory
+
+    async with pw_factory() as p:
         browser = None
         ctx = None
         page = None
         try:
             import os
             launch_kwargs = {"headless": True, "args": ["--disable-blink-features=AutomationControlled"]}
-            chrome_paths = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
-            ]
-            for cp in chrome_paths:
-                if os.path.exists(cp):
-                    launch_kwargs["executable_path"] = cp
-                    break
+            if browser_kind(selection) == "chromium":
+                chrome_paths = [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+                ]
+                for cp in chrome_paths:
+                    if os.path.exists(cp):
+                        launch_kwargs["executable_path"] = cp
+                        break
+            launch_kwargs.update(launch_overrides(selection))
 
-            browser = await p.chromium.launch(**launch_kwargs)
+            launcher = p.firefox if browser_kind(selection) == "firefox" else p.chromium
+            browser = await launcher.launch(**launch_kwargs)
             ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
             from agent_core.scraper.instagram_ghost import InstagramGhostScraper
@@ -127,8 +145,13 @@ async def scrape_instagram(
                     await ctx.add_cookies(parsed)
 
             page = await ctx.new_page()
-            if stealth_engine:
-                await stealth_engine.apply_stealth_async(page)
+            # [FAZ 5] Yalnız page-bazlı sağlayıcı (playwright_stealth) burada
+            # uygulanır; launch-level (invisible/cloak) başlatım katmanındadır.
+            # Uygulama başarısızsa dürüst loglanır ve tarama stealthsiz sürer.
+            if selection.kind == "page" and selection.available:
+                applied, note = await apply_page_stealth(selection, page)
+                if not applied:
+                    emit("WARNING", f"STEALTH apply başarısız: {note}")
             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
             ig_data = await ig_scraper.scrape_async(username, playwright_page=page)
 

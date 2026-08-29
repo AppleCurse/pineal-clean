@@ -9,7 +9,8 @@ Kararları `PinealExecutor` + `CognitiveRouter` verir; **Aspasia** karar verici 
 sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 
 > Bu depo güncel olarak şu yeni bileşenleri içermektedir:
-> `rust_core/` (Rust katmanı — Python ürün yoluna bağlı değil; CI rust-core job'u cargo check/test çalıştırır), 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
+> `rust_core/` (Rust katmanı — Python ürün çalışma zamanına **bağlanmamış** deneysel kod;
+> CI'da `cargo check` + `cargo test` kapısı vardır, ancak API/pipeline akışında yeri yoktur), 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
 > i18n çift dil desteği (TR/EN) ve yeni OSINTInvestigatorAgent & AuthenticityAuditorAgent zincirleri.
 
 ---
@@ -30,10 +31,11 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
    Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`),
    Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL` — listedeki
    metin modelleri vision desteklemediği için korundu).
-   Zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
+   Koddaki gerçek zincirler (`agent_core/services/llm_gateway.py` → `CHAINS`):
+   depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
    dialogue `solar-pro4 → deepseek-v4-flash` ·
-   fast `ling-3.0-flash → deepseek-v4-flash` (env:
-   `OPENROUTER_CHAIN_<TASK>`).
+   fast `ling-3.0-flash → deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`;
+   ajan bazlı: `OPENROUTER_AGENT_CHAIN_<AJAN>`).
 
 ## 2. Sistem Mimarisi (koddan doğrulanmış)
 
@@ -96,7 +98,8 @@ docker compose up --build
 ### C) Manuel
 ```bash
 pip install -r requirements.txt
-python -m playwright install chromium  # ZORUNLU ADIM (Docker disi manuel kurulumlarda)
+pip install -r requirements-osint.txt   # 2. adım: crawl4ai (psutil meta-çatışması için ayrı dosya; opsiyonel)
+python -m playwright install chromium  # ZORUNLU ADIM (Docker dışı manuel kurulumlarda)
 cd frontend && npm ci && npm run build && cd ..
 uvicorn backend.api:app --host 0.0.0.0 --port 8000
 ```
@@ -117,13 +120,19 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan `google/gemini-3.7-flash`; VisionAnalyzer ve görselli Aspasia istekleri). |
 | `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
+| `ENABLE_MAIGRET`, `ENABLE_HOLEHE`, `ENABLE_CRAWL4AI` | Deneysel OSINT kapıları — **hepsi default KAPALI**; kapalıyken pipeline davranışı değişmez. Limit/timeout alt değişkenleri `.env.example`'da. |
+| `STEALTH_PROVIDER` | `playwright_stealth` (default) \| `invisible` \| `cloak` \| `none`. invisible/cloak yalnız binary yolu gösterilirse kullanılabilir (indirme yapmaz): `INVISIBLE_BROWSER_BINARY`, `CLOAK_BROWSER_EXECUTABLE`. |
+
+Deneysel uçlar: `POST /api/experimental/{maigret/scan, holehe/scan, crawl/fetch, socid/extract}` ve
+`GET /api/experimental/stealth`. Sözleşme: kullanılamayan tarama `available:false` + makine-okunur
+sebep döner; veri ASLA uydurulmaz. Kanıt zinciri ve araç hükümleri: `INTEGRATION_PLAN.md`.
 
 Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
 
 ## 6. Testler
 ```bash
-pytest                          # unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
-                                # Güncel sayı: pytest --collect-only -q | tail -1
+pytest                          # Güncel sayı için: pytest --collect-only -q | tail -1
+                                # unit + entegrasyon + e2e + ws sıra + güvenlik + LLM protokol
 cd frontend && npm run check && npm run build
 ```
 

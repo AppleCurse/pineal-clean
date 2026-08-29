@@ -6,16 +6,6 @@ import re
 from collections import defaultdict
 from typing import List, Dict
 from datetime import datetime, timezone
-from pydantic import BaseModel
-
-class ProfileMemory(BaseModel):
-    profile_id: str
-    created_at: datetime
-    last_updated: datetime
-    evidence_chain: List[Dict]
-    resonance_history: List[float]
-    successful_approaches: List[str]
-    failed_approaches: List[str]
 
 class CanonicalMemory:
     """

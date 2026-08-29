@@ -5,22 +5,23 @@
 |---|---|---|
 | Windows | `baslat.bat` | venv + pip + frontend build (dist yoksa) + uvicorn:8000 |
 | Docker | `docker compose up --build` | Playwright/Chromium dahil; `pineal_memory` volume |
-| Manuel | `pip install -r requirements.txt` → `cd frontend && npm ci && npm run build` → `uvicorn backend.api:app --port 8000` | |
+| Manuel | `pip install -r requirements.txt && pip install -r requirements-osint.txt` → `cd frontend && npm ci && npm run build` → `uvicorn backend.api:app --port 8000` | İkinci dosya crawl4ai içindir (psutil meta-çatışması nedeniyle iki adım) |
 | Dev (vite) | `frontend/.env`: `VITE_API_BASE=http://127.0.0.1:8000` → `npm run dev` | :5173 → :8000 |
 
 ## Anahtarlar (`.env` veya UI Kasası)
 - `OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1` → canlı bulut LLM.
 - Yerel: `USE_LOCAL_LLM=true`, `LOCAL_LLM_URL=http://localhost:11434/v1`, `LOCAL_LLM_MODEL=...` (anahtar gerekmez).
+  Not: API sunucusunda Kasa'daki "yerel model" seçimi (`use_local`) bu env'i ezer; env varsayılanı yalnız Kasa seçimi yapılmamışsa geçerlidir.
 - `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` → AutonomousVerifier web doğrulaması (yoksa DuckDuckGo yedeği).
 - Vision: `OPENROUTER_VISION_MODEL` — varsayılan `google/gemini-3.7-flash`; VisionAnalyzer (profil fotoğrafları) ve görselli Aspasia isteklerinde kullanılır.
 - Model varsayılanları (P2 ekonomik set; fiyatlar OpenRouter promosyonlarına tabi):
   Tier-1 `upstage/solar-pro4` (`OPENROUTER_TIER_1_MODEL`, promo 2026-09-10'a kadar),
   Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`).
-  Zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` · dialogue
-  `solar-pro4 → deepseek-v4-flash` · fast `ling-3.0-flash →
-  qwen3-235b-a22b-2507` (env: `OPENROUTER_CHAIN_<TASK>`).
+  Koddaki gerçek zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
+  dialogue `solar-pro4 → deepseek-v4-flash` · fast `ling-3.0-flash →
+  deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`).
 - Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
-- Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı). Aşılırsa `SpendCapExceeded`.
+- Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı; env tanımsızsa da 0). Aşılırsa `SpendCapExceeded`.
 
 ## Sık sorunlar
 | Belirti | Neden → Çözüm |
@@ -31,7 +32,7 @@
 | 429 (initiate/aspasia) | Rate limit — 1 dk bekle (bilinçli koruma) |
 | 401 tüm API çağrıları | `PINEAL_TOKEN` tanımlı ama UI/istemci göndermiyor → `VITE_PINEAL_TOKEN` eşle veya token'ı kaldır |
 | Scrape 429/403 (Instagram) | Platform limit/cookie: Kasaya güncel cookie gir |
-| X (Twitter) hedefi | Kazıma devre dışı (B4): analiz **başlamaz** (`awaiting_authorization`); alternatif için `POST /api/scraper/authorize-alternative` |
+| X (Twitter) hedefi | Kazıma devre dışı (B4): `XScraperUnsupportedError`; WS logunda "DESTEKLENMİYOR" görünür, analiz BAŞLATILMAZ — public-web alternatifi için yetki beklenir (`awaiting_authorization`) |
 | WS bağlanmıyor | Token kipinde `?token=` gerekli; port 8000 dışındaysa `VITE_API_BASE` tanımla |
 
 ## Görev verisi
@@ -47,6 +48,23 @@ cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
 CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest),
 frontend (check + build + dist doğrulama), smoke (uvicorn + curl).
+
+Süitte kalıcı korumalar: `test_no_mock_in_production.py` (production'da mock yasağı,
+AST-bazlı; dedektör canlılık kanıtı içerir), `test_consolidation_faz1_5.py`
+(default-kapı sözleşmesi + beyan→kurulu zinciri).
+
+## Deneysel OSINT kapıları (FAZ 1-5)
+- `ENABLE_MAIGRET` / `ENABLE_HOLEHE` / `ENABLE_CRAWL4AI` — **default KAPALI**;
+  kapalıyken davranış değişmez (uçlar dürüst `disabled` döner). Ayrıntılı alt
+  değişkenler `.env.example`'da; kurulum ikinci adım dosyası:
+  `pip install -r requirements-osint.txt` (crawl4ai; psutil meta-çatışması).
+- `STEALTH_PROVIDER=playwright_stealth|invisible|cloak|none` — seçici kapı DEĞİL:
+  default bugünkü davranış. invisible/cloak binary İNDİRMEZ; `INVISIBLE_BROWSER_BINARY`
+  / `CLOAK_BROWSER_EXECUTABLE` yolu gösterilmezse dürüst `binary_missing` döner
+  (`GET /api/experimental/stealth` ile sorgulanır).
+- Dürüstlük sözleşmesi: tarama kullanılamazsa `available:false` + makine-okunur
+  sebep; "iz/kayıt yok" iddiası yalnız sıfır-hata taramada; mock/uydurma yasak
+  (testle korunur).
 
 Canlı LLM gate (manuel, gerçek anahtar gerektirir):
 ```

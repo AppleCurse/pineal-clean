@@ -27,9 +27,7 @@ class SeismosEngine:
         min_posts=5,
         silence_factor=4,
         min_silence_hours=72,
-        burst_factor=3.5,
         tone_delta_threshold=0.55,
-        style_z_threshold=2.2,
     ):
         self.min_posts = min_posts
         self.silence_factor = silence_factor
