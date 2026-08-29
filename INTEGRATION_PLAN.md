@@ -211,3 +211,39 @@ saygı; crawl4ai kullanımı 5.9.8'de doğrulandı, import + API testleri PASS).
   YOK (CDN kısıtı; indirme denendiğinde başarısız — standing). Bu yüzden
   gerçek launch-yolu testleri enjekte edilmiş fake playwright ile doğrulandı;
   binary'li doğrulama deploy ortamına bırakıldı.
+
+
+---
+
+## 8. FAZ 1-5 sağlamlaştırma (bu commit)
+
+Adli self-review iki gerçek kusur yakaladı; her ikisi düzeltildi + regresyon
+testiyle kilitlendi:
+
+1. **holehe client yarışı (FAZ 3 kusuru):** `_run_library_scan` istemciyi
+   `_runner` içinde yaratıyordu; concurrency>=2'de iki görev aynı anda
+   `client is None` görüp ayrı `httpx.AsyncClient` yaratabiliyor — biri
+   asla kapatılmıyordu (sızıntı). Düzeltme: tek istemci gather'dan ÖNCE
+   yaratılır. Regresyon: `TestHoleheSingleClient` (CountingClient, 4
+   eşzamanlı modül → tam 1 istemci).
+2. **maigret DB singleton yarışı (FAZ 2 kusuru):** eşzamanlı
+   `scan_username` çağrıları 3302 sitelik DB'yi aynı anda iki kez
+   yükleyebiliyordu (determinizm yok). Düzeltme: kilitli singleton
+   (`_get_site_dict`, `threading.Lock`). Regresyon:
+   `TestMaigretSingletonLock` (3 eşzamanlı tarama → tek yükleme).
+
+Yüzey sözleşmesi (`test_consolidation_faz1_5.py`):
+- Default pozür tek testte kilitli: maigret/holehe/crawl uçları `disabled`
+  + provider üçlüsü birebir; stealth seçici görünümü.
+- Beyan→kurulu zinciri: 6 OSINT bağımlılığı (socid_extractor, maigret,
+  holehe, crawl4ai, playwright_stealth, invisible_playwright) import
+  edilebilir — "requirements'ta var" ile "env'de kurulu" ayrımı kapanır.
+- env adları denetimi: 17/17 değişken kod ve plan belgesinde tutarlı.
+
+### Doğrulama (kanıt)
+
+- ruff PASS; pytest **443/443 PASS** (434+9 sağlamlaştırma)
+- HEPSİ-AÇIK pozür (yeni iç yollarla canlı): maigret 21/21 provider_errors,
+  holehe 6/6 provider_errors, crawl fetch_error — dürüst, uydurma yok
+- DEFAULT pozür (kanonik): üç deneysel uç `disabled`; WS pipeline birebir
+  aynı (halted_evidence, planned=[mirror_truth]); root/socid 200

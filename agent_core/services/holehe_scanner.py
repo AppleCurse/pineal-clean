@@ -101,20 +101,19 @@ async def _run_library_scan(
     per-modül timeout ile keser ve bunları ayrı hata listesine yazar."""
     from holehe.core import launch_module
 
-    client = None
+    import httpx
+
     out: List[Dict[str, Any]] = []
     stalled: List[str] = []
     semaphore = asyncio.Semaphore(max(1, concurrency))
+    # [SAĞLAMLAŞTIRMA] Tek istemci gather'dan ÖNCE yaratılır: eşzamanlı
+    # _runner'ların "client is None" yarışıyla ikinci bir istemci yaratıp
+    # sızdırması engellendi (FAZ 3 kusuru; regresyon testi var).
+    client = httpx.AsyncClient(timeout=timeout)
 
     async def _runner(fn: Any) -> None:
         name = getattr(fn, "__name__", "?")
         async with semaphore:
-            nonlocal client
-            if client is None:
-                # holehe maincore ile aynı istemci davranışı (yalnız timeout).
-                import httpx
-
-                client = httpx.AsyncClient(timeout=timeout)
             try:
                 await asyncio.wait_for(
                     launch_module(fn, email, client, out), timeout=timeout + 5.0
@@ -127,8 +126,7 @@ async def _run_library_scan(
     try:
         await asyncio.gather(*(_runner(fn) for fn in functions))
     finally:
-        if client is not None:
-            await client.aclose()
+        await client.aclose()
     return out, stalled
 
 

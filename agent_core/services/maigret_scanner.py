@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -32,6 +33,7 @@ _SILENT_LOGGER.addHandler(logging.NullHandler())
 _SILENT_LOGGER.setLevel(logging.CRITICAL)
 
 _db_singleton: Optional[object] = None
+_db_lock = threading.Lock()
 
 
 class MaigretSiteHit(BaseModel):
@@ -73,20 +75,35 @@ def sanitize_username(username: str) -> Optional[str]:
 
 
 def _load_site_dict(top: int) -> Dict[str, object]:
-    """Paket içi maigret DB'sinden (3302 site) rank'e göre top-N site seçer."""
+    """Paket içi maigret DB'sinden (3302 site) rank'e göre top-N site seçer.
+
+    Yalnız yükleyici; singleton + kilit `_get_site_dict`'tedir (testler
+    yükleyiciyi değiştirebilir, kilit anlamlı kalır).
+    """
+    import pathlib
+
+    import maigret
+    from maigret.sites import MaigretDatabase
+
+    db_path = pathlib.Path(maigret.__file__).parent / "resources" / "data.json"
+    db = MaigretDatabase().load_from_file(str(db_path))
+    if not db.sites_dict:
+        raise RuntimeError("maigret db empty")
+    return db
+
+
+def _get_site_dict(top: int) -> Dict[str, object]:
+    """[SAĞLAMLAŞTIRMA] Kilitli singleton: eşzamanlı taramalar 3302 sitelik
+    DB'yi aynı anda iki kez yükseltemez (FAZ 2 kusuru; regresyon testi var)."""
     global _db_singleton
-    if _db_singleton is None:
-        import pathlib
-
-        import maigret
-        from maigret.sites import MaigretDatabase
-
-        db_path = pathlib.Path(maigret.__file__).parent / "resources" / "data.json"
-        db = MaigretDatabase().load_from_file(str(db_path))
-        if not db.sites_dict:
-            raise RuntimeError("maigret db empty")
-        _db_singleton = db
-    return _db_singleton.ranked_sites_dict(top=top)  # type: ignore[attr-defined]
+    with _db_lock:
+        if _db_singleton is None:
+            _db_singleton = _load_site_dict(top)
+        db = _db_singleton
+    ranked = getattr(db, "ranked_sites_dict", None)
+    if ranked is None:  # test/çağıran doğrudan dict sağladı — olduğu gibi kullan
+        return db  # type: ignore[return-value]
+    return ranked(top=top)  # type: ignore[misc]
 
 
 async def _run_library_scan(
@@ -132,7 +149,7 @@ async def scan_username(
     total_timeout = _env_int("MAIGRET_TOTAL_TIMEOUT", DEFAULT_TOTAL_TIMEOUT, 180)
 
     try:
-        site_dict = await asyncio.to_thread(_load_site_dict, top)
+        site_dict = await asyncio.to_thread(_get_site_dict, top)
     except ImportError:
         return MaigretScanResult(requested_username=clean, available=False,
                                  reason="library_missing")
