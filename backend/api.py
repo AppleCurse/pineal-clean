@@ -697,6 +697,28 @@ async def maigret_scan(payload: MaigretScanPayload):
     return result.model_dump()
 
 
+class HoleheScanPayload(BaseModel):
+    email: str
+    limit: Optional[int] = None
+    timeout: Optional[int] = None
+
+
+@app.post("/api/experimental/holehe/scan")
+async def holehe_scan(payload: HoleheScanPayload):
+    """E-postanın sitelerdeki kaydını holehe ile tarar (FAZ 3, deneysel).
+
+    Kapı: ENABLE_HOLEHE=true (varsayılan kapalı). Dürüst sonuç: kayıt
+    çıkmazsa `available:false` + makine-okunur sebep; site uydurulmaz.
+    holehe'nin istisnaları rateLimit olarak maskelemesi hata sayılır —
+    kapalı ağda asla "kayıtlı değil" iddia edilmez.
+    """
+    from agent_core.services.holehe_scanner import scan_email
+    result = await scan_email(
+        payload.email, limit=payload.limit, site_timeout=payload.timeout
+    )
+    return result.model_dump()
+
+
 @app.post("/api/experimental/socid/extract")
 async def socid_extract(payload: SocidExtractPayload):
     """Profil URL'sinden yapılandırılmış kimlik kaydı çıkarır (socid-extractor).

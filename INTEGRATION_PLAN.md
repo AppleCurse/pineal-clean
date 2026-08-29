@@ -70,3 +70,57 @@ Regresyon testi: `test_none_status_is_error_not_absence`.
 - Gerçek kütüphane koşusu (top 10 → 21 site): `provider_errors`, dürüst
 - Uç: `invalid_username` / `disabled` / `provider_errors` canlı doğrulandı
 - Pipeline değişmedi: WS görevi aynı davranış (halted_evidence, planned=[mirror_truth])
+
+
+---
+
+## 5. FAZ 3 uygulaması (bu commit) — Holehe; Blackbird RED
+
+### 5.1 Holehe (uygulandı)
+
+- `agent_core/services/holehe_scanner.py`: e-posta kayıt taraması.
+  Kapı `ENABLE_HOLEHE` (default kapalı); `HOLEHE_MODULES_LIMIT` (100,
+  max 300; deterministik isim-sıralı ilk N), `HOLEHE_TIMEOUT` (10s),
+  `HOLEHE_TOTAL_TIMEOUT` (120s), `HOLEHE_CONCURRENCY` (20).
+- `POST /api/experimental/holehe/scan` — deneysel uç (e-posta doğrulamalı).
+- `OsintInvestigatorAgent._apply_email_scan`: yalnız anahtar-yok fallback
+  yolunda, profil `connected_emails` doluysa; kapalıyken profil alanları
+  DEĞİŞMEZ (yalnız `email_scan` provenance'ı); güven = gözlenen kapsama ve
+  mevcut güvenin altına inmez (başka kaynağın kanıtını ezmez).
+- requirements: `holehe>=1.61` — **GPL-3.0**: kod repo'ya gömülMEDİ; pip
+  bağımlılığı olarak, varsayılan kapalı deneysel uçla kullanılır.
+
+### ADLİ BULGU (holehe 1.61 kaynak okuması + canlı doğrulama)
+
+`holehe.core.launch_module` modül içi HER istisnayı yakalayıp
+`rateLimit=True, exists=False` yazıyor. Kapalı ağda tüm modüller "kayıtlı
+değil" gibi görünür (FAZ 2'deki maigret status=None tuzağının eşdeğeri).
+Kural: rateLimit=True / hükmü olmayan / tanınmayan kayıt = HATA; temiz
+yokluk yalnız sıfır-hata koşulunda iddia edilir. Canlı: 6 gerçek modül /
+6 hata → `provider_errors` (uydurma yok). Regresyon: `TestForensicClassification`.
+
+### Doğrulama (kanıt)
+
+- ruff PASS; pytest **400/400 PASS** (375+25 yeni)
+- Canlı uç: `provider_errors` (6/6 hata) ve `invalid_email` — dürüst
+- Pipeline değişmedi: default kapalı (TestClient + canlı mevcut uçlar 200)
+
+### 5.2 Blackbird — BELGELENMİŞ RED (kanıt listesi)
+
+1. **PyPI isim çakışması:** `pip install blackbird` → 2014 tarihli
+   "ZABBIX-SENDER middleware daemon'ı" (yazar: ARASHI, Jumpei,
+   github.com/Vagrants/blackbird, WTFPL, Python 2.6/2.7). p1ngul1n0'un
+   OSINT aracıyla ilgisiz; yanlış paket entegrasyonu sahte olurdu.
+2. **Paketleme yok:** p1ngul1n0/blackbird PyPI'da yayımlanmıyor; repo kökü
+   `blackbird.py` + `src/` düzeninde, pyproject/setup yok (CLI uygulaması,
+   kütüphane API'si değil).
+3. **Lisans:** repo lisansı **CC BY-NC-SA 4.0** (`.github/LICENSE`,
+   `docs/LICENSE`) — NonCommercial + ShareAlike. OSINT pipeline'a gömme/
+   damıtma için red; holehe (GPL-3, kod gömmeden bağımlılık) ile bile
+   kıyaslandığında en kısıtlayıcı.
+4. **`--ai` özelliği:** site adlarını dış AI servisine yollar — zaten
+   kapsam dışıydı; çekirdek de yukarıdaki nedenlerle entegre edilmedi.
+
+Alternatif (FAZ 6 koşullu): blackbird'ün alt kaynağı WhatsMyName (WHNS)
+veri setinin kendi lisansı ayrıca incelenerek çekirdek tarayıcı doğrudan
+değerlendirilebilir. Karar: red, kanıtlarıyla belgeli.

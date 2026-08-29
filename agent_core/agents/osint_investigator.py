@@ -70,6 +70,46 @@ class OsintInvestigatorAgent:
             })
         return profile.model_copy(update={"username_scan": scan.model_dump()})
 
+    async def _apply_email_scan(self, profile: OsintProfile, email: str) -> OsintProfile:
+        """[FAZ 3] Holehe e-posta kayıt taramasını dürüstçe birleştirir.
+
+        - Kapı (ENABLE_HOLEHE) kapalıysa / tarama kullanılamıyorsa: profil
+          alanları DEĞİŞMEZ; yalnız provenance olarak `email_scan` alanı
+          eklenir (makine-okunur sebep ile).
+        - Eşleşme varsa: gözlenen siteler gerçek veri olarak
+          `associated_platforms`'a girer; güven = gözlenen kapsama ve MEVCUT
+          güvenin ALTINA inmez (başka kaynağın bulduğu platformları silmez).
+        - Güvenilir yokluk (sıfır hata + sıfır eşleşme): yalnız hâlâ tek
+          gözlem yoksa confidence 0.0 + 'email_scan_no_match'; aksi halde
+          mevcut değerler korunur (başka taramanın kanıtını ezmez).
+        """
+        try:
+            from agent_core.services.holehe_scanner import scan_email
+            scan = await scan_email(email)
+        except Exception as exc:  # tarama asıl OSINT sonucunu asla bozmasın
+            logger.warning("holehe scan skipped: %s: %s", type(exc).__name__, str(exc)[:80])
+            return profile
+
+        if scan.available and scan.found_sites:
+            merged = sorted({*profile.associated_platforms, *(h.site for h in scan.found_sites)})
+            coverage = (len(scan.found_sites) / scan.scanned_count) if scan.scanned_count else 0.0
+            confidence = max(profile.confidence, round(coverage, 3))
+            return profile.model_copy(update={
+                "associated_platforms": merged,
+                "data_confidence": True,
+                "confidence": confidence,
+                "email_scan": scan.model_dump(),
+            })
+        if scan.available and scan.scanned_count and scan.error_count == 0:
+            no_platforms = not profile.associated_platforms
+            return profile.model_copy(update={
+                "data_confidence": True,
+                "confidence": 0.0 if no_platforms else profile.confidence,
+                "fallback_reason": "email_scan_no_match" if no_platforms else profile.fallback_reason,
+                "email_scan": scan.model_dump(),
+            })
+        return profile.model_copy(update={"email_scan": scan.model_dump()})
+
     def _get_alf_headers(self) -> Dict[str, str]:
         import random
         user_agents = [
@@ -125,7 +165,12 @@ class OsintInvestigatorAgent:
             )
             # [FAZ 2] ENABLE_MAIGRET kapalıysa profil alanları değişmez; kapı
             # açıksa yalnız gerçek gözlemler dürüstçe birleştirilir.
-            return await self._apply_username_scan(profile, clean_username)
+            profile = await self._apply_username_scan(profile, clean_username)
+            # [FAZ 3] Bağlı e-posta varsa holehe kayıt taraması (ENABLE_HOLEHE
+            # kapalıysa profil alanları yine değişmez; yalnız provenance eklenir).
+            if profile.connected_emails:
+                profile = await self._apply_email_scan(profile, profile.connected_emails[0])
+            return profile
         else:
             try:
                 async with aiohttp.ClientSession() as session:

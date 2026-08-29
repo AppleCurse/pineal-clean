@@ -20,3 +20,7 @@ socid-extractor>=0.1.0
 # OSINT kullanıcı-adı varlık taraması (3300+ site; MIT). Kapı: ENABLE_MAIGRET
 # (varsayılan kapalı); kütüphane/DB yoksa dürüst available:false döner.
 maigret>=0.6.5
+# OSINT e-posta kayıt taraması (deneysel; GPL-3.0 — kod gömülmeden yalnız
+# bağımlılık olarak). Kapı: ENABLE_HOLEHE (varsayılan kapalı); istisnaları
+# rateLimit maskesi hata sayılır, kapalı ağda 'kayıtlı değil' iddia edilmez.
+holehe>=1.61
