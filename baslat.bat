@@ -36,7 +36,7 @@ REM --- 2) OSINT paketleri (psutil uyumlulugu icin ayri adim) ---
 if exist requirements-osint.txt (
     echo [2/4] OSINT paketleri kuruluyor...
     python -m pip install -q -r requirements-osint.txt
-    if errorlevel 1 goto :fail
+    if errorlevel 1 echo UYARI: OSINT paketleri kurulamadi - panel acilir ama OSINT modulleri kapali kalir.
 )
 
 REM --- 3) Playwright tarayici motoru ---
