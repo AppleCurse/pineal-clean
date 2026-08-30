@@ -1,29 +1,73 @@
 @echo off
+setlocal
 chcp 65001 >nul
+cd /d "%~dp0"
 echo ==============================================
 echo PINEAL-HERETIC v2.0 - COMMAND CENTER INITIATION
 echo ==============================================
 echo.
 
-REM --- 1) Python ortami ---
+REM --- 0) Port kontrolu: ikinci sunucu baslatma ---
+curl.exe -fsS http://127.0.0.1:8000/ >nul 2>&1
+if not errorlevel 1 (
+    echo Sunucu zaten calisiyor: http://localhost:8000
+    start "" http://localhost:8000
+    goto :done
+)
+
+netstat -ano | findstr /R /C:":8000 .*LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo HATA: 8000 portu baska bir uygulama tarafindan kullaniliyor.
+    echo Portu bosaltin veya mevcut uygulamayi kapatin.
+    goto :fail
+)
+
+REM --- 1) Python ortami + temel paketler ---
 if not exist venv (
-    echo [1/3] venv olusturuluyor...
+    echo [1/4] venv olusturuluyor...
     python -m venv venv
+    if errorlevel 1 goto :fail
 )
 call venv\Scripts\activate.bat
 python -m pip install -q -r requirements.txt
+if errorlevel 1 goto :fail
 
-REM --- 2) Frontend derlemesi (dist yoksa) ---
-if not exist frontend\dist (
-    echo [2/3] Frontend derleniyor...
-    cd frontend
-    if not exist node_modules call npm ci
-    call npm run build
-    cd ..
+REM --- 2) OSINT paketleri (psutil uyumlulugu icin ayri adim) ---
+if exist requirements-osint.txt (
+    echo [2/4] OSINT paketleri kuruluyor...
+    python -m pip install -q -r requirements-osint.txt
+    if errorlevel 1 goto :fail
 )
 
-REM --- 3) Sunucu: http://localhost:8000 ---
-echo [3/3] Sunucu baslatiliyor: http://localhost:8000
+REM --- 3) Playwright tarayici motoru ---
+ echo [3/4] Playwright Chromium kontrol ediliyor...
+python -m playwright install chromium
+if errorlevel 1 goto :fail
+
+REM --- 4) Frontend derlemesi (dist yoksa) ---
+if not exist frontend\dist (
+    echo [4/4] Frontend derleniyor...
+    pushd frontend
+    if not exist node_modules call npm ci
+    if errorlevel 1 (popd & goto :fail)
+    call npm run build
+    if errorlevel 1 (popd & goto :fail)
+    popd
+)
+
+REM --- Sunucu: http://localhost:8000 ---
+echo Sunucu baslatiliyor: http://localhost:8000
 echo.
-uvicorn backend.api:app --host 0.0.0.0 --port 8000
+python -m uvicorn backend.api:app --host 0.0.0.0 --port 8000
+if errorlevel 1 goto :fail
+
+goto :done
+
+:fail
+echo.
+echo Baslatma basarisiz oldu.
+exit /b 1
+
+:done
+endlocal
 pause
