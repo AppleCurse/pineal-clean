@@ -3,7 +3,7 @@
 ## Başlatma
 | Yöntem | Komut | Not |
 |---|---|---|
-| Windows | `baslat.bat` | venv + pip + frontend build (dist yoksa) + uvicorn:8000 |
+| Windows | `baslat.bat` | venv + temel/OSINT pip paketleri + Playwright Chromium + frontend build (dist yoksa) + uvicorn:8000 |
 | Docker | `docker compose up --build` | Playwright/Chromium dahil; `pineal_memory` volume |
 | Manuel | `pip install -r requirements.txt && pip install -r requirements-osint.txt` → `cd frontend && npm ci && npm run build` → `uvicorn backend.api:app --port 8000` | İkinci dosya crawl4ai içindir (psutil meta-çatışması nedeniyle iki adım) |
 | Dev (vite) | `frontend/.env`: `VITE_API_BASE=http://127.0.0.1:8000` → `npm run dev` | :5173 → :8000 |
