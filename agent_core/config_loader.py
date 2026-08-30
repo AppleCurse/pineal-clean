@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import yaml
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 @dataclass
 class AgentThresholds:
@@ -21,6 +22,7 @@ class DecisionConfig:
     agents: Dict[str, AgentThresholds]
 
     @classmethod
+    @lru_cache(maxsize=1)
     def load(cls, config_path: str = "config/decision_config.yaml") -> "DecisionConfig":
         """Load decision config from YAML."""
         # Check relative to current working directory or absolute

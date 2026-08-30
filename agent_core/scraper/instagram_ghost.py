@@ -288,6 +288,28 @@ class InstagramGhostScraper:
                         if url not in display_urls and ("s150x150" not in url and "s320x320" not in url):
                             display_urls.append(url)
 
+                # Captions are often still present near the shortcode in the
+                # rendered HTML. Recover only a uniquely adjacent caption;
+                # otherwise keep None rather than guessing across posts.
+                caption_by_shortcode: Dict[str, str] = {}
+                for match in re.finditer(r'"shortcode":"([A-Za-z0-9_-]+)"', html):
+                    shortcode = match.group(1)
+                    if shortcode in caption_by_shortcode:
+                        continue
+                    window = html[match.end():match.end() + 3000]
+                    caption_match = re.search(
+                        r'"edge_media_to_caption":\{"edges":\[\{"node":\{"text":"((?:[^"\\]|\\.)+)"',
+                        window,
+                    ) or re.search(r'"caption":"((?:[^"\\]|\\.){1,2200})"', window)
+                    if caption_match:
+                        raw_caption = caption_match.group(1)
+                        try:
+                            caption = json.loads('"' + raw_caption + '"')
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            caption = raw_caption.replace("\\u0026", "&").replace("\\n", "\\n")
+                        if isinstance(caption, str) and caption.strip():
+                            caption_by_shortcode[shortcode] = caption[:2200].strip()
+
                 for i in range(min(len(display_urls), 12)):
                     try:
                         sc = shortcodes[i] if i < len(shortcodes) else f"post_{i+1}"
@@ -295,7 +317,7 @@ class InstagramGhostScraper:
                         posts.append(InstagramPost(
                             shortcode=sc,
                             display_url=url,
-                            caption=None,
+                            caption=caption_by_shortcode.get(sc),
                             is_video=False
                         ))
                     except Exception:
