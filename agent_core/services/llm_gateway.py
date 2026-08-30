@@ -25,12 +25,19 @@ class LLMGateway:
     }
 
     MODEL_PRICING = {
+        # Fiyatlar 2026-08-30'da OpenRouter kataloğundan doğrulandı (promo/listed,
+        # cached-effective değil). Kaynak: /api/v1/models + model sayfaları.
+        # Not: solar-pro4/ling-3.0-flash promo 2026-09-10'a kadar; sonrası 0.12/0.24 ve
+        # daha yükseğe döner — `OPENROUTER_MAX_SPEND_USD` bu tabloyu baz alır.
         "upstage/solar-pro4": {"in": 0.03, "out": 0.12},
         "inclusionai/ling-3.0-flash": {"in": 0.021, "out": 0.063},
-        "deepseek/deepseek-v4-flash": {"in": 0.14, "out": 0.28},
-        "z-ai/glm-5.2": {"in": 0.39, "out": 1.22},
-        "deepseek/deepseek-v4-pro": {"in": 0.71, "out": 1.42},
-        "google/gemini-3.7-flash": {"in": 0.375, "out": 1.875}
+        "deepseek/deepseek-v4-flash": {"in": 0.0679, "out": 0.168},
+        "z-ai/glm-5.2": {"in": 0.3276, "out": 1.03},
+        "deepseek/deepseek-v4-pro": {"in": 0.4679, "out": 0.9358},
+        "google/gemini-3.7-flash": {"in": 0.75, "out": 3.75},
+        # live_llm_gate.py varsayılan hakemi (OPENROUTER_JUDGE_MODEL). Guard bunu
+        # fiyatsız görüp gate'i UNKNOWN_PRICING ile düşürüyordu — eklendi.
+        "openai/gpt-5.6-sol-pro": {"in": 2.0, "out": 10.0}
     }
     
     TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["solar_pro4"])

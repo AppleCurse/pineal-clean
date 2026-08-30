@@ -81,23 +81,81 @@ için JDK+Android SDK'lı bir ortamda `assembleDebug` koşulmalıdır.
   kaldırılıp gerçek smoke koşulur, ya da (b) dokümandaki iddia yumuşatılır
   (ör. "bu imaj best-effort; bu oturumda çalıştırılmadı"). Kullanıcının
   "config var ile çalışıyor ayrımı" kuralı gereği **henüz kapanmadı**.
-- Bağıl not: backend Python bağımlılıkları (fastapi/pydantic/uvicorn/ruff/pytest)
-  **bu sandbox'ta yüklü değil**, bu yüzden manuel `uvicorn` smoke'u da koşulmadı.
+- Bağıl not: bu oturumda backend Python bağımlılıkları (`requirements.txt` +
+  pytest/pytest-asyncio/ruff) **bir venv'e kuruldu** ve gerçek CI kapıları koşuldu
+  (aşağıda §6). `uvicorn` HTTP smoke'u koşulmadı; yalnız `ruff`+`pytest` koşuldu.
 
 ---
 
-## 3) LLM kapısından ÖNCE: fiyat/promo kontrolü — AÇIK (ölçüm dış ortam ister)
+## 6) Bu oturumda koşabilen gerçek kapılar (hepsi koşuldu, hepsi geçti)
+
+Venv: `/tmp/pvenv` (requirements.txt + pytest/pytest-asyncio/ruff). Sonuçlar:
+
+| Kapı | Komut | Sonuç |
+|---|---|---|
+| Backend lint (CI `backend`) | `ruff check .` | ✅ "All checks passed!" |
+| Backend test (CI `backend`) | `pytest -q` | ✅ **448 passed, 2 skipped** (450 collect) |
+| Audit'in "FAIL" ettiği 2 test | `test_human_behavior.py::test_linguistic_forensics` + `::test_analyze_visual_micro` | ✅ **2 passed** (audit bayat) |
+| 2 skip nedeni | `pytest -rs` | crawl4ai 2. adım dosyasındadır (`requirements-osint.txt`); kastı, hata değil |
+| Frontend tip (CI `frontend`) | `npm run check` | ✅ 0 errors, 0 warnings |
+| Frontend build (CI `frontend`) | `npm run build` | ✅ dist'te `PINEAL-HERETIC` (gerçek build) |
+
+> Not: `INDEPENDENT_FORENSIC_AUDIT.md` ve `REPORT_CROSS_VALIDATION.md`'nin
+> "2 test FAIL → CI backend kırmızı" iddiası **artık geçersiz** — suçlanan iki test
+> bu revizyonda **geçiyor**. (Bunlar geçmiş `DURUM_KAPISI` revizyonlarında
+> düzeltilmiş görünüyor; bu oturumda doğrulandı.)
+
+---
+
+## 3) LLM kapısından ÖNCE: fiyat/promo kontrolü — KISMI KAPANDI (fiyatlar doğrulandı + kod düzeltildi)
 
 - README/RUNBOOK: Tier-1 `upstage/solar-pro4` promo **2026-09-10'a kadar**;
   kullanıcı notu **11 Eylül 2026**. Bugün **2026-08-30** → **~11-12 gün** kaldı.
-- Gerçek zincir (`agent_core/services/llm_gateway.py` → `CHAINS`):
-  `depth solar-pro4 → glm-5.2 → deepseek-v4-pro` · `dialogue solar-pro4 → deepseek-v4-flash`
-  · `fast ling-3.0-flash → deepseek-v4-flash`.
-- Bu zincirin gerçek maliyetini ölçmek için `OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1`
-  ile canlı çağrı gerekir; burada **anahtar/hesap yok** → ölçülemedi.
-- Öneri: canlı LLM testine bütçe sürmeden **önce** (a) harcama tavanı koy
-  (`OPENROUTER_MAX_SPEND_USD`, `.env.example:11`, 0=kapalı; env tanımsızsa da 0),
-  (b) promo sonrası fiyatla zincir maliyetini yeniden hesapla. Zemin kaymasın.
+- Bu oturumda kullanıcı gerçek OpenRouter anahtarı verdi; **fiyat/promo kontrolü
+  artık ölçülebildi.** Zincirdeki tüm model slug'ları canlı OpenRouter kataloğunda
+  doğrulandı: **hepsi var** — hiçbiri kaldırılmamış/değişmemiş. Ama `MODEL_PRICING`
+  tablosu güncel değildi ve bunu **canlı veriyle ispat ettim**:
+
+| Model | Eski kod ($/M in/out) | Canlı katalog ($/M in/out) | Durum |
+|---|---|---|---|
+| `upstage/solar-pro4` | 0.03 / 0.12 | 0.03 / 0.12 | ✅ |
+| `inclusionai/ling-3.0-flash` | 0.021 / 0.063 | 0.021 / 0.063 | ✅ |
+| `deepseek/deepseek-v4-flash` | 0.14 / 0.28 | 0.0679 / 0.168 | ❌ eski, fazla tahmin |
+| `z-ai/glm-5.2` | 0.39 / 1.22 | 0.3276 / 1.03 | ❌ eski, fazla tahmin |
+| `deepseek/deepseek-v4-pro` | 0.71 / 1.42 | 0.4679 / 0.9358 | ❌ eski, fazla tahmin |
+| `google/gemini-3.7-flash` | 0.375 / 1.875 | 0.75 / 3.75 | ❌ eski, **eksik tahmin (~2x)** |
+| `openai/gpt-5.6-sol-pro` (hakem) | **YOK** | 2.0 / 10.0 | ❌ **eksik** |
+
+  Not: `deepseek`/`glm` eski değerler aşırı ihtiyatlıydı; `gemini-3.7-flash` ise
+  **yanlış yönde** (yetersiz) idi — `OPENROUTER_MAX_SPEND_USD` bu tabloyla
+  hesaplandığı için vision maliyeti **~2x eksik sayılıyordu** (spend cap'i
+  gerçekte 2x aşabilirdi). Bu, kullanıcının "#3 fiyat zemininde kayma" uyarısının
+  somut karşılığıdır.
+- **Düzeltme yapıldı:** `agent_core/services/llm_gateway.py` → `MODEL_PRICING`
+  canlı katalog değerlerine hizalandı ve **eksik hakem modeli** (`openai/gpt-5.6-sol-pro`,
+  2.0/10.0) eklendi. Kaynak: OpenRouter `/api/v1/models` + model sayfaları
+  (2026-08-30). Bu düzeltme `test_gateway_cost_and_retry.py` (9/9 PASS) rutinini
+  bozmadı; tam suite `448 passed, 2 skipped`.
+- **Kalan:** Gerçek maliyet ölçümü (hangi zincir ne kadar?) için canlı çağrı
+  gerekir — bu sandbox shell'inden LLM provider alan adı **TLS-engelli** (aşağıda).
+
+## 3b) Canlı LLM gate koşusu (item 3'ün kapısı) — KOŞULDU, ağ engeli kaldı
+
+- `live_llm_gate.py` gerçek anahtar + `LIVE_LLM_E2E=1` + `OPENROUTER_MAX_SPEND_USD=0.02`
+  ile koşuldu. **Sonuç: 2/10 kriter PASS, exit=1, harcama $0.00** (hiçbir provider
+  çağrısı ağa ulaşmadı).
+- İki bağımsız engel kanıtlandı (ikisi de artık adlandırıldı):
+  1. **Kod bug'ı (ağdan bağımsız, artık DÜZELTİLDİ):** ilk koşuda hakem `UNKNOWN_PRICING:
+     'openai/gpt-5.6-sol-pro'` ile düştü — çünkü hakem modeli `MODEL_PRICING`'de yoktu.
+     Fiyat eklendi → ikinci koşuda hakem hatası `Connection error` oldu (guard geçti).
+     Yani **ağ olsaydı bile gate bu kod yüzünden 5. kriterde düşecekti.**
+  2. **Ağ (çevresel, kalan tek engel):** `openrouter.ai`/`generativelanguage.googleapis.com`/
+     `integrate.api.nvidia.com`/`api.together.xyz` bu sandbox shell'inden **TLS'de
+     engelli** (PyPI/GitHub izinli; DNS çözülüyor ama TLS el sıkışması kesiliyor).
+     `fetch_page` platform proxy'sinden çalışır, kimlikli API çağrısı yapamaz.
+- **Hüküm:** Gerçek uçtan-uca LLM kapısı **ağ erişimi olan bir ortamda** koşulmalı.
+  Bu oturumda kod tarafı temizlendi; kalan tek şey provider erişimi. Harcama
+  **aynen $0.00** oldu (spend cap'e hiç ulaşılmadı).
 
 ---
 
@@ -137,13 +195,23 @@ için JDK+Android SDK'lı bir ortamda `assembleDebug` koşulmalıdır.
 |---|---|---|---|---|
 | 1 | Android kırmızı + mimari | **Neden bulundu** | direkt-Gemini mimarisi; `PinealAnalyzerEngine.kt:133-139` mükerrer argüman derleme hatası | `assembleDebug` JDK'lı ortamda doğrulanmalı; ürün kararı: backend istemcisi mi, bağımsız mı |
 | 2 | Docker provası | AÇIK | Docker yok → çalıştırılamadı | Docker smoke veya doküman iddiasını yumuşat |
-| 3 | Fiyat/promo | AÇIK | promo bitişi ~2026-09-10/11, bugün 2026-08-30 | canlı anahtarla maliyet ölçümü + `OPENROUTER_MAX_SPEND_USD` |
+| 3 | Fiyat/promo + LLM gate | **KISMI KAPANDI** | fiyatlar canlı katalogdan doğrulandı, `MODEL_PRICING` düzeltildi + hakem modeli eklendi; gate koşuldu | gerçek maliyet ölçümü **ağ erişimi olan ortamda** |
 | 4 | OSINT gerçek-ağ | AÇIK | kapılar default KAPALI | hedef/limit/risk/etik karar listesi |
 | 5 | Raporu main'e taşı | **KAPANDI** | bu dosya oluşturulup push edildi + PR | PR onayı (`gh` PR açık) |
 
-**Hüküm:** "ürün hazır" demeden önce listelenen beş hazırlık maddesinden
-ikisinin nedeni/çıktısı bu oturumda netleşti (Android kök nedeni + mimari;
-raporun main'e taşınması). Geri kalan üçü **dış ortam/karar gerektirir**
-(Docker çalıştırma, canlı LLM maliyeti, OSINT hedef/limit kararı). Bu üçü
-kapanınca üç kabul kapısına sırayla girilir ancak; o ana kadar "ürün hazır"
-**en dürüst hüküm değildir.**
+**Bu oturumda kapanan/düzelen:**
+- **Backend + frontend CI kapıları gerçekten koşuldu ve geçti** (§6): `ruff` ✅,
+  tam `pytest` 448✅/2 skip, svelte-check ✅, build ✅. Audit'in "CI kırmızı" iddiası
+  **artık geçersiz** (suçlanan 2 test geçiyor).
+- **`MODEL_PRICING` canlı kataloğa hizalandı** ve eksik hakem modeli eklendi. Bu
+  tek başına item 3'ün ölçüm zeminini düzeltti: artık `OPENROUTER_MAX_SPEND_USD`
+  gerçek maliyeti (özellikle vision'ı ~2x eksik sayan eski `gemini` fiyatı) doğru
+  yansıtıyor.
+- **Canlı LLM gate** koşuldu: kod tarafındaki `UNKNOWN_PRICING` bug'ı düzeltildi;
+  kalan tek engel **ağ** (LLM provider domain'leri bu sandbox'tan TLS-engelli).
+
+**Hüküm:** Beş hazırlık maddesinden üçü artık geleceğe taşındı (Android kök
+nedeni, fiyat tablosu düzeltmesi, raporun main'e taşınması). **Kalan üç gerçek
+kapı** — (a) gerçek LLM uçtan uca (ağ erişimli ortam gerekir), (b) Docker smoke,
+(c) OSINT gerçek-ağ protokolü — hâlâ açıktır. O üçü kapanana kadar "ürün hazır"
+**en dürüst hüküm değildir: kod temiz, kanıt zemin hazır, ama canlı kanıt bekliyor.**

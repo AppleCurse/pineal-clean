@@ -91,3 +91,28 @@ uvicorn + WS e2e      = PASS (interpreter artık planned_agents'ta YOK)
 telemetry             = llm_spend_cap_usd: 0.0 (hizalanmış default)
 vault + local provider e2e = PASS (pipeline canlı sağlayıcıyla çalışıyor)
 ```
+
+---
+
+## 2026-08-30 (bu revizyon: arena/01a0505e-pineal-clean)
+
+**Kapsam — Doğrulama + canlı fiyat düzeltmesi.** Kırmızı backend iddiası yeniden
+doğrulandı; eski CI-kırmızı hükmü bayat çıktı. Canlı LLM gate'i koşuldu, kod
+tarafındaki gerçek bug düzeltildi.
+
+| # | Düzeltme | Dosya | Kanıt |
+|---|---|---|---|
+| 1 | **`MODEL_PRICING` canlı OpenRouter kataloğuna hizalandı** (promo/listed, 2026-08-30): `deepseek-v4-flash` 0.14/0.28 → 0.0679/0.168; `glm-5.2` 0.39/1.22 → 0.3276/1.03; `deepseek-v4-pro` 0.71/1.42 → 0.4679/0.9358; `gemini-3.7-flash` 0.375/1.875 → 0.75/3.75 | `agent_core/services/llm_gateway.py` | canlı `/api/v1/models` + model sayfaları; `spend_usd` artık `OPENROUTER_MAX_SPEND_USD`'yi gerçek maliyetle (özellikle vision ~2x eksik tahmini) doğru sayıyor |
+| 2 | **Eksik hakem modeli fiyatı eklendi** `openai/gpt-5.6-sol-pro` (2.0/10.0): `live_llm_gate.py`'nin varsayılan hakemi (ve `OPENROUTER_JUDGE_MODEL`) guard'ı `UNKNOWN_PRICING` ile düşürüyordu | `agent_core/services/llm_gateway.py` | `live_llm_gate.py` koşusu: `UNKNOWN_PRICING` → düzeltme sonrası guard geçti (kalan engel yalnız ağ) |
+
+**Yeniden doğrulama sonuçları (2026-08-30):**
+```
+ruff check .          = PASS ("All checks passed!")
+pytest -q             = 448 passed, 2 skipped (450 collected; 2 skip kastı: crawl4ai 2. adım)
+test_gateway_cost_and_retry.py = 9/9 PASS
+frontend npm run check = 0 errors, 0 warnings
+frontend npm run build = PASS (dist/assets/*.js "PINEAL-HERETIC")
+live_llm_gate.py       = 2/10 PASS, $0.00 harcama (LLM provider domain'leri bu sandbox'tan TLS-engelli)
+```
+> Önceki denetim raporlarının "2 test FAIL → CI backend kırmızı" hükmü bu
+> revizyonda **geçersiz**; suçlanan testler geçiyor.
