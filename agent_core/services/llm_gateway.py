@@ -1,33 +1,43 @@
-import os
+import contextvars
 import json
+import os
 import time
+import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Iterator, List, Optional, Type, TypeVar
+
 from openai import AsyncOpenAI
 from pydantic import BaseModel
-from typing import Type, TypeVar, Any, Optional, List
 
 from agent_core.services.response_cache import build_cache_from_env
 
-import uuid
-import contextvars
-from dataclasses import dataclass
+T = TypeVar("T", bound=BaseModel)
 
-T = TypeVar('T', bound=BaseModel)
 
-agent_call_ids: contextvars.ContextVar[List[str]] = contextvars.ContextVar("agent_call_ids", default=None)
+@dataclass
+class LLMCallScope:
+    """Task-local collector used to bind call records to one agent execution.
 
-@dataclass(frozen=True)
-class LLMCallRecord:
-    call_id: str
-    kind: str
-    model: str
-    provider: str
-    cache_hit: bool
-    attempts: int
-    duration_ms: int
-    prompt_tokens: Optional[int]
-    completion_tokens: Optional[int]
-    error: Optional[str]
-    at: str
+    Context variables are copied per asyncio task, so concurrent agents sharing a
+    gateway cannot consume each other's records. The records live in the scope as
+    well as in the bounded diagnostic ``call_log``; evidence never relies on a
+    mutable global log slice.
+    """
+
+    task_id: Optional[str]
+    agent_id: Optional[str]
+    records: List[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def call_ids(self) -> List[str]:
+        return [record["call_id"] for record in self.records]
+
+
+_active_call_scope: contextvars.ContextVar[Optional[LLMCallScope]] = contextvars.ContextVar(
+    "llm_call_scope", default=None
+)
 
 class SpendCapExceeded(RuntimeError):
     """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
@@ -115,11 +125,25 @@ class LLMGateway:
         self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 0.0)
         # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
         self.unpriced_calls = 0
-        # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
-        # kaydı. Evidence chain'e ajan bazında yazılır (task_executor).
-        self.call_log: List[LLMCallRecord] = []
+        # Bounded diagnostic history. Agent evidence is populated from a
+        # task-local LLMCallScope, never by slicing this shared list.
+        self.call_log: List[dict[str, Any]] = []
         self._rebuild()
         self.cache = build_cache_from_env()
+
+    @contextmanager
+    def capture_calls(self, task_id: Optional[str], agent_id: Optional[str]) -> Iterator[LLMCallScope]:
+        """Bind subsequent calls to a task/agent and collect their exact records."""
+        scope = LLMCallScope(task_id=task_id, agent_id=agent_id)
+        token = _active_call_scope.set(scope)
+        try:
+            yield scope
+        finally:
+            _active_call_scope.reset(token)
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     def _log_call(
         self,
@@ -127,36 +151,47 @@ class LLMGateway:
         model: str,
         provider: str,
         *,
+        call_id: Optional[str] = None,
+        started_at: Optional[str] = None,
         cache_hit: bool = False,
-        attempts: int = 0,
+        attempt: int = 0,
         duration_ms: int = 0,
         prompt_tokens: Optional[int] = None,
         completion_tokens: Optional[int] = None,
+        cost_usd: float = 0.0,
         error: Optional[str] = None,
-    ) -> None:
-        """Append an auditable record of a single LLM interaction."""
-        call_id = str(uuid.uuid4())
-        record = LLMCallRecord(
-            call_id=call_id,
-            kind=kind,
-            model=model,
-            provider=provider,
-            cache_hit=cache_hit,
-            attempts=attempts,
-            duration_ms=duration_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            error=error,
-            at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        )
+    ) -> dict[str, Any]:
+        """Append one JSON-serializable record for a logical gateway call."""
+        scope = _active_call_scope.get()
+        finished_at = self._utc_now()
+        record: dict[str, Any] = {
+            "call_id": call_id or str(uuid.uuid4()),
+            "task_id": scope.task_id if scope else None,
+            "agent_id": scope.agent_id if scope else None,
+            "kind": kind,
+            "model": model,
+            "provider": provider,
+            "attempt": attempt,
+            # Compatibility for existing telemetry consumers; ``attempt`` is
+            # the canonical production contract field.
+            "attempts": attempt,
+            "cache_hit": cache_hit,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost_usd": float(cost_usd),
+            "started_at": started_at or finished_at,
+            "finished_at": finished_at,
+            "duration_ms": duration_ms,
+            "error": error,
+            # Compatibility alias retained while API/UI consumers migrate.
+            "at": finished_at,
+        }
         self.call_log.append(record)
-        # Sınırsız büyümesin; kanıt zinciri zaten slice ile alır.
         if len(self.call_log) > 500:
             del self.call_log[: len(self.call_log) - 500]
-            
-        c_list = agent_call_ids.get()
-        if c_list is not None:
-            c_list.append(call_id)
+        if scope is not None:
+            scope.records.append(record.copy())
+        return record
 
     @staticmethod
     def _env_float(name: str, default: float) -> float:
@@ -165,25 +200,24 @@ class LLMGateway:
         except (TypeError, ValueError):
             return default
 
-    def _account_spend(self, model: str, usage: Any) -> None:
-        """P2-MALİYET: yanıt usage'ından tahmini harcamayı işler.
-        Fiyatı bilinmeyen modellerde uyarı loglanır, harcama işlenmez.
-        """
+    def _account_spend(self, model: str, usage: Any) -> float:
+        """Account observed token usage and return this call's estimated cost."""
         import logging
         if usage is None:
-            return
+            return 0.0
         rates = self.MODEL_PRICING.get(model)
         if rates is None:
             logging.warning("SPEND: fiyati bilinmeyen model, harcama takip edilemiyor: %s", model)
-            return
+            return 0.0
         try:
             p_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
             c_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         except (TypeError, ValueError):
-            return
+            return 0.0
         cost = (p_tokens * rates["in"] + c_tokens * rates["out"]) / 1_000_000.0
         self.spend_usd += cost
-        self.total_cost += cost  # geriye uyumluluk
+        self.total_cost += cost  # backwards compatibility
+        return cost
 
     def _cap_exceeded(self) -> bool:
         return self.spend_cap_usd > 0 and self.spend_usd >= self.spend_cap_usd
@@ -218,7 +252,6 @@ class LLMGateway:
             "ve spend cap bypass edilemez. MODEL_PRICING'e fiyat ekleyin veya "
             "PINEAL_ALLOW_UNPRICED_MODELS=1 ile takipsiz maliyeti açıkça kabul edin."
         )
-        self._log_call(kind, model, "openrouter", error="UNKNOWN_PRICING")
         raise RuntimeError(msg)
 
     @staticmethod
@@ -281,68 +314,103 @@ class LLMGateway:
         except Exception:
             self.local_client = None
 
-    async def query(self, prompt: str, temperature: float = 0.7, tier: int = 1, model: str = None, system_prompt: str = None, images: Optional[List[str]] = None) -> str:
-        """Metin (ve opsiyonel data-URL görseller) sorgusu.
+    async def query(
+        self,
+        prompt: str,
+        temperature: float = 0.7,
+        tier: int = 1,
+        model: str = None,
+        system_prompt: str = None,
+        images: Optional[List[str]] = None,
+    ) -> str:
+        """Execute one logical LLM call and emit exactly one call-id record.
 
-        images verilirse (ve model açıkça belirtilmemişse) vision destekli
-        varsayılan modele geçilir; içerik multimodal content dizisi olarak gönderilir.
+        Retries retain the same ``call_id``. Task/agent ownership comes from
+        ``capture_calls`` and is therefore isolated across concurrent asyncio
+        tasks sharing this gateway.
         """
+        import asyncio
+        import logging
+
+        call_id = str(uuid.uuid4())
+        started_at = self._utc_now()
+        t0 = time.monotonic()
+
+        is_local_request = bool(
+            (model and any(marker in model.lower() for marker in ("local", "ollama", "127.0.0.1")))
+            or self.use_local
+        )
+        if is_local_request:
+            selected_model = self.local_model if (not model or model == "local") else model
+            provider = "local"
+        else:
+            selected_model = (
+                os.getenv("OPENROUTER_VISION_MODEL", self.DEFAULT_VISION_MODEL)
+                if images and not model
+                else model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
+            )
+            provider = "openrouter"
+
+        def log_call(
+            *,
+            error: Optional[str] = None,
+            attempt: int = 0,
+            cache_hit: bool = False,
+            prompt_tokens: Optional[int] = None,
+            completion_tokens: Optional[int] = None,
+            cost_usd: float = 0.0,
+            record_provider: Optional[str] = None,
+        ) -> dict[str, Any]:
+            return self._log_call(
+                "query",
+                selected_model,
+                record_provider or provider,
+                call_id=call_id,
+                started_at=started_at,
+                cache_hit=cache_hit,
+                attempt=attempt,
+                duration_ms=int((time.monotonic() - t0) * 1000),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+                error=error,
+            )
+
         if self.circuit_open:
             if time.time() - getattr(self, "circuit_opened_at", 0.0) > 60.0:
                 self.circuit_open = False
                 self.failure_count = 0
             else:
-                self._log_call("query", getattr(self, "local_model", "") or "?",
-                               "circuit_breaker", error="CIRCUIT_OPEN")
+                log_call(error="CIRCUIT_OPEN", record_provider="circuit_breaker")
                 raise RuntimeError("Circuit breaker ACIK - LLM servisi durduruldu (60s bekleme devrede)")
-        
-        # Eğer local model seçildiyse veya global use_local aktifse
-        is_local_request = (model and ("local" in model.lower() or "ollama" in model.lower() or "127.0.0.1" in model.lower())) or self.use_local
 
-        # P2-MALİYET: bütçe aşıldıysa canlı çağrı hiç yapılmaz
-        if not is_local_request and self._cap_exceeded():
-            self._log_call("query", model or "?", "openrouter", error=self._cap_message())
-            raise SpendCapExceeded(self._cap_message())
-        
         if is_local_request:
             target_client = self.local_client or AsyncOpenAI(base_url=self.local_base_url, api_key="ollama")
-            selected_model = self.local_model if (not model or model == "local") else model
         else:
-            import os
             if os.getenv("LIVE_LLM_E2E") != "1" and not getattr(self, "live_unlocked", False):
-                msg = (
+                log_call(error="REAL_LLM_CALL_NOT_EXECUTED")
+                raise RuntimeError(
                     "REAL_LLM_CALL_NOT_EXECUTED: Canlı LLM çağrıları kapalı. "
                     "Açmak için: (1) Kasa'ya API anahtarı girin (oturum boyunca açılır), veya "
                     "(2) .env dosyasına OPENROUTER_API_KEY yazıp LIVE_LLM_E2E=1 yapıp sunucuyu yeniden başlatın."
                 )
-                self._log_call("query", model or "?", "openrouter", error="REAL_LLM_CALL_NOT_EXECUTED")
-                raise RuntimeError(msg)
-            
             if not self.client:
-                msg = "LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç."
-                self._log_call("query", model or "?", "openrouter", error="LLM_KEY_MISSING")
-                raise RuntimeError(msg)
+                log_call(error="LLM_KEY_MISSING")
+                raise RuntimeError(
+                    "LLM anahtari yok. Vault veya .env ile OPENROUTER_API_KEY enjekte et veya Local LLM seç."
+                )
             target_client = self.client
-            if images and not model:
-                # FAZ 3: görsel varsa vision modeline geç (env ile ezilebilir)
-                selected_model = os.getenv("OPENROUTER_VISION_MODEL", self.DEFAULT_VISION_MODEL)
-            else:
-                selected_model = model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
-        
+
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         if images:
-            # OpenAI-uyumlu multimodal content
             content = [{"type": "text", "text": prompt}]
-            content += [{"type": "image_url", "image_url": {"url": u}} for u in images]
+            content += [{"type": "image_url", "image_url": {"url": url}} for url in images]
             messages.append({"role": "user", "content": content})
         else:
             messages.append({"role": "user", "content": prompt})
 
-        # --- Birebir yanit onbellegi (salt-metin, yerel/vision disi) ---
-        # Anahtar model+system_prompt+sicaklik+prompt'u icerir; farkli
-        # model/kisilik yanitlari asla birbirine karismaz.
         cache_key = None
         if (
             not images
@@ -358,109 +426,119 @@ class LLMGateway:
             )
             cached = self.cache.get(cache_key)
             if cached is not None:
-                self._log_call("query", selected_model, "cache", cache_hit=True)
+                log_call(cache_hit=True, record_provider="cache")
                 return cached
 
-        # [017] fix: ücretli çağrı öncesi fiyat guard'ı. Cache hit ücretsizdir;
-        # guard yalnızca gerçek provider çağrısından önce uygulanır. Local
-        # istekler ücretsizdir, muaf tutulur.
         if not is_local_request:
-            self._pricing_guard(selected_model, kind="query")
-
-        import asyncio
-        import logging
-        max_retries = 3
-
-        t0 = time.time()
-        for attempt in range(max_retries):
             try:
-                # P2-MALİYET: döngü içinde de cap kontrolü
+                self._pricing_guard(selected_model, kind="query")
+            except RuntimeError:
+                log_call(error="UNKNOWN_PRICING")
+                raise
+            if self._cap_exceeded():
+                log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
+                raise SpendCapExceeded(self._cap_message())
+
+        max_retries = 3
+        for attempt_index in range(max_retries):
+            attempt = attempt_index + 1
+            try:
                 if not is_local_request and self._cap_exceeded():
+                    log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
                     raise SpendCapExceeded(self._cap_message())
-                r = await target_client.chat.completions.create(
-                    model=selected_model, temperature=temperature,
+
+                response = await target_client.chat.completions.create(
+                    model=selected_model,
+                    temperature=temperature,
                     messages=messages,
-                    timeout=45.0
+                    timeout=45.0,
                 )
                 self.failure_count = 0
-
-                # P2-MALİYET: token harcama hesabı
+                usage = getattr(response, "usage", None)
+                cost_usd = 0.0
                 if not is_local_request:
-                    self._account_spend(selected_model, getattr(r, "usage", None))
+                    cost_usd = self._account_spend(selected_model, usage)
 
-                usage = getattr(r, "usage", None)
-                content = r.choices[0].message.content
+                content = response.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
-                self._log_call(
-                    "query", selected_model,
-                    "local" if is_local_request else "openrouter",
-                    attempts=attempt + 1,
-                    duration_ms=int((time.time() - t0) * 1000),
-                    prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0)
-                        if usage is not None else None,
-                    completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0)
-                        if usage is not None else None,
+                log_call(
+                    attempt=attempt,
+                    prompt_tokens=(
+                        int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else None
+                    ),
+                    completion_tokens=(
+                        int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else None
+                    ),
+                    cost_usd=cost_usd,
                 )
                 return content
-            except SpendCapExceeded:
+            except asyncio.CancelledError:
+                log_call(error="CANCELLED", attempt=attempt)
                 raise
-            except Exception as e:
-                err_str = str(e).lower()
-                is_conn_error = "connection" in err_str or "connect" in err_str or "refused" in err_str or "10061" in err_str
-                
-                # Provider boundary is explicit: local requests do not silently
-                # become paid cloud requests. Opt-in is required for any switch.
-                if is_local_request and is_conn_error:
+            except SpendCapExceeded:
+                # The cap path logs before raising so it leaves an auditable record.
+                raise
+            except Exception as exc:
+                error_text = str(exc).lower()
+                is_connection_error = any(
+                    marker in error_text for marker in ("connection", "connect", "refused", "10061")
+                )
+
+                if is_local_request and is_connection_error:
                     if os.getenv("ALLOW_LOCAL_TO_CLOUD_FALLBACK", "false").lower() != "true":
+                        log_call(error="LOCAL_PROVIDER_UNAVAILABLE", attempt=attempt)
                         raise RuntimeError(
                             "LOCAL_PROVIDER_UNAVAILABLE: Yerel model erişilemedi; "
                             "bulut fallback'i açıkça yetkilendirilmedi."
-                        ) from e
+                        ) from exc
                     if self.client:
-                        logging.warning(f"Yetkili provider fallback: local {selected_model} → cloud {self.TIER_1_MODEL}")
+                        logging.warning(
+                            "Yetkili provider fallback: local %s → cloud %s",
+                            selected_model,
+                            self.TIER_1_MODEL,
+                        )
                         target_client = self.client
                         selected_model = self.TIER_1_MODEL
                         is_local_request = False
+                        provider = "openrouter"
+                        try:
+                            self._pricing_guard(selected_model, kind="query")
+                        except RuntimeError:
+                            log_call(error="UNKNOWN_PRICING", attempt=attempt)
+                            raise
                         continue
 
-                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
+                is_auth_error = any(
+                    marker in error_text for marker in ("401", "unauthorized", "invalid_api_key")
+                )
                 if is_auth_error:
-                    logging.error(f"LLM Gateway authentication error: {e}")
-                    self._log_call("query", selected_model,
-                                   "local" if is_local_request else "openrouter",
-                                   attempts=attempt + 1,
-                                   duration_ms=int((time.time() - t0) * 1000),
-                                   error="AUTH_FAILED")
-                    raise RuntimeError(f"LLM API Key rejected: {e}") from e
+                    logging.error("LLM Gateway authentication error: %s", exc)
+                    log_call(error="AUTH_FAILED", attempt=attempt)
+                    raise RuntimeError(f"LLM API Key rejected: {exc}") from exc
 
-                # [018] fix: geçici OLMAYAN hata sınıfları (400/403/404/422,
-                # geçersiz istek, model yok, bağlam limiti) retry EDİLMEZ.
-                # Eskiden her generic Exception backoff'la 3 kez deneniyordu.
-                if not self._is_retryable_error(e):
-                    logging.error(f"LLM Gateway non-retryable error ({type(e).__name__}): {e}")
-                    self._log_call("query", selected_model,
-                                   "local" if is_local_request else "openrouter",
-                                   attempts=attempt + 1,
-                                   duration_ms=int((time.time() - t0) * 1000),
-                                   error=f"NON_RETRYABLE::{type(e).__name__}")
+                if not self._is_retryable_error(exc):
+                    logging.error("LLM Gateway non-retryable error (%s): %s", type(exc).__name__, exc)
+                    log_call(error=f"NON_RETRYABLE::{type(exc).__name__}", attempt=attempt)
                     raise
 
-                if attempt < max_retries - 1:
-                    backoff = 2 ** attempt
-                    logging.warning(f"LLM Bağlantı/Gecikme Hatası (deneme {attempt+1}/{max_retries}), {backoff}s içinde tekrar deneniyor... {e}")
+                if attempt_index < max_retries - 1:
+                    backoff = 2 ** attempt_index
+                    logging.warning(
+                        "LLM Bağlantı/Gecikme Hatası (deneme %s/%s), %ss içinde tekrar deneniyor... %s",
+                        attempt,
+                        max_retries,
+                        backoff,
+                        exc,
+                    )
                     await asyncio.sleep(backoff)
                     continue
-                
+
                 self.failure_count += 1
                 if self.failure_count > 5:
                     self.circuit_open = True
                     self.circuit_opened_at = time.time()
-                self._log_call("query", selected_model,
-                               "local" if is_local_request else "openrouter",
-                               attempts=attempt + 1,
-                               duration_ms=int((time.time() - t0) * 1000),
-                               error=type(e).__name__)
+                log_call(error=type(exc).__name__, attempt=attempt)
                 raise
 
     def extract_json(self, text: str) -> dict:

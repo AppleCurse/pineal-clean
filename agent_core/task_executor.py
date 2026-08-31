@@ -1,7 +1,10 @@
 import tempfile
-from typing import Dict, Any, List
-from pydantic import BaseModel
+from contextlib import contextmanager
+from types import SimpleNamespace
+from typing import Any, Dict, Iterator, List
+
 from datetime import datetime, timezone
+from pydantic import BaseModel
 
 try:
     from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
@@ -51,7 +54,6 @@ except ImportError:
     from config_loader import DecisionConfig
 
 try:
-    from agent_core.services.llm_gateway import agent_call_ids
     from agent_core.domain.memory_models import (
         TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
     )
@@ -125,25 +127,76 @@ class PinealExecutor:
     # rozeti gösterilemez; "kaynak belirsiz" olarak işaretlenir.
     _DETERMINISTIC_AGENTS = frozenset({"resonance_calc"})
 
-    def _provenance_for(self, agent_name: str, result, call_ids: list[str] = None) -> Dict[str, Any]:
-        """Extract provenance tracking info."""
-        if agent_name in self._DETERMINISTIC_AGENTS:
-            return {"source": "deterministic", "fallback_reason": None, "model": None}
-            
-        if call_ids:
-            # find last successful call in gateway's log matching these call_ids
-            # call_log might be limited to 500, so we check from the end
-            if hasattr(self.llm_gateway, "call_log"):
-                for record in reversed(self.llm_gateway.call_log):
-                    if getattr(record, "call_id", None) in call_ids:
-                        return {
-                            "source": "llm_cache" if getattr(record, "cache_hit", False) else "llm",
-                            "fallback_reason": None,
-                            "model": getattr(record, "model", None),
-                        }
+    @contextmanager
+    def _capture_llm_calls(self, task_id: str, agent_id: str) -> Iterator[Any]:
+        """Use gateway task-local capture, with a no-op scope for test doubles."""
+        capture = getattr(type(self.llm_gateway), "capture_calls", None)
+        if callable(capture):
+            with capture(self.llm_gateway, task_id, agent_id) as scope:
+                yield scope
+            return
+        yield SimpleNamespace(records=[], call_ids=[])
 
-        # LLM izi yok ve deterministik listede değil -> dürüstçe belirsiz.
-        return {"source": "unknown", "fallback_reason": "no_llm_trace", "model": None}
+    def _provenance_for(
+        self,
+        agent_name: str,
+        result: Any,
+        call_records: list[dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Build output provenance only from records captured for this agent."""
+        records = list(call_records or [])
+        call_ids = [record["call_id"] for record in records if record.get("call_id")]
+        fallback = getattr(result, "fallback_reason", None)
+        data_confidence = getattr(result, "data_confidence", True)
+
+        if data_confidence is False or fallback:
+            return {
+                "source": "fallback",
+                "fallback_reason": fallback or "low_confidence",
+                "call_ids": call_ids,
+                "call_id": None,
+                "model": None,
+                "provider": None,
+            }
+        if agent_name in self._DETERMINISTIC_AGENTS:
+            return {
+                "source": "deterministic",
+                "fallback_reason": None,
+                "call_ids": call_ids,
+                "call_id": None,
+                "model": None,
+                "provider": None,
+            }
+
+        successful = [record for record in records if not record.get("error")]
+        if successful:
+            selected = successful[-1]
+            return {
+                "source": "llm_cache" if selected.get("cache_hit") else "llm",
+                "fallback_reason": None,
+                "call_ids": call_ids,
+                "call_id": selected.get("call_id"),
+                "model": selected.get("model"),
+                "provider": selected.get("provider"),
+            }
+        if records:
+            selected = records[-1]
+            return {
+                "source": "llm_error",
+                "fallback_reason": selected.get("error") or "llm_call_failed",
+                "call_ids": call_ids,
+                "call_id": selected.get("call_id"),
+                "model": selected.get("model"),
+                "provider": selected.get("provider"),
+            }
+        return {
+            "source": "unknown",
+            "fallback_reason": "no_llm_trace",
+            "call_ids": [],
+            "call_id": None,
+            "model": None,
+            "provider": None,
+        }
 
     def _snapshot(self, status: TaskStatus):
         cache_stats = self.llm_gateway.cache.stats() if hasattr(self.llm_gateway, "cache") else {}
@@ -242,10 +295,10 @@ class PinealExecutor:
         if uncertainty is not None:
             record["uncertainty"] = uncertainty.model_dump()
         if llm_calls is not None:
-            # Gözlemlenebilirlik: bu ajan için yapılan gerçek LLM
-            # denemeleri (model/provider/deneme/hata/token). Sahte değil,
-            # gateway call_log'undan alınır.
-            record["llm_calls"] = llm_calls
+            # Records were captured in this agent's context-local scope. They
+            # are already plain dictionaries and remain JSON serializable.
+            record["call_ids"] = [call["call_id"] for call in llm_calls if call.get("call_id")]
+            record["llm_calls"] = [call.copy() for call in llm_calls]
         return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
@@ -275,9 +328,8 @@ class PinealExecutor:
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         _task_wall_start = datetime.now(timezone.utc)
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
-        # Gözlemlenebilirlik: bu görevin LLM çağrıları ajan başına slice alınır.
-        if hasattr(self.llm_gateway, "call_log"):
-            self.llm_gateway.call_log.clear()
+        # The shared diagnostic call log is intentionally not cleared here.
+        # Concurrent tasks bind records through per-agent context-local scopes.
 
         # Deterministik Takipçi ve Zamanlama Forensiği
         try:
@@ -315,9 +367,13 @@ class PinealExecutor:
             self._log("INFO", f"[{task_id}] MULTIMODAL VISION: {len(raw_imgs)} fotoğraf görsel zeka ile inceleniyor...")
             try:
                 target_bio = input_data.get("target_profile", {}).get("bio", "")
-                visual_ev = await self.vision_analyzer.analyze_images(raw_imgs, target_context=target_bio)
+                with self._capture_llm_calls(task_id, "vision_analyzer") as vision_scope:
+                    visual_ev = await self.vision_analyzer.analyze_images(raw_imgs, target_context=target_bio)
                 input_data["visual_evidence"] = visual_ev.model_dump()
                 status.visual_evidence = visual_ev.model_dump()
+                status.visual_evidence["_provenance"] = self._provenance_for(
+                    "vision_analyzer", visual_ev, vision_scope.records
+                )
                 self._log("INFO", f"[{task_id}] GÖRSEL KANIT: {visual_ev.visual_evidence_summary}")
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
@@ -447,17 +503,18 @@ class PinealExecutor:
                 ))
                 agent_cfg = self.config.get_agent_config(agent_name)
                 
+                agent_llm_calls: list[dict[str, Any]] = []
                 try:
                     agent = self.agents[agent_name]
-                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
-                    token = agent_call_ids.set([])
-                    try:
-                        result = await agent.execute(input_data, self.memory, self.llm_gateway)
-                    except TypeError:
-                        result = await agent.execute(input_data)
-                    finally:
-                        run.call_ids = agent_call_ids.get()
-                        agent_call_ids.reset(token)
+                    with self._capture_llm_calls(task_id, agent_name) as agent_scope:
+                        try:
+                            try:
+                                result = await agent.execute(input_data, self.memory, self.llm_gateway)
+                            except TypeError:
+                                result = await agent.execute(input_data)
+                        finally:
+                            agent_llm_calls = list(agent_scope.records)
+                            run.call_ids = list(agent_scope.call_ids)
                     if not isinstance(result, BaseModel):
                         raise TypeError(agent_name + " gecersiz cikti: " + str(type(result)))
                 except InsufficientEvidenceError:
@@ -507,16 +564,17 @@ class PinealExecutor:
                         continue
 
                 research_note = None
-                _deep_llm_calls = []
+                _deep_llm_calls: list[dict[str, Any]] = []
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
-                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
                         # Preserve `result`: downstream dependencies must receive the
                         # actual typed agent output, never a generic research note.
-                        research_note = await self._deep_research(result, check, agent_name)
-                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
-                                           if hasattr(self.llm_gateway, "call_log") else [])
+                        with self._capture_llm_calls(task_id, "deep_research") as research_scope:
+                            try:
+                                research_note = await self._deep_research(result, check, agent_name)
+                            finally:
+                                _deep_llm_calls = list(research_scope.records)
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -541,14 +599,12 @@ class PinealExecutor:
                 elif agent_name == "autonomous_verifier":
                     input_data["verifications"] = result.model_dump()
 
-                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
-                              if hasattr(self.llm_gateway, "call_log") else [])
                 status.evidence_chain.append(self._evidence_record(
                     agent_name,
                     result,
                     evidence_type="agent_output",
                     uncertainty=check,
-                    llm_calls=_llm_calls,
+                    llm_calls=agent_llm_calls,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(
@@ -563,7 +619,7 @@ class PinealExecutor:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                run.output_summary["_provenance"] = self._provenance_for(agent_name, result, run.call_ids)
+                run.output_summary["_provenance"] = self._provenance_for(agent_name, result, agent_llm_calls)
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
@@ -612,13 +668,18 @@ class PinealExecutor:
                 ))
                 agent_cfg = self.config.get_agent_config(agent_name)
 
+                agent_llm_calls: list[dict[str, Any]] = []
                 try:
                     agent = self.agents[agent_name]
-                    llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
-                    try:
-                        result = await agent.execute(input_data, self.memory, self.llm_gateway)
-                    except TypeError:
-                        result = await agent.execute(input_data)
+                    with self._capture_llm_calls(task_id, agent_name) as agent_scope:
+                        try:
+                            try:
+                                result = await agent.execute(input_data, self.memory, self.llm_gateway)
+                            except TypeError:
+                                result = await agent.execute(input_data)
+                        finally:
+                            agent_llm_calls = list(agent_scope.records)
+                            run.call_ids = list(agent_scope.call_ids)
                     if not isinstance(result, BaseModel):
                         raise TypeError(agent_name + " gecersiz cikti: " + str(type(result)))
                 except InsufficientEvidenceError:
@@ -662,14 +723,15 @@ class PinealExecutor:
                     continue
 
                 research_note = None
-                _deep_llm_calls = []
+                _deep_llm_calls: list[dict[str, Any]] = []
                 if check.is_suspicious:
                     self._log("ERROR", "[" + task_id + "] UNCERTAINTY: " + check.reason)
-                    _deep_llm_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
                     try:
-                        research_note = await self._deep_research(result, check, agent_name)
-                        _deep_llm_calls = (self.llm_gateway.call_log[_deep_llm_start:]
-                                           if hasattr(self.llm_gateway, "call_log") else [])
+                        with self._capture_llm_calls(task_id, "deep_research") as research_scope:
+                            try:
+                                research_note = await self._deep_research(result, check, agent_name)
+                            finally:
+                                _deep_llm_calls = list(research_scope.records)
                     except Exception as e:
                         if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                             raise InsufficientEvidenceError("Supheli kanit dogrulanamadi: " + str(e)[:80])
@@ -680,14 +742,12 @@ class PinealExecutor:
                         self._snapshot(status)
                         continue
 
-                _llm_calls = (self.llm_gateway.call_log[llm_log_start:]
-                              if hasattr(self.llm_gateway, "call_log") else [])
                 status.evidence_chain.append(self._evidence_record(
                     agent_name,
                     result,
                     evidence_type="agent_output",
                     uncertainty=check,
-                    llm_calls=_llm_calls,
+                    llm_calls=agent_llm_calls,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(
@@ -701,7 +761,7 @@ class PinealExecutor:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                run.output_summary["_provenance"] = self._provenance_for(agent_name, result, run.call_ids)
+                run.output_summary["_provenance"] = self._provenance_for(agent_name, result, agent_llm_calls)
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
@@ -743,14 +803,12 @@ class PinealExecutor:
             # --- P1 + P7 + P8 DERİNLİK VE GERÇEKLİK ANALİZİ (QuoteGuard Korumalı) ---
             try:
                 depth_agent = self.agents.get("depth_analyst") or DepthAnalyst(self.llm_gateway)
-                token = agent_call_ids.set([])
-                try:
+                with self._capture_llm_calls(task_id, "depth_analyst") as depth_scope:
                     depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
-                finally:
-                    depth_calls = agent_call_ids.get()
-                    agent_call_ids.reset(token)
                 status.depth_report = depth_rep.model_dump()
-                status.depth_report["_provenance"] = self._provenance_for("depth_analyst", depth_rep, depth_calls)
+                status.depth_report["_provenance"] = self._provenance_for(
+                    "depth_analyst", depth_rep, depth_scope.records
+                )
                 q_stats = depth_rep.quote_guard or {}
                 kept = q_stats.get("kept", len(depth_rep.reality_findings))
                 checked = q_stats.get("checked", kept + q_stats.get("dropped_fake_quote", 0))
@@ -766,20 +824,18 @@ class PinealExecutor:
             # durumlarını da status.agent_runs'a kaydediyoruz ki DecisionEngine
             # onları görsün ve sessizce "COMPLETED" damgalanmasınlar.
             try:
-                token = agent_call_ids.set([])
-                try:
+                with self._capture_llm_calls(task_id, "shadow_executor") as shadow_scope:
                     shadow_result = await self.agents["shadow_executor"].execute(input_data)
-                finally:
-                    shadow_calls = agent_call_ids.get()
-                    agent_call_ids.reset(token)
                 status.shadow_profile = shadow_result.model_dump()
-                status.shadow_profile["_provenance"] = self._provenance_for("shadow_executor", shadow_result, shadow_calls)
+                status.shadow_profile["_provenance"] = self._provenance_for(
+                    "shadow_executor", shadow_result, shadow_scope.records
+                )
                 _shadow_summary = shadow_result.model_dump() if hasattr(shadow_result, "model_dump") else {}
                 _shadow_summary["_provenance"] = status.shadow_profile["_provenance"]
                 status.agent_runs["shadow_executor"] = AgentRun(
                     task_id=task_id, agent_name="shadow_executor", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    output_summary=_shadow_summary,
+                    output_summary=_shadow_summary, call_ids=list(shadow_scope.call_ids),
                     confidence=(
                         getattr(shadow_result, "confidence", None)
                         if isinstance(getattr(shadow_result, "confidence", None), (int, float))
@@ -800,20 +856,18 @@ class PinealExecutor:
                 self._log("WARNING", f"[{task_id}] Gölge forensiği atlandı: {e}")
 
             try:
-                token = agent_call_ids.set([])
-                try:
+                with self._capture_llm_calls(task_id, "osint_investigator") as osint_scope:
                     osint_result = await self.agents["osint_investigator"].execute(input_data)
-                finally:
-                    osint_calls = agent_call_ids.get()
-                    agent_call_ids.reset(token)
                 status.osint_footprint = osint_result.model_dump() if hasattr(osint_result, "model_dump") else osint_result
-                status.osint_footprint["_provenance"] = self._provenance_for("osint_investigator", osint_result, osint_calls)
+                status.osint_footprint["_provenance"] = self._provenance_for(
+                    "osint_investigator", osint_result, osint_scope.records
+                )
                 data_conf = getattr(osint_result, "data_confidence", True)
                 fallback = getattr(osint_result, "fallback_reason", None)
                 status.agent_runs["osint_investigator"] = AgentRun(
                     task_id=task_id, agent_name="osint_investigator", status="completed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    output_summary=status.osint_footprint,
+                    output_summary=status.osint_footprint, call_ids=list(osint_scope.call_ids),
                     confidence=(
                         getattr(osint_result, "confidence", None)
                         if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))
