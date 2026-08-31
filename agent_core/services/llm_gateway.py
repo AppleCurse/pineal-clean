@@ -1,6 +1,7 @@
 import contextvars
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -123,6 +124,11 @@ class LLMGateway:
         # P2-MALİYET: kümülatif harcama ve sert üst limit
         self.spend_usd = 0.0
         self.spend_cap_usd = self._env_float("OPENROUTER_MAX_SPEND_USD", 0.0)
+        self.max_output_tokens = max(1, int(self._env_float("OPENROUTER_MAX_OUTPUT_TOKENS", 4096)))
+        self.image_token_reserve = max(0, int(self._env_float("OPENROUTER_IMAGE_TOKEN_RESERVE", 8192)))
+        self._budget_lock = threading.Lock()
+        self._reserved_spend_usd = 0.0
+        self._budget_reservations: dict[str, float] = {}
         # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
         self.unpriced_calls = 0
         # Bounded diagnostic history. Agent evidence is populated from a
@@ -200,8 +206,8 @@ class LLMGateway:
         except (TypeError, ValueError):
             return default
 
-    def _account_spend(self, model: str, usage: Any) -> float:
-        """Account observed token usage and return this call's estimated cost."""
+    def _usage_cost(self, model: str, usage: Any) -> float:
+        """Return observed provider cost from token usage without mutating state."""
         import logging
         if usage is None:
             return 0.0
@@ -210,24 +216,95 @@ class LLMGateway:
             logging.warning("SPEND: fiyati bilinmeyen model, harcama takip edilemiyor: %s", model)
             return 0.0
         try:
-            p_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            c_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         except (TypeError, ValueError):
             return 0.0
-        cost = (p_tokens * rates["in"] + c_tokens * rates["out"]) / 1_000_000.0
-        self.spend_usd += cost
-        self.total_cost += cost  # backwards compatibility
+        return (
+            prompt_tokens * rates["in"] + completion_tokens * rates["out"]
+        ) / 1_000_000.0
+
+    def _account_spend(self, model: str, usage: Any) -> float:
+        """Account observed usage atomically (compatibility entry point)."""
+        cost = self._usage_cost(model, usage)
+        with self._budget_lock:
+            self.spend_usd += cost
+            self.total_cost += cost
+        return cost
+
+    def _maximum_call_cost(
+        self,
+        model: str,
+        prompt: str,
+        system_prompt: Optional[str],
+        images: Optional[List[str]],
+    ) -> float:
+        """Conservative reservation based on bounded output and UTF-8 input bytes."""
+        rates = self.MODEL_PRICING[model]
+        # A tokenizer cannot consume more tokens than the encoded input bytes;
+        # reserve extra message framing and a configurable image allowance.
+        prompt_bytes = len(prompt.encode("utf-8")) + len((system_prompt or "").encode("utf-8"))
+        prompt_tokens = prompt_bytes + 64 + self.image_token_reserve * len(images or [])
+        return (
+            prompt_tokens * rates["in"] + self.max_output_tokens * rates["out"]
+        ) / 1_000_000.0
+
+    def _reserve_budget(self, call_id: str, amount: float) -> None:
+        """Atomically reserve worst-case cost before any paid provider call."""
+        if self.spend_cap_usd <= 0:
+            return
+        with self._budget_lock:
+            projected = self.spend_usd + self._reserved_spend_usd + amount
+            if projected > self.spend_cap_usd:
+                raise SpendCapExceeded(self._cap_message_locked(projected=projected))
+            self._budget_reservations[call_id] = amount
+            self._reserved_spend_usd += amount
+
+    def _release_budget(self, call_id: str) -> None:
+        """Release a reservation after failure, rejection, or cancellation."""
+        with self._budget_lock:
+            amount = self._budget_reservations.pop(call_id, 0.0)
+            self._reserved_spend_usd = max(0.0, self._reserved_spend_usd - amount)
+
+    def _settle_budget(self, call_id: str, model: str, usage: Any) -> float:
+        """Replace a reservation with observed cost in one atomic operation."""
+        cost = self._usage_cost(model, usage)
+        with self._budget_lock:
+            reserved = self._budget_reservations.pop(call_id, 0.0)
+            self._reserved_spend_usd = max(0.0, self._reserved_spend_usd - reserved)
+            self.spend_usd += cost
+            self.total_cost += cost
         return cost
 
     def _cap_exceeded(self) -> bool:
-        return self.spend_cap_usd > 0 and self.spend_usd >= self.spend_cap_usd
+        if self.spend_cap_usd <= 0:
+            return False
+        with self._budget_lock:
+            return self.spend_usd + self._reserved_spend_usd >= self.spend_cap_usd
+
+    def _cap_message_locked(self, *, projected: Optional[float] = None) -> str:
+        committed = self.spend_usd
+        reserved = self._reserved_spend_usd
+        value = projected if projected is not None else committed + reserved
+        return (
+            f"OPENROUTER_SPEND_CAP_EXCEEDED: committed=${committed:.6f}, "
+            f"reserved=${reserved:.6f}, projected=${value:.6f}, "
+            f"cap=${self.spend_cap_usd:.6f} (OPENROUTER_MAX_SPEND_USD)."
+        )
 
     def _cap_message(self) -> str:
-        return (
-            f"OPENROUTER_SPEND_CAP_EXCEEDED: tahmini harcama ${self.spend_usd:.4f} "
-            f">= ust limit ${self.spend_cap_usd:.2f} (OPENROUTER_MAX_SPEND_USD). "
-            f"Daha fazla canli LLM cagrisi yapilmadi."
-        )
+        with self._budget_lock:
+            return self._cap_message_locked()
+
+    def budget_status(self) -> dict[str, float | int]:
+        """Return an atomic telemetry snapshot of committed and reserved spend."""
+        with self._budget_lock:
+            return {
+                "spend_usd": self.spend_usd,
+                "reserved_usd": self._reserved_spend_usd,
+                "cap_usd": self.spend_cap_usd,
+                "active_reservations": len(self._budget_reservations),
+            }
 
     def _pricing_guard(self, model: str, *, kind: str) -> None:
         """[017] fix: fiyatı bilinmeyen model için ÜCRETLİ canlı çağrı varsayılan
@@ -429,39 +506,52 @@ class LLMGateway:
                 log_call(cache_hit=True, record_provider="cache")
                 return cached
 
+        budget_reserved = False
         if not is_local_request:
             try:
                 self._pricing_guard(selected_model, kind="query")
             except RuntimeError:
                 log_call(error="UNKNOWN_PRICING")
                 raise
-            if self._cap_exceeded():
-                log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
-                raise SpendCapExceeded(self._cap_message())
+            if self.spend_cap_usd > 0:
+                if selected_model not in self.MODEL_PRICING:
+                    log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
+                    raise RuntimeError(
+                        "UNKNOWN_PRICING_FOR_SPEND_CAP: unpriced models cannot run while a spend cap is active"
+                    )
+                reservation = self._maximum_call_cost(selected_model, prompt, system_prompt, images)
+                try:
+                    self._reserve_budget(call_id, reservation)
+                    budget_reserved = True
+                except SpendCapExceeded:
+                    log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
+                    raise
 
         max_retries = 3
         for attempt_index in range(max_retries):
             attempt = attempt_index + 1
             try:
-                if not is_local_request and self._cap_exceeded():
-                    log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
-                    raise SpendCapExceeded(self._cap_message())
-
                 response = await target_client.chat.completions.create(
                     model=selected_model,
                     temperature=temperature,
                     messages=messages,
                     timeout=45.0,
+                    max_tokens=self.max_output_tokens,
                 )
                 self.failure_count = 0
                 usage = getattr(response, "usage", None)
+                content = response.choices[0].message.content
                 cost_usd = 0.0
                 if not is_local_request:
-                    cost_usd = self._account_spend(selected_model, usage)
+                    cost_usd = self._settle_budget(call_id, selected_model, usage)
+                    budget_reserved = False
 
-                content = response.choices[0].message.content
                 if cache_key and content:
-                    self.cache.put(cache_key, content)
+                    try:
+                        self.cache.put(cache_key, content)
+                    except Exception as cache_error:
+                        # A cache write must never retry an already billed call.
+                        logging.warning("LLM response cache write failed: %s", cache_error)
                 log_call(
                     attempt=attempt,
                     prompt_tokens=(
@@ -474,10 +564,16 @@ class LLMGateway:
                 )
                 return content
             except asyncio.CancelledError:
+                if budget_reserved:
+                    self._release_budget(call_id)
+                    budget_reserved = False
                 log_call(error="CANCELLED", attempt=attempt)
                 raise
             except SpendCapExceeded:
-                # The cap path logs before raising so it leaves an auditable record.
+                if budget_reserved:
+                    self._release_budget(call_id)
+                    budget_reserved = False
+                log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
                 raise
             except Exception as exc:
                 error_text = str(exc).lower()
@@ -507,17 +603,33 @@ class LLMGateway:
                         except RuntimeError:
                             log_call(error="UNKNOWN_PRICING", attempt=attempt)
                             raise
+                        if self.spend_cap_usd > 0:
+                            reservation = self._maximum_call_cost(
+                                selected_model, prompt, system_prompt, images
+                            )
+                            try:
+                                self._reserve_budget(call_id, reservation)
+                                budget_reserved = True
+                            except SpendCapExceeded:
+                                log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
+                                raise
                         continue
 
                 is_auth_error = any(
                     marker in error_text for marker in ("401", "unauthorized", "invalid_api_key")
                 )
                 if is_auth_error:
+                    if budget_reserved:
+                        self._release_budget(call_id)
+                        budget_reserved = False
                     logging.error("LLM Gateway authentication error: %s", exc)
                     log_call(error="AUTH_FAILED", attempt=attempt)
                     raise RuntimeError(f"LLM API Key rejected: {exc}") from exc
 
                 if not self._is_retryable_error(exc):
+                    if budget_reserved:
+                        self._release_budget(call_id)
+                        budget_reserved = False
                     logging.error("LLM Gateway non-retryable error (%s): %s", type(exc).__name__, exc)
                     log_call(error=f"NON_RETRYABLE::{type(exc).__name__}", attempt=attempt)
                     raise
@@ -531,9 +643,19 @@ class LLMGateway:
                         backoff,
                         exc,
                     )
-                    await asyncio.sleep(backoff)
+                    try:
+                        await asyncio.sleep(backoff)
+                    except asyncio.CancelledError:
+                        if budget_reserved:
+                            self._release_budget(call_id)
+                            budget_reserved = False
+                        log_call(error="CANCELLED", attempt=attempt)
+                        raise
                     continue
 
+                if budget_reserved:
+                    self._release_budget(call_id)
+                    budget_reserved = False
                 self.failure_count += 1
                 if self.failure_count > 5:
                     self.circuit_open = True

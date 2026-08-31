@@ -656,6 +656,8 @@ async def api_telemetry(client_id: str):
     executor = get_executor(client_id)
     vault = get_vault(client_id)
     capability = await _scraper_capability()
+    budget_reader = getattr(type(executor.llm_gateway), "budget_status", None)
+    budget = budget_reader(executor.llm_gateway) if callable(budget_reader) else {}
     return {
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
@@ -667,9 +669,11 @@ async def api_telemetry(client_id: str):
         "x_scraper": False,  # B4: X kazimasi devre disi birakildi
         "instagram_scraper": capability["instagram"],
         "browser_installed": capability["browser"],
-        # P2-MALİYET: oturum boyu tahmini harcama + aktif limit
-        "llm_spend_usd": round(float(getattr(executor.llm_gateway, "spend_usd", 0.0)), 6),
-        "llm_spend_cap_usd": float(getattr(executor.llm_gateway, "spend_cap_usd", 0.0)),
+        # P2-MALİYET: committed + in-flight reservations are read atomically.
+        "llm_spend_usd": round(float(budget.get("spend_usd", 0.0)), 6),
+        "llm_reserved_spend_usd": round(float(budget.get("reserved_usd", 0.0)), 6),
+        "llm_spend_cap_usd": float(budget.get("cap_usd", 0.0)),
+        "llm_active_reservations": int(budget.get("active_reservations", 0)),
         # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }

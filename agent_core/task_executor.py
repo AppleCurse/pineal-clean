@@ -203,11 +203,15 @@ class PinealExecutor:
         hits = cache_stats.get("hits", 0)
         hit_rate = cache_stats.get("hit_rate", "0.0%")
 
-        real_cost = getattr(self.llm_gateway, "spend_usd", None)
+        budget_reader = getattr(type(self.llm_gateway), "budget_status", None)
+        budget = budget_reader(self.llm_gateway) if callable(budget_reader) else {}
+        real_cost = budget.get("spend_usd", getattr(self.llm_gateway, "spend_usd", None))
         if not isinstance(real_cost, (int, float)):
             real_cost = getattr(self.llm_gateway, "total_cost", 0.0)
         if not isinstance(real_cost, (int, float)):
             real_cost = 0.0
+        reserved_cost = budget.get("reserved_usd", 0.0)
+        active_reservations = budget.get("active_reservations", 0)
 
         # [034] fix: telemetri yalnızca GERÇEK gözlemlenebilirlerden oluşur.
         # - 'saved_llm_cost' varsayımsal $0.005/call sabitiyle uyduruluyordu;
@@ -224,6 +228,8 @@ class PinealExecutor:
             "llm_calls_observed": len(call_log) if isinstance(call_log, list) else 0,
             "total_llm_cost": f"${real_cost:.5f}",
             "llm_spend_usd": real_cost,
+            "llm_reserved_spend_usd": reserved_cost,
+            "llm_active_reservations": active_reservations,
         }
         
         if self._snapshot_cb:

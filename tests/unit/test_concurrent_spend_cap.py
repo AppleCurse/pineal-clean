@@ -1,0 +1,177 @@
+"""P0 regression coverage for atomic concurrent spend reservations."""
+
+import asyncio
+
+import pytest
+
+from agent_core.services.llm_gateway import LLMGateway, SpendCapExceeded
+
+
+class _Usage:
+    prompt_tokens = 1_000
+    completion_tokens = 500
+
+
+class _Response:
+    usage = _Usage()
+    choices = [type("Choice", (), {"message": type("Message", (), {"content": "ok"})()})()]
+
+
+class _SlowCompletions:
+    def __init__(self):
+        self.calls = 0
+
+    async def create(self, **kwargs):
+        self.calls += 1
+        await asyncio.sleep(0.03)
+        return _Response()
+
+
+class _FailingCompletions:
+    async def create(self, **kwargs):
+        raise ValueError("400 invalid request")
+
+
+class _BlockingCompletions:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def create(self, **kwargs):
+        self.started.set()
+        await self.release.wait()
+        return _Response()
+
+
+class _Client:
+    def __init__(self, completions):
+        self.chat = type("Chat", (), {"completions": completions})()
+
+
+def _paid_gateway(monkeypatch, completions, *, cap="0.00031") -> LLMGateway:
+    monkeypatch.setenv("LIVE_LLM_E2E", "1")
+    monkeypatch.setenv("OPENROUTER_MAX_SPEND_USD", cap)
+    monkeypatch.setenv("OPENROUTER_MAX_OUTPUT_TOKENS", "1000")
+    monkeypatch.delenv("USE_LOCAL_LLM", raising=False)
+    gateway = LLMGateway()
+    gateway.client = _Client(completions)
+    gateway.cache = None
+    return gateway
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallelism", [10, 50, 100])
+async def test_concurrent_reservations_never_overbook_cap(monkeypatch, parallelism):
+    completions = _SlowCompletions()
+    gateway = _paid_gateway(monkeypatch, completions)
+
+    async def invoke(index: int):
+        with gateway.capture_calls("task-spend", f"agent-{index}"):
+            try:
+                return await gateway.query("prompt", model="upstage/solar-pro4")
+            except SpendCapExceeded:
+                return "rejected"
+
+    results = await asyncio.gather(*(invoke(index) for index in range(parallelism)))
+
+    # Reservation is ~$0.000122/call, so a $0.00031 cap admits at most two
+    # simultaneous calls. Their observed total is $0.00018.
+    assert results.count("ok") == 2
+    assert results.count("rejected") == parallelism - 2
+    assert completions.calls == 2
+    assert gateway.spend_usd <= gateway.spend_cap_usd
+    assert gateway._reserved_spend_usd == pytest.approx(0.0)
+    assert gateway._budget_reservations == {}
+
+    rejected = [record for record in gateway.call_log if record["error"]]
+    assert len(rejected) == parallelism - 2
+    assert {record["error"] for record in rejected} == {"OPENROUTER_SPEND_CAP_EXCEEDED"}
+    assert all(record["task_id"] == "task-spend" for record in gateway.call_log)
+    assert len({record["call_id"] for record in gateway.call_log}) == parallelism
+
+
+@pytest.mark.asyncio
+async def test_failed_call_releases_reservation(monkeypatch):
+    gateway = _paid_gateway(monkeypatch, _FailingCompletions(), cap="0.00013")
+
+    with pytest.raises(ValueError, match="400"):
+        await gateway.query("prompt", model="upstage/solar-pro4")
+
+    assert gateway.spend_usd == 0.0
+    assert gateway._reserved_spend_usd == 0.0
+    assert gateway._budget_reservations == {}
+
+    gateway.client = _Client(_SlowCompletions())
+    assert await gateway.query("prompt", model="upstage/solar-pro4") == "ok"
+    assert gateway.spend_usd <= gateway.spend_cap_usd
+
+
+@pytest.mark.asyncio
+async def test_cancelled_call_releases_reservation_and_logs_error(monkeypatch):
+    completions = _BlockingCompletions()
+    gateway = _paid_gateway(monkeypatch, completions, cap="0.00013")
+
+    task = asyncio.create_task(gateway.query("prompt", model="upstage/solar-pro4"))
+    await completions.started.wait()
+    assert gateway._reserved_spend_usd > 0
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert gateway._reserved_spend_usd == 0.0
+    assert gateway._budget_reservations == {}
+    assert gateway.call_log[-1]["error"] == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_retry_backoff_releases_reservation(monkeypatch):
+    backoff_started = asyncio.Event()
+    backoff_release = asyncio.Event()
+
+    async def blocking_sleep(_delay):
+        backoff_started.set()
+        await backoff_release.wait()
+
+    monkeypatch.setattr(asyncio, "sleep", blocking_sleep)
+    gateway = _paid_gateway(monkeypatch, _FailingCompletions(), cap="0.00013")
+    # Make the synthetic error retryable so query enters the backoff await.
+    gateway.client = _Client(type(
+        "RetryingCompletions",
+        (),
+        {"create": lambda self, **kwargs: _raise_timeout()},
+    )())
+
+    task = asyncio.create_task(gateway.query("prompt", model="upstage/solar-pro4"))
+    await backoff_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert gateway._reserved_spend_usd == 0.0
+    assert gateway._budget_reservations == {}
+    assert gateway.call_log[-1]["error"] == "CANCELLED"
+
+
+async def _raise_timeout():
+    raise TimeoutError("temporary timeout")
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_bypasses_paid_reservation(monkeypatch):
+    gateway = _paid_gateway(monkeypatch, _SlowCompletions(), cap="0.000001")
+    gateway.cache = type(
+        "Cache",
+        (),
+        {
+            "is_cachable": lambda self, prompt, images: True,
+            "make_key": lambda self, **kwargs: "cached-key",
+            "get": lambda self, key: "cached",
+        },
+    )()
+
+    assert await gateway.query("prompt", model="upstage/solar-pro4") == "cached"
+    assert gateway.spend_usd == 0.0
+    assert gateway._reserved_spend_usd == 0.0
+    assert gateway.call_log[-1]["cache_hit"] is True
+    assert gateway.call_log[-1]["cost_usd"] == 0.0
