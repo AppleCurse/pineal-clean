@@ -150,9 +150,14 @@ async def scan_username(
 
     try:
         site_dict = await asyncio.to_thread(_get_site_dict, top)
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        reason = "library_missing" if exc.name and exc.name.split(".")[0] == "maigret" else "dependency_broken"
         return MaigretScanResult(requested_username=clean, available=False,
-                                 reason="library_missing")
+                                 reason=reason)
+    except ImportError as exc:
+        logger.error("maigret dependency import failed: %s", type(exc).__name__)
+        return MaigretScanResult(requested_username=clean, available=False,
+                                 reason="dependency_broken")
     except Exception as exc:
         logger.warning("maigret db yüklenemedi: %s: %s", type(exc).__name__, str(exc)[:80])
         return MaigretScanResult(requested_username=clean, available=False,
@@ -165,9 +170,14 @@ async def scan_username(
     except asyncio.TimeoutError:
         return MaigretScanResult(requested_username=clean, available=False,
                                  reason="timeout", scanned_count=len(site_dict))
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        reason = "library_missing" if exc.name and exc.name.split(".")[0] == "maigret" else "dependency_broken"
         return MaigretScanResult(requested_username=clean, available=False,
-                                 reason="library_missing")
+                                 reason=reason, scanned_count=len(site_dict))
+    except ImportError as exc:
+        logger.error("maigret dependency import failed: %s", type(exc).__name__)
+        return MaigretScanResult(requested_username=clean, available=False,
+                                 reason="dependency_broken", scanned_count=len(site_dict))
     except Exception as exc:
         logger.warning("maigret tarama hatası: %s: %s", type(exc).__name__, str(exc)[:80])
         return MaigretScanResult(requested_username=clean, available=False,

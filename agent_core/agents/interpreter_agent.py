@@ -38,10 +38,14 @@ class InterpreterAgent:
                 interpreter.llm.model = selected_model
             
             return interpreter
-        except ImportError as e:
-            import logging
-            logging.error(f"InterpreterAgent setup failed: {e}. 'open-interpreter' is likely not installed.")
-            return None
+        except ModuleNotFoundError as exc:
+            if exc.name == "interpreter":
+                import logging
+                logging.error("InterpreterAgent setup failed: open-interpreter is not installed")
+                return None
+            # An installed package with a broken transitive dependency must not
+            # be mislabeled as an absent optional package.
+            raise
 
     async def execute_task(self, prompt: str, api_key: str = None, model: str = None, auto_run: bool = False) -> InterpreterResult:
         """

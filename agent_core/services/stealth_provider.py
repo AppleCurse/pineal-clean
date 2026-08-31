@@ -44,7 +44,7 @@ class StealthSelection(BaseModel):
 def _lib_present(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
-    except (ImportError, ValueError):
+    except ModuleNotFoundError:
         return False
 
 

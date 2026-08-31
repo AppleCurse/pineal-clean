@@ -157,9 +157,23 @@ async def fetch_readable(url: str) -> CrawlFetchResult:
         )
     except asyncio.TimeoutError:
         return CrawlFetchResult(requested_url=clean, available=False, reason="timeout")
-    except ImportError:
-        return CrawlFetchResult(requested_url=clean, available=False,
-                                reason="library_missing")
+    except ModuleNotFoundError as exc:
+        if exc.name and exc.name.split(".")[0] == "crawl4ai":
+            return CrawlFetchResult(requested_url=clean, available=False,
+                                    reason="library_missing")
+        return CrawlFetchResult(
+            requested_url=clean,
+            available=False,
+            reason="dependency_broken",
+            error_detail=f"{type(exc).__name__}: {str(exc)[:180]}",
+        )
+    except ImportError as exc:
+        return CrawlFetchResult(
+            requested_url=clean,
+            available=False,
+            reason="dependency_broken",
+            error_detail=f"{type(exc).__name__}: {str(exc)[:180]}",
+        )
     except Exception as exc:
         reason = _classify_error(str(exc))
         return CrawlFetchResult(requested_url=clean, available=False, reason=reason,

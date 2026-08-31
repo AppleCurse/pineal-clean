@@ -1,16 +1,10 @@
 import logging
 from typing import Dict, Any
 
-try:
-    from agent_core.config_loader import DecisionConfig
-    from agent_core.domain.pipeline_status import PipelineStatus
-    from agent_core.domain.memory_models import AgentRun
-    from agent_core.services.uncertainty_engine import UncertaintyEngine
-except ImportError:
-    from config_loader import DecisionConfig
-    from domain.pipeline_status import PipelineStatus
-    from domain.memory_models import AgentRun
-    from services.uncertainty_engine import UncertaintyEngine
+from agent_core.config_loader import DecisionConfig
+from agent_core.domain.pipeline_status import PipelineStatus
+from agent_core.domain.memory_models import AgentRun
+from agent_core.services.uncertainty_engine import UncertaintyEngine
 
 logger = logging.getLogger(__name__)
 

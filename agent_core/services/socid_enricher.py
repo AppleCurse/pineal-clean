@@ -54,9 +54,16 @@ def extract_from_html(html: str, source_url: str = "") -> SocidRecord:
     """Ham HTML metninden kayıt çıkarır (ağsız; test ve pipeline kullanımı için)."""
     try:
         fields = _call_extract(html)
+    except ModuleNotFoundError as exc:
+        reason = (
+            "library_missing"
+            if exc.name and exc.name.split(".")[0] == "socid_extractor"
+            else "dependency_broken"
+        )
+        return SocidRecord(source_url=source_url, available=False, reason=reason)
     except ImportError:
         return SocidRecord(source_url=source_url, available=False,
-                           reason="library_missing")
+                           reason="dependency_broken")
     except Exception as exc:  # parse hataları dürüstçe raporlanır
         return SocidRecord(source_url=source_url, available=False,
                            reason=f"extract_error:{type(exc).__name__}")

@@ -86,10 +86,7 @@ class HolisticProfile(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-try:
-    from agent_core.domain.pipeline_status import PipelineStatus
-except ImportError:
-    from domain.pipeline_status import PipelineStatus
+from agent_core.domain.pipeline_status import PipelineStatus
 
 class TaskSnapshot(BaseModel):
     task_id: str

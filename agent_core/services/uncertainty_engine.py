@@ -3,10 +3,7 @@ import logging
 from typing import Any, Dict, Tuple
 from pydantic import BaseModel, ConfigDict
 
-try:
-    from agent_core.config_loader import DecisionConfig
-except ImportError:
-    from config_loader import DecisionConfig
+from agent_core.config_loader import DecisionConfig
 
 
 class UncertaintyReport(BaseModel):

@@ -1,8 +1,6 @@
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
@@ -26,36 +24,36 @@ import sys
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-try:
-    from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
-except ImportError:
-    from task_executor import PinealExecutor, InsufficientEvidenceError
+from agent_core.aspasia.aspasia_chief import AspasiaChief
+from agent_core.chat.dialogue_manager import DialogueManager
+from agent_core.scraper.instagram_ghost import InstagramGhostScraper
+from agent_core.services import crawl_enricher, socid_enricher
+from agent_core.services.dependency_health import (
+    StartupDependencyError,
+    check_startup_dependencies,
+)
+from agent_core.shadow.shadow_executor import ShadowExecutor
+from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
 
-try:
-    from agent_core.scraper.instagram_ghost import InstagramGhostScraper
-except Exception:
-    InstagramGhostScraper = None
 
-try:
-    from agent_core.shadow.shadow_executor import ShadowExecutor
-    shadow_executor = ShadowExecutor()
-except Exception:
-    shadow_executor = None
-
-try:
-    from agent_core.chat.dialogue_manager import DialogueManager
-    dialogue_manager = DialogueManager()
-except Exception:
-    dialogue_manager = None
-
-try:
-    from agent_core.aspasia.aspasia_chief import AspasiaChief
-    aspasia_chief = AspasiaChief()
-except Exception:
-    aspasia_chief = None
+shadow_executor = ShadowExecutor()
+dialogue_manager = DialogueManager()
+aspasia_chief = AspasiaChief()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    try:
+        application.state.startup_health = check_startup_dependencies()
+    except StartupDependencyError as exc:
+        application.state.startup_health = exc.as_dict()
+        logger.critical(
+            "Startup dependency gate failed: %s dependency=%s cause=%s",
+            exc.error_code,
+            exc.dependency,
+            exc.cause_type,
+        )
+        raise
+
     yield
     # Kapanista oda gonderici task'lerini iptal et (temiz kapanis)
     for room in application.state.rooms.values():
@@ -65,6 +63,16 @@ async def lifespan(application: FastAPI):
     application.state.rooms.clear()
 
 app = FastAPI(title="PINEAL-HERETIC v2.0 API", lifespan=lifespan)
+app.state.startup_health = {"status": "starting", "error_code": None, "dependencies": []}
+
+
+@app.get("/health")
+async def health():
+    health_status = app.state.startup_health
+    if health_status.get("status") != "ready":
+        return JSONResponse(health_status, status_code=503)
+    return health_status
+
 
 # --- CORS (FAZ 3): ayni-origin serviste CORS gereksizdir; disaridan erisim
 # istenirse PINEAL_ALLOWED_ORIGINS ile acilir. Varsayilan yalnizca localhost. ---
@@ -891,8 +899,9 @@ async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, An
     # kaydı çıkmaya çalışılır. Kütüphane yok/ağ yok/kayıt yoksa alan EKLENMEZ —
     # sonuç sözleşmesi bozulmaz (dürüst boş).
     try:
-        from agent_core.services.socid_enricher import enrich_urls
-        socid_records = await enrich_urls([m["source_url"] for m in matched], limit=3)
+        socid_records = await socid_enricher.enrich_urls(
+            [m["source_url"] for m in matched], limit=3
+        )
         by_url = {r.source_url: r for r in socid_records}
         for m in matched:
             rec = by_url.get(m["source_url"])
@@ -911,15 +920,10 @@ async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, An
     # (dürüst boş) ve asıl araştırma sonucunu asla bozmaz.
     crawl_note = ""
     try:
-        from agent_core.services.crawl_enricher import (
-            fetch_readable,
-            is_enabled as crawl_enabled,
-            research_limit,
-        )
-        if crawl_enabled() and matched:
+        if crawl_enricher.is_enabled() and matched:
             crawled = 0
-            for m in matched[:research_limit()]:
-                res = await fetch_readable(m["source_url"])
+            for m in matched[:crawl_enricher.research_limit()]:
+                res = await crawl_enricher.fetch_readable(m["source_url"])
                 if res.available:
                     m["crawl"] = res.model_dump()
                     crawled += 1

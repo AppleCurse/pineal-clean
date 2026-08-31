@@ -200,9 +200,13 @@ async def scan_email(
             functions = list(modules)
         else:
             functions = _load_modules(module_limit)
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        reason = "library_missing" if exc.name and exc.name.split(".")[0] == "holehe" else "dependency_broken"
+        return HoleheScanResult(requested_email=clean, available=False, reason=reason)
+    except ImportError as exc:
+        logger.error("holehe dependency import failed: %s", type(exc).__name__)
         return HoleheScanResult(requested_email=clean, available=False,
-                                reason="library_missing")
+                                reason="dependency_broken")
     except Exception as exc:
         logger.warning("holehe modülleri yüklenemedi: %s: %s",
                        type(exc).__name__, str(exc)[:80])
@@ -217,9 +221,14 @@ async def scan_email(
     except asyncio.TimeoutError:
         return HoleheScanResult(requested_email=clean, available=False,
                                 reason="timeout", scanned_count=len(functions))
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        reason = "library_missing" if exc.name and exc.name.split(".")[0] == "holehe" else "dependency_broken"
         return HoleheScanResult(requested_email=clean, available=False,
-                                reason="library_missing")
+                                reason=reason, scanned_count=len(functions))
+    except ImportError as exc:
+        logger.error("holehe dependency import failed: %s", type(exc).__name__)
+        return HoleheScanResult(requested_email=clean, available=False,
+                                reason="dependency_broken", scanned_count=len(functions))
     except Exception as exc:
         logger.warning("holehe tarama hatası: %s: %s",
                        type(exc).__name__, str(exc)[:80])

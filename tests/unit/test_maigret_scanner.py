@@ -119,6 +119,30 @@ class TestSanitize:
 
 class TestHonestDegradation:
     @pytest.mark.asyncio
+    async def test_library_missing(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_MAIGRET", "true")
+
+        def _boom(top):
+            raise ModuleNotFoundError("maigret yok", name="maigret")
+
+        monkeypatch.setattr(maigret_scanner, "_get_site_dict", _boom)
+        res = await scan_username("soxoj")
+        assert res.available is False
+        assert res.reason == "library_missing"
+
+    @pytest.mark.asyncio
+    async def test_installed_dependency_import_crash_is_not_called_missing(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_MAIGRET", "true")
+
+        def _boom(top):
+            raise ImportError("maigret internal import failed")
+
+        monkeypatch.setattr(maigret_scanner, "_get_site_dict", _boom)
+        res = await scan_username("soxoj")
+        assert res.available is False
+        assert res.reason == "dependency_broken"
+
+    @pytest.mark.asyncio
     async def test_invalid_username(self, monkeypatch):
         monkeypatch.setenv("ENABLE_MAIGRET", "true")
         res = await scan_username("geçersiz isim!")

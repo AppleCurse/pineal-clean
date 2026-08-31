@@ -58,6 +58,15 @@ class TestExtractFromHtml:
         assert rec.available is False
         assert rec.reason == "library_missing"
 
+    def test_installed_library_import_crash_is_not_called_missing(self, monkeypatch):
+        def _boom(_html):
+            raise ImportError("socid runtime import failed")
+
+        monkeypatch.setattr("agent_core.services.socid_enricher._call_extract", _boom)
+        rec = extract_from_html("<html>x</html>", source_url="https://example.com/u")
+        assert rec.available is False
+        assert rec.reason == "dependency_broken"
+
 
 class TestExtractProfile:
     @pytest.mark.asyncio

@@ -1,10 +1,7 @@
 from typing import Any, Optional
 from pydantic import BaseModel
 
-try:
-    from agent_core.services.llm_gateway import LLMGateway
-except ImportError:
-    from services.llm_gateway import LLMGateway
+from agent_core.services.llm_gateway import LLMGateway
 
 ASPASIA_SYSTEM_PROMPT = """Sen ASPASIA'sın: PINEAL sisteminin kullanıcıyla konuşan chief asistanı.
 

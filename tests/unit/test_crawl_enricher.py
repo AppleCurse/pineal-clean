@@ -81,12 +81,25 @@ class TestHonestContract:
         monkeypatch.setenv("ENABLE_CRAWL4AI", "true")
 
         async def _boom(url, renderer, timeout):
-            raise ImportError("crawl4ai yok")
+            raise ModuleNotFoundError("crawl4ai yok", name="crawl4ai")
 
         monkeypatch.setattr(crawl_enricher, "_crawl_once", _boom)
         res = await fetch_readable("https://example.com/a")
         assert res.available is False
         assert res.reason == "library_missing"
+
+    @pytest.mark.asyncio
+    async def test_installed_library_import_failure_is_not_called_missing(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_CRAWL4AI", "true")
+
+        async def _boom(url, renderer, timeout):
+            raise ImportError("installed crawl4ai runtime is broken")
+
+        monkeypatch.setattr(crawl_enricher, "_crawl_once", _boom)
+        res = await fetch_readable("https://example.com/a")
+        assert res.available is False
+        assert res.reason == "dependency_broken"
+        assert res.error_detail.startswith("ImportError:")
 
     @pytest.mark.asyncio
     async def test_browser_missing_classified(self, monkeypatch):
@@ -267,6 +280,10 @@ class TestEndpoint:
         from backend.api import app
 
         monkeypatch.setenv("ENABLE_CRAWL4AI", "true")
+        monkeypatch.setattr(
+            "backend.api.check_startup_dependencies",
+            lambda: {"status": "ready", "error_code": None, "dependencies": []},
+        )
         with TestClient(app) as client:
             r = client.post("/api/experimental/crawl/fetch",
                             json={"url": "http://169.254.169.254/latest/meta-data"})

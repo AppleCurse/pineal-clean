@@ -115,12 +115,24 @@ class TestHonestFailures:
         monkeypatch.setenv("ENABLE_HOLEHE", "true")
 
         def _boom(limit):
-            raise ImportError("holehe yok")
+            raise ModuleNotFoundError("holehe yok", name="holehe")
 
         monkeypatch.setattr(holehe_scanner, "_load_modules", _boom)
         res = await scan_email("a@b.com")
         assert res.available is False
         assert res.reason == "library_missing"
+
+    @pytest.mark.asyncio
+    async def test_installed_dependency_import_crash_is_not_called_missing(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_HOLEHE", "true")
+
+        def _boom(limit):
+            raise ImportError("holehe internal import failed")
+
+        monkeypatch.setattr(holehe_scanner, "_load_modules", _boom)
+        res = await scan_email("a@b.com")
+        assert res.available is False
+        assert res.reason == "dependency_broken"
 
     @pytest.mark.asyncio
     async def test_module_load_crash_is_scan_error(self, monkeypatch):

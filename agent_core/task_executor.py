@@ -6,63 +6,40 @@ from typing import Any, Dict, Iterator, List
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
-try:
-    from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
-    from agent_core.services.hindsight_memory import build_memory_from_env
-    from agent_core.services.canonical_memory import MemoryCorruptedError, MemoryState
-    from agent_core.services.uncertainty_engine import UncertaintyEngine
-    from agent_core.services.decision_engine import DecisionEngine
-    from agent_core.domain.pipeline_status import PipelineStatus
-    from agent_core.services.llm_gateway import LLMGateway
-    from agent_core.agents.passion_mapper import PassionMapperAgent
-    from agent_core.agents.friction_detector import FrictionDetectorAgent
-    from agent_core.agents.cognitive_profiler import CognitiveProfilerAgent
-    from agent_core.agents.resonance_synthesizer import ResonanceSynthesizerAgent
-    from agent_core.agents.human_behavior import HumanBehaviorAnalyzer
-    from agent_core.agents.mirror_truth import MirrorOfTruth
-    from agent_core.agents.resonance_calculator import ResonanceCalculator
-    from agent_core.agents.pattern_interrupt import PatternInterrupt
-    from agent_core.services.memory_injector import MemoryInjector
-    from agent_core.services.search_engine import SearchEngine
-    from agent_core.agents.autonomous_verifier import AutonomousVerifier
-    from agent_core.agents.interpreter_agent import InterpreterAgent
-    from agent_core.agents.authenticity_auditor import AuthenticityAuditorAgent
-    from agent_core.agents.osint_investigator import OsintInvestigatorAgent
-    from agent_core.agents.depth_analyst import DepthAnalyst
-    from agent_core.shadow.shadow_executor import ShadowExecutor
-    from agent_core.config_loader import DecisionConfig
-except ImportError:
-    from services.cognitive_router import CognitiveRouter, RoutePlan
-    from services.hindsight_memory import build_memory_from_env
-    from services.canonical_memory import MemoryCorruptedError, MemoryState
-    from services.uncertainty_engine import UncertaintyEngine
-    from services.decision_engine import DecisionEngine
-    from domain.pipeline_status import PipelineStatus
-    from services.llm_gateway import LLMGateway
-    from agents.passion_mapper import PassionMapperAgent
-    from agents.friction_detector import FrictionDetectorAgent
-    from agents.cognitive_profiler import CognitiveProfilerAgent
-    from agents.resonance_synthesizer import ResonanceSynthesizerAgent
-    from agents.human_behavior import HumanBehaviorAnalyzer
-    from agents.mirror_truth import MirrorOfTruth
-    from agents.resonance_calculator import ResonanceCalculator
-    from agents.pattern_interrupt import PatternInterrupt
-    from services.memory_injector import MemoryInjector
-    from services.search_engine import SearchEngine
-    from agents.autonomous_verifier import AutonomousVerifier
-    from agents.interpreter_agent import InterpreterAgent
-    from agents.authenticity_auditor import AuthenticityAuditorAgent
-    from agents.osint_investigator import OsintInvestigatorAgent
-    from config_loader import DecisionConfig
-
-try:
-    from agent_core.domain.memory_models import (
-        TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
-    )
-except ImportError:
-    from domain.memory_models import (
-        TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
-    )
+from agent_core.agents.authenticity_auditor import AuthenticityAuditorAgent
+from agent_core.agents.autonomous_verifier import AutonomousVerifier
+from agent_core.agents.cognitive_profiler import CognitiveProfilerAgent
+from agent_core.agents.depth_analyst import DepthAnalyst
+from agent_core.agents.friction_detector import FrictionDetectorAgent
+from agent_core.agents.human_behavior import HumanBehaviorAnalyzer
+from agent_core.agents.interpreter_agent import InterpreterAgent
+from agent_core.agents.mirror_truth import MirrorOfTruth
+from agent_core.agents.osint_investigator import OsintInvestigatorAgent
+from agent_core.agents.passion_mapper import PassionMapperAgent
+from agent_core.agents.pattern_interrupt import PatternInterrupt
+from agent_core.agents.resonance_calculator import ResonanceCalculator
+from agent_core.agents.resonance_synthesizer import ResonanceSynthesizerAgent
+from agent_core.domain.memory_models import (
+    AgentRun,
+    AuthenticBridge,
+    CognitiveStyle,
+    FrictionProfile,
+    HolisticProfile,
+    PassionProfile,
+    TaskSnapshot,
+)
+from agent_core.domain.pipeline_status import PipelineStatus
+from agent_core.config_loader import DecisionConfig
+from agent_core.services.canonical_memory import MemoryCorruptedError, MemoryState
+from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
+from agent_core.services.decision_engine import DecisionEngine
+from agent_core.services.hindsight_memory import build_memory_from_env
+from agent_core.services.llm_gateway import LLMGateway
+from agent_core.services.memory_injector import MemoryInjector
+from agent_core.services.search_engine import SearchEngine
+from agent_core.services.uncertainty_engine import UncertaintyEngine
+from agent_core.services.vision_analyzer import VisionAnalyzer
+from agent_core.shadow.shadow_executor import ShadowExecutor
 
 class InsufficientEvidenceError(RuntimeError):
     pass
@@ -73,10 +50,6 @@ class VerifiedNote(BaseModel):
 class TaskStatus(TaskSnapshot):
     pass
 
-try:
-    from agent_core.services.vision_analyzer import VisionAnalyzer
-except ImportError:
-    from services.vision_analyzer import VisionAnalyzer
 
 class PinealExecutor:
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):

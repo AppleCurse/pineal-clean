@@ -13,6 +13,7 @@ Tasarım ilkesi: CanonicalMemory'yi DEĞİŞTİRMEZ, genişletir.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -21,22 +22,16 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from agent_core.services.canonical_memory import CanonicalMemory
 
 logger = logging.getLogger(__name__)
 
-# ML bağımlılıkları opsiyonel — import hatalarını sessizce yakala
-try:
-    import numpy as np
-    NUMPY_AVAILABLE = True
-except ImportError:
-    NUMPY_AVAILABLE = False
-
-try:
-    from sentence_transformers import SentenceTransformer
-    ST_AVAILABLE = True
-except ImportError:
-    ST_AVAILABLE = False
+# Do not import this configured dependency on the default canonical path.
+# Hindsight imports it lazily when semantic behavior is actually requested.
+NUMPY_AVAILABLE = True
+ST_AVAILABLE = importlib.util.find_spec("sentence_transformers") is not None
 
 # Varsayılan hafif embedding modeli (~80MB, ilk kullanımda indirilir)
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
@@ -70,6 +65,7 @@ class HindsightMemory(CanonicalMemory):
         self._embedder = None
         self._embedder_lock = threading.Lock()
         self._embedder_load_attempted = False
+        self._embedder_error = None
 
         self._init_db()
 
@@ -120,18 +116,41 @@ class HindsightMemory(CanonicalMemory):
                 return self._embedder
             self._embedder_load_attempted = True
 
-            if not ST_AVAILABLE or not NUMPY_AVAILABLE:
+            if not ST_AVAILABLE:
+                self._embedder_error = {
+                    "error_code": "OPTIONAL_DEPENDENCY_MISSING",
+                    "dependency": "sentence-transformers",
+                }
                 logger.info(
-                    "HindsightMemory: sentence-transformers/numpy kurulu değil — "
+                    "HindsightMemory: sentence-transformers kurulu değil — "
                     "anlamsal özellikler devre dışı, kanıt saklama etkilenmez."
                 )
                 return None
 
             try:
+                from sentence_transformers import SentenceTransformer
+            except ModuleNotFoundError as exc:
+                if exc.name == "sentence_transformers":
+                    self._embedder_error = {
+                        "error_code": "OPTIONAL_DEPENDENCY_MISSING",
+                        "dependency": "sentence-transformers",
+                    }
+                    return None
+                # Installed package with a missing transitive dependency is
+                # broken, not equivalent to an optional package being absent.
+                raise
+
+            try:
                 logger.info("HindsightMemory embedding modeli yükleniyor: %s", self.embedding_model_name)
                 self._embedder = SentenceTransformer(self.embedding_model_name)
+                self._embedder_error = None
                 logger.info("HindsightMemory embedding modeli hazır.")
             except Exception as exc:
+                self._embedder_error = {
+                    "error_code": "EMBEDDING_MODEL_LOAD_FAILED",
+                    "dependency": "sentence-transformers",
+                    "cause_type": type(exc).__name__,
+                }
                 logger.warning(
                     "HindsightMemory embedding modeli yüklenemedi: %s — "
                     "anlamsal arama devre dışı.", exc
@@ -275,6 +294,7 @@ class HindsightMemory(CanonicalMemory):
             "total_indexed": total,
             "unique_tasks": tasks,
             "semantic_enabled": embedder is not None,
+            "semantic_error": self._embedder_error,
             "embedding_model": self.embedding_model_name if embedder else None,
             "storage_path": self.storage_path,
             "db_path": self.db_path,
