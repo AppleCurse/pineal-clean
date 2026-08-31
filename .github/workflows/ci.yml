@@ -88,7 +88,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          gradle-version: '9.7.1'
+          gradle-version: '8.10.2'
       - name: Verify Gradle toolchain
         run: gradle --version
       - name: Android lint
