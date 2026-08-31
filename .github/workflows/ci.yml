@@ -87,11 +87,13 @@ jobs:
           distribution: 'temurin'
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+        with:
+          gradle-version: '9.7.1'
+      - name: Verify Gradle toolchain
+        run: gradle --version
       - name: Android lint
-        run: ./gradlew lintDebug
+        run: gradle lintDebug
       - name: Android unit tests
-        run: ./gradlew testDebugUnitTest
+        run: gradle testDebugUnitTest
       - name: Android assemble
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
