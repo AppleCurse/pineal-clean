@@ -49,6 +49,9 @@ async def test_canonical_memory_corrupted_json(memory_service):
     with open(file_path, "w") as f:
         f.write("{invalid_json:")
         
-    # The current implementation returns {} if json decoding fails
-    data = memory_service.get_task_memory(task_id)
-    assert data == {}
+    from agent_core.services.canonical_memory import MemoryCorruptedError
+
+    # Corruption is distinct from missing memory and must fail closed.
+    with pytest.raises(MemoryCorruptedError, match="MEMORY_CORRUPTED"):
+        memory_service.get_task_memory(task_id)
+    assert memory_service.inspect_task_memory(task_id)["state"] == "CORRUPTED"

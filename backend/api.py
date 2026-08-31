@@ -1073,20 +1073,34 @@ def _read_tasks_sync(storage: str):
     tasks = []
     if os.path.isdir(storage):
         for fn in sorted(os.listdir(storage)):
-            if not fn.endswith(".json"):
+            if not fn.endswith(".json") or fn == "learnings.json":
                 continue
             path = os.path.join(storage, fn)
+            task_id = fn[:-5]
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                if not isinstance(data, dict) or not isinstance(data.get("evidence", []), list):
+                    raise ValueError("invalid canonical memory schema")
                 tasks.append({
-                    "task_id": data.get("task_id", fn[:-5]),
+                    "task_id": data.get("task_id", task_id),
                     "last_updated": data.get("last_updated"),
                     "evidence_count": len(data.get("evidence", [])),
                     "confidence": data.get("confidence"),
+                    "memory_state": "READY",
+                    "memory_error_code": None,
                 })
-            except Exception:
-                continue
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                # A malformed task remains visible and is never represented as
+                # an absent task in retention/operations APIs.
+                tasks.append({
+                    "task_id": task_id,
+                    "last_updated": None,
+                    "evidence_count": None,
+                    "confidence": None,
+                    "memory_state": "CORRUPTED",
+                    "memory_error_code": "MEMORY_CORRUPTED",
+                })
     return tasks
 
 @app.get("/api/tasks")

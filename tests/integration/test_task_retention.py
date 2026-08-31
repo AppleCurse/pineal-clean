@@ -32,6 +32,8 @@ def test_task_lifecycle_list_and_delete(tmp_path):
         assert r.status_code == 200
         found = [t for t in r.json()["tasks"] if t["task_id"] == task_id]
         assert found and found[0]["evidence_count"] == 1
+        assert found[0]["memory_state"] == "READY"
+        assert found[0]["memory_error_code"] is None
         assert task_id in r.json()["active_tasks"]
 
         # Sil
@@ -47,3 +49,27 @@ def test_task_lifecycle_list_and_delete(tmp_path):
         r = client.delete(f"/api/tasks/{task_id}", params={"client_id": cid})
         assert r.status_code == 404
         assert r.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_task_list_reports_corrupt_memory_instead_of_hiding_it(tmp_path):
+    cid = f"corrupt_{uuid.uuid4().hex[:8]}"
+    task_id = "corrupt_retention_task"
+    with TestClient(app) as client:
+        from backend.api import get_room
+
+        room = get_room(cid)
+        room["executor"].memory.storage_path = str(tmp_path)
+        (tmp_path / f"{task_id}.json").write_text("{broken", encoding="utf-8")
+
+        response = client.get("/api/tasks", params={"client_id": cid})
+
+        assert response.status_code == 200
+        found = [task for task in response.json()["tasks"] if task["task_id"] == task_id]
+        assert found == [{
+            "task_id": task_id,
+            "last_updated": None,
+            "evidence_count": None,
+            "confidence": None,
+            "memory_state": "CORRUPTED",
+            "memory_error_code": "MEMORY_CORRUPTED",
+        }]

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 try:
     from agent_core.services.cognitive_router import CognitiveRouter, RoutePlan
     from agent_core.services.hindsight_memory import build_memory_from_env
+    from agent_core.services.canonical_memory import MemoryCorruptedError, MemoryState
     from agent_core.services.uncertainty_engine import UncertaintyEngine
     from agent_core.services.decision_engine import DecisionEngine
     from agent_core.domain.pipeline_status import PipelineStatus
@@ -33,6 +34,7 @@ try:
 except ImportError:
     from services.cognitive_router import CognitiveRouter, RoutePlan
     from services.hindsight_memory import build_memory_from_env
+    from services.canonical_memory import MemoryCorruptedError, MemoryState
     from services.uncertainty_engine import UncertaintyEngine
     from services.decision_engine import DecisionEngine
     from domain.pipeline_status import PipelineStatus
@@ -221,8 +223,17 @@ class PinealExecutor:
         #   yolda ajan sayısını yanlış etiketliyordu -> gerçek LLM çağrı
         #   gözlem sayısı raporlanır (gateway call_log).
         call_log = getattr(self.llm_gateway, "call_log", None)
+        memory_telemetry = {}
+        memory_inspector = getattr(type(self.memory), "inspect_task_memory", None)
+        if callable(memory_inspector):
+            inspection = memory_inspector(self.memory, status.task_id)
+            memory_telemetry["memory_state"] = inspection.get("state")
+            if inspection.get("error_code"):
+                memory_telemetry["memory_error_code"] = inspection["error_code"]
 
         status.telemetry = {
+            **(status.telemetry or {}),
+            **memory_telemetry,
             "cache_hit_rate": hit_rate,
             "cache_hits": hits if isinstance(hits, (int, float)) else 0,
             "llm_calls_observed": len(call_log) if isinstance(call_log, list) else 0,
@@ -316,6 +327,35 @@ class PinealExecutor:
         """
         try:
             return await self._execute_task_impl(input_data, task_id)
+        except MemoryCorruptedError as exc:
+            # A corrupt canonical record is not equivalent to an absent record.
+            # Halt before further analysis and require explicit recovery.
+            from agent_core.schemas.telemetry import ErrorHaltEvent, Severity
+
+            now = datetime.now(timezone.utc)
+            status = TaskStatus(
+                task_id=task_id,
+                status=PipelineStatus.HALTED_CRITICAL,
+                created_at=now,
+                completed_at=now,
+                halted_reason=exc.error_code,
+                telemetry={
+                    "memory_initial_state": MemoryState.CORRUPTED.value,
+                    "memory_state": MemoryState.CORRUPTED.value,
+                    "memory_error_code": exc.error_code,
+                    "memory_corruption_reason": exc.reason,
+                },
+            )
+            self._log("ERROR", f"[{task_id}] {exc}")
+            self._emit(ErrorHaltEvent(
+                task_id=task_id,
+                agent_name="CanonicalMemory",
+                error_code=exc.error_code,
+                error_message=f"Canonical memory requires explicit recovery ({exc.reason})",
+                severity=Severity.Critical,
+            ))
+            self._snapshot(status)
+            return status
         finally:
             self._cleanup_temp_images(input_data)
 
@@ -333,6 +373,25 @@ class PinealExecutor:
         )
         status = TaskStatus(task_id=task_id, status="processing", created_at=datetime.now(timezone.utc))
         _task_wall_start = datetime.now(timezone.utc)
+
+        # Only concrete memory engines participate in the health contract; test
+        # doubles without the method retain their existing behavior.
+        inspector = getattr(type(self.memory), "inspect_task_memory", None)
+        if callable(inspector):
+            memory_inspection = inspector(self.memory, task_id)
+            memory_state = memory_inspection.get("state", MemoryState.CORRUPTED.value)
+            status.telemetry = {
+                "memory_initial_state": memory_state,
+                "memory_state": memory_state,
+            }
+            if memory_state == MemoryState.CORRUPTED.value:
+                profile_file = self.memory._profile_file(task_id)
+                raise MemoryCorruptedError(
+                    task_id,
+                    memory_inspection.get("reason") or "UNKNOWN",
+                    profile_file,
+                )
+
         input_data["sacred_rules"] = self.injector.fetch_active_rules()
         # The shared diagnostic call log is intentionally not cleared here.
         # Concurrent tasks bind records through per-agent context-local scopes.
