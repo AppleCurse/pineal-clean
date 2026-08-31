@@ -66,9 +66,15 @@ val emitLintErrors by tasks.registering {
     doLast {
         val report = layout.buildDirectory.file("reports/lint-results-debug.txt").get().asFile
         if (report.exists()) {
-            report.readLines()
+            val reportText = report.readText()
+            reportText.lineSequence()
                 .filter { it.contains(": Error:") }
                 .forEach { println("::error title=Android lint::${it.replace("%", "%25")}") }
+            System.getenv("GITHUB_STEP_SUMMARY")?.let { summaryPath ->
+                file(summaryPath).appendText(
+                    "\n## Android lint report\n\n```text\n${reportText.take(60000)}\n```\n"
+                )
+            }
         }
     }
 }
