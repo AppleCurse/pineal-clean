@@ -12,6 +12,8 @@ Tasarım ilkesi: CanonicalMemory'yi DEĞİŞTİRMEZ, genişletir.
 """
 from __future__ import annotations
 
+from typing import Tuple
+import asyncio
 import hashlib
 import json
 import logging
@@ -175,11 +177,15 @@ class HindsightMemory(CanonicalMemory):
         await super().merge_evidence(task_id, evidence_chain)
 
         # Anlamsal indekse de yaz (en iyi çaba — hata kanıt akışını bozmaz)
-        for evidence in evidence_chain:
-            try:
-                self._index_evidence(task_id, evidence)
-            except Exception as exc:
-                logger.debug("HindsightMemory indeksleme hatası (yoksayıldı): %s", exc)
+        def _index_all_evidence():
+            for evidence in evidence_chain:
+                try:
+                    self._index_evidence(task_id, evidence)
+                except Exception as exc:
+                    logger.debug("HindsightMemory indeksleme hatası (yoksayıldı): %s", exc)
+
+        if evidence_chain:
+            await asyncio.to_thread(_index_all_evidence)
 
     def _index_evidence(self, task_id: str, evidence: Dict) -> None:
         content_text = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
@@ -208,6 +214,24 @@ class HindsightMemory(CanonicalMemory):
             conn.close()
 
     # ------------------------------------------------------------------ Anlamsal arama
+    def _fetch_rows(self, task_id: Optional[str]) -> List[Tuple]:
+        conn = self._connect()
+        try:
+            if task_id:
+                self._validate_task_id(task_id)
+                return conn.execute(
+                    "SELECT content_text, embedding, metadata, created_at "
+                    "FROM semantic_memories WHERE task_id = ? ORDER BY created_at DESC LIMIT 5000",
+                    (task_id,),
+                ).fetchall()
+            else:
+                return conn.execute(
+                    "SELECT content_text, embedding, metadata, created_at "
+                    "FROM semantic_memories ORDER BY created_at DESC LIMIT 5000"
+                ).fetchall()
+        finally:
+            conn.close()
+
     async def semantic_search(
         self,
         query: str,
@@ -223,22 +247,7 @@ class HindsightMemory(CanonicalMemory):
         if query_embedding is None:
             return []
 
-        conn = self._connect()
-        try:
-            if task_id:
-                self._validate_task_id(task_id)
-                rows = conn.execute(
-                    "SELECT content_text, embedding, metadata, created_at "
-                    "FROM semantic_memories WHERE task_id = ? ORDER BY created_at DESC LIMIT 5000",
-                    (task_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT content_text, embedding, metadata, created_at "
-                    "FROM semantic_memories ORDER BY created_at DESC LIMIT 5000"
-                ).fetchall()
-        finally:
-            conn.close()
+        rows = await asyncio.to_thread(self._fetch_rows, task_id)
 
         results = []
         for content_text, embedding_str, metadata_str, created_at in rows:
