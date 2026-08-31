@@ -15,6 +15,7 @@ class PinealAnalyzerEngineTest {
             rituals = "",
             playlist = "",
             envies = "",
+            platforms = emptySet(),
             useCloudApi = true,
             apiKey = "" // Missing API KEY
         )
