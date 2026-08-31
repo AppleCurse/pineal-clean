@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -17,11 +17,9 @@ jobs:
         run: |
           pip install -r requirements.txt ruff pytest pytest-asyncio
       - name: Lint with ruff
-        run: |
-          ruff check .
+        run: ruff check .
       - name: Run backend tests
-        run: |
-          PYTHONPATH=$GITHUB_WORKSPACE pytest -q -p no:cacheprovider
+        run: PYTHONPATH=$GITHUB_WORKSPACE pytest -q -p no:cacheprovider
 
   frontend:
     runs-on: ubuntu-latest
@@ -40,8 +38,7 @@ jobs:
       - name: Build frontend
         run: npm run build
       - name: Verify real Svelte build
-        run: |
-          grep -q "PINEAL-HERETIC" dist/assets/*.js
+        run: grep -q "PINEAL-HERETIC" dist/assets/*.js
 
   smoke:
     runs-on: ubuntu-latest
@@ -52,8 +49,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
       - name: uvicorn smoke
         run: |
           uvicorn backend.api:app --port 8000 &
@@ -61,8 +57,6 @@ jobs:
           curl -sf "http://127.0.0.1:8000/" | grep -q 'id="app"'
           curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8000/api/aspasia/chat" -H 'Content-Type: application/json' -d '{"client_id":"ci","user_message":"hi"}' | grep -q 200
 
-  # [W4.1] Rust core compile+test gate. tauri is an optional feature on
-  # rust_core, so this job needs no webkit/gtk system packages.
   rust-core:
     runs-on: ubuntu-latest
     defaults:
@@ -77,7 +71,12 @@ jobs:
       - name: Cargo check (core, no tauri feature)
         run: cargo check --all-targets
       - name: Cargo test
+<<<<<<< HEAD
         run: cargo test --locked
+=======
+        run: cargo test
+
+>>>>>>> origin/hardening/production-proof
   android:
     runs-on: ubuntu-latest
     defaults:
@@ -85,6 +84,7 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v7
+<<<<<<< HEAD
       - name: set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -99,3 +99,22 @@ jobs:
           gradle lintDebug
           gradle testDebugUnitTest
           gradle assembleDebug
+=======
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '8.10.2'
+      - name: Verify Gradle toolchain
+        run: gradle --version
+      - name: Android lint
+        run: gradle lintDebug
+      - name: Android unit tests
+        run: gradle testDebugUnitTest
+      - name: Android assemble
+        run: gradle assembleDebug
+>>>>>>> origin/hardening/production-proof
