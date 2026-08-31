@@ -78,21 +78,17 @@ class VisionAnalyzer:
             record["reason"] = "invalid_url"
             return record
 
-        from agent_core.utils.security import is_safe_url
-        if not is_safe_url(image_url):
-            record["reason"] = "ssrf_blocked"
-            logger.warning(f"SSRF Güvenlik Koruması: Bu URL'ye erişim yasaktır: {image_url}")
-            return record
+        from agent_core.utils.security import UnsafeURLError, safe_get
 
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             if client:
-                resp = await client.get(image_url, headers=headers)
+                resp = await safe_get(client, image_url, headers=headers)
             else:
-                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as new_client:
-                    resp = await new_client.get(image_url, headers=headers)
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as new_client:
+                    resp = await safe_get(new_client, image_url, headers=headers)
 
             if resp.status_code != 200:
                 record["reason"] = f"http_{resp.status_code}"
@@ -121,9 +117,13 @@ class VisionAnalyzer:
                 b64=base64.b64encode(resp.content).decode("utf-8"),
             )
             return record
+        except UnsafeURLError:
+            record["reason"] = "ssrf_blocked"
+            logger.warning("SSRF protection blocked an image URL")
+            return record
         except Exception as e:
             record["reason"] = "network_error"
-            logger.warning(f"Görsel indirilemedi ({image_url[:40]}...): {e}")
+            logger.warning("Görsel indirilemedi: %s", type(e).__name__)
             return record
 
     async def _download_and_encode_image(
@@ -180,7 +180,7 @@ class VisionAnalyzer:
             )
 
         # Parallel image download with shared client for connection pooling
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
             tasks = [self._download_image_record(url, client=client) for url in valid_urls]
             records = await asyncio.gather(*tasks)
 

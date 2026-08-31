@@ -51,8 +51,10 @@ class CanonicalMemory:
             raise ValueError(f"Geçersiz task_id formatı: {task_id}")
 
     def _profile_file(self, task_id: str) -> str:
+        from agent_core.utils.security import safe_child_path
+
         self._validate_task_id(task_id)
-        return os.path.join(self.storage_path, f"{task_id}.json")
+        return safe_child_path(self.storage_path, f"{task_id}.json")
 
     @staticmethod
     def _inspection(

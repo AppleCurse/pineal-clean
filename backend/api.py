@@ -34,6 +34,15 @@ from agent_core.services.dependency_health import (
 )
 from agent_core.services.task_lifecycle import TaskLifecycleRegistry
 from agent_core.shadow.shadow_executor import ShadowExecutor
+from agent_core.utils.security import (
+    SecurityConfigurationError,
+    redact_structure,
+    redact_text,
+    safe_child_path,
+    security_posture,
+    token_matches,
+    validate_identifier,
+)
 from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
 
 
@@ -44,15 +53,12 @@ aspasia_chief = AspasiaChief()
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     try:
-        application.state.startup_health = check_startup_dependencies()
-    except StartupDependencyError as exc:
+        startup_health = check_startup_dependencies()
+        startup_health["security"] = security_posture()
+        application.state.startup_health = startup_health
+    except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()
-        logger.critical(
-            "Startup dependency gate failed: %s dependency=%s cause=%s",
-            exc.error_code,
-            exc.dependency,
-            exc.cause_type,
-        )
+        logger.critical("Startup security/dependency gate failed: %s", exc.error_code)
         raise
 
     yield
@@ -87,29 +93,36 @@ ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip() and o.str
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
 
 # --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa tum /api/* X-API-Key ister;
 # tanimli degilse sistem acik calisir (yerel tek kullanicili arac, geriye uyumluluk). ---
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    token = os.getenv("PINEAL_TOKEN")
-    require_auth = os.getenv("PINEAL_REQUIRE_AUTH", "false").lower() == "true"
-    
     if request.url.path.startswith("/api/") and request.method != "OPTIONS":
-        if require_auth and not token:
+        try:
+            posture = security_posture()
+        except SecurityConfigurationError as exc:
             return JSONResponse(
-                {"error": {"code": "FORBIDDEN", "message": "Production mode requires PINEAL_TOKEN to be set"}},
-                status_code=403,
+                {"error": {"code": exc.error_code, "message": "Secure startup configuration required"}},
+                status_code=503,
             )
-        if token and request.headers.get("x-api-key") != token:
+        if posture["auth_required"] and not token_matches(request.headers.get("x-api-key")):
             return JSONResponse(
                 {"error": {"code": "UNAUTHORIZED", "message": "X-API-Key gerekli veya hatalı"}},
                 status_code=401,
             )
+        if request.url.path.startswith("/api/experimental/"):
+            identity = request.headers.get("x-api-key") or (request.client.host if request.client else "unknown")
+            identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+            if not rate_limit(f"experimental:{identity_hash}", "experimental"):
+                return JSONResponse(
+                    {"error": {"code": "RATE_LIMITED", "message": "Experimental endpoint rate limit exceeded"}},
+                    status_code=429,
+                )
     return await call_next(request)
 
 # --- Tutarli hata modeli (FAZ 3) ---
@@ -130,8 +143,21 @@ async def unhandled_error_handler(request: Request, exc: Exception):
     )
 
 # --- Basit kayan-pencere rate limit (FAZ 3; ek bagimlilik yok) ---
-RATE_LIMITS = {"initiate": (5, 60), "aspasia": (20, 60)}  # (istek, pencere_sn)
+RATE_LIMITS = {
+    "initiate": (5, 60),
+    "aspasia": (20, 60),
+    "experimental": (10, 60),
+}  # (request count, window seconds)
 _rate_buckets: Dict[str, deque] = defaultdict(deque)
+
+
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
+
 
 def rate_limit(key: str, bucket: str) -> bool:
     """True = izin ver; False = limit asildi (429)."""
@@ -342,7 +368,7 @@ async def _send_log(room: dict, payload: tuple):
     await _send_ws(room, json.dumps({"type": "log", "ts": ts, "level": level, "msg": msg}))
 
 def broadcast_log(client_id: str, level: str, msg: str):
-    _enqueue(client_id, ("log", (level, msg)))
+    _enqueue(client_id, ("log", (level, redact_text(msg))))
 
 def sync_log(client_id: str, level: str, msg: str):
     broadcast_log(client_id, level, msg)
@@ -363,6 +389,9 @@ def broadcast_event(client_id: str, event: Any):
     room = app.state.rooms.get(client_id)
     if room is None:
         return
+    if hasattr(event, "model_dump"):
+        clean_event_data = redact_structure(event.model_dump(mode="json"))
+        event = type(event).model_validate(clean_event_data)
     decision = _lifecycle(room).record_event(event)
     if decision.accepted:
         _enqueue(client_id, ("event", decision.envelope))
@@ -428,12 +457,24 @@ def sync_snapshot(client_id: str, snapshot: Any):
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
-    # FAZ 3: token kipinde WS de korunur (?token=... query parametresi)
-    token = os.getenv("PINEAL_TOKEN")
-    if token and websocket.query_params.get("token") != token:
-        await websocket.close(code=1008)
+    try:
+        posture = security_posture()
+    except SecurityConfigurationError:
+        await websocket.close(code=1013)
         return
+
     await websocket.accept()
+    if posture["auth_required"]:
+        try:
+            auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+        except (asyncio.TimeoutError, ValueError):
+            await websocket.close(code=1008)
+            return
+        if auth_message.get("type") != "auth" or not token_matches(auth_message.get("token")):
+            await websocket.close(code=1008)
+            return
+        await websocket.send_json({"type": "auth_ok"})
+
     room = get_room(client_id)
     room["websockets"].add(websocket)
     try:
@@ -556,23 +597,32 @@ async def run_mission(req: InitiatePayload):
                     raise e
 
         task_id = _new_task_id()
-        for attempt in range(1, 4):
+        max_attempts = _bounded_env_int("PINEAL_TASK_MAX_ATTEMPTS", 3, 1, 3)
+        task_timeout = _bounded_env_int("PINEAL_TASK_TIMEOUT_SECONDS", 300, 1, 1800)
+        for attempt in range(1, max_attempts + 1):
             try:
-                broadcast_log(client_id, "INFO", f"OPERASYON BAŞLATILIYOR (Deneme {attempt}/3)...")
-                res = await executor.execute_task(payload, task_id)
+                broadcast_log(
+                    client_id,
+                    "INFO",
+                    f"OPERASYON BAŞLATILIYOR (Deneme {attempt}/{max_attempts})...",
+                )
+                res = await asyncio.wait_for(
+                    executor.execute_task(payload, task_id),
+                    timeout=task_timeout,
+                )
                 broadcast_result(client_id, res)
                 return
             except InsufficientEvidenceError:
                 raise
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
-                if attempt == 3:
+                if attempt == max_attempts:
                     broadcast_log(client_id, "ERROR", "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI.")
                     # [028] fix: terminal durum MUTLAKA WS'ye düşer; exception'ı
                     # yutmak UI'ı sonsuz 'işleniyor' durumunda asılı bırakır.
                     broadcast_result_error(
                         client_id, "failed",
-                        "SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI (3/3).",
+                        f"SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI ({max_attempts}/{max_attempts}).",
                     )
                     return
     except InsufficientEvidenceError:
@@ -878,9 +928,8 @@ async def chat_respond(payload: ChatPayload):
         res = await dialogue_manager.generate_response(payload.task_id, payload.target_message)
         return res.model_dump()
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
+        logger.error("Dialogue generation failed: %s", type(e).__name__)
+        return {"error": {"code": "DIALOGUE_FAILED", "message": type(e).__name__}}
 
 class AspasiaChatPayload(BaseModel):
     client_id: str
@@ -1148,9 +1197,9 @@ def _read_tasks_sync(storage: str):
         for fn in sorted(os.listdir(storage)):
             if not fn.endswith(".json") or fn == "learnings.json":
                 continue
-            path = os.path.join(storage, fn)
             task_id = fn[:-5]
             try:
+                path = safe_child_path(storage, fn)
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if not isinstance(data, dict) or not isinstance(data.get("evidence", []), list):
@@ -1189,9 +1238,19 @@ async def api_list_tasks(client_id: str):
 async def api_delete_task(task_id: str, client_id: str):
     """Bir görevin tüm izlerini kalıcı siler (bellek dosyası + aktif snapshot)."""
     room = get_room(client_id)
-    removed_snapshot = room.get("active_tasks", {}).pop(task_id, None)
 
-    mem_path = os.path.join(room["executor"].memory.storage_path, f"{task_id}.json")
+    try:
+        validate_identifier(task_id, field="task_id")
+        mem_path = safe_child_path(
+            room["executor"].memory.storage_path,
+            f"{task_id}.json",
+        )
+    except ValueError:
+        return JSONResponse(
+            {"error": {"code": "INVALID_TASK_ID", "message": "Invalid task identifier"}},
+            status_code=400,
+        )
+    removed_snapshot = room.get("active_tasks", {}).pop(task_id, None)
     file_deleted = False
     if os.path.exists(mem_path):
         try:
@@ -1199,7 +1258,7 @@ async def api_delete_task(task_id: str, client_id: str):
             file_deleted = True
         except OSError as e:
             return JSONResponse(
-                {"error": {"code": "DELETE_FAILED", "message": str(e)[:120]}},
+                {"error": {"code": "DELETE_FAILED", "message": redact_text(e)[:120]}},
                 status_code=500,
             )
 

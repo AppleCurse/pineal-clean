@@ -1,14 +1,4 @@
-"""B3: Dockerfile kontrat kilidi.
-
-Docker imajı, DecisionConfig'in ihtiyaç duydugu config/ dizinini
-tasiMAZSA konteyner start'ta 'FileNotFoundError: Decision config not found'
-ile coker (adli denetimde kanitlandi). Bu testler o regresyonun sessizce
-geri gelmesini engeller:
-
-1. Imaj iceriginde config/ KOPYALANMALI (COPY config/ ./config/).
-2. HEALTHCHECK, PINEAL_TOKEN tanimliyken X-API-Key tasimali; aksi halde
-   auth modunda surekli 401 -> unhealthy olur.
-"""
+"""Production container security and runtime-content contract."""
 
 from pathlib import Path
 
@@ -22,19 +12,19 @@ def _dockerfile_lines():
 
 
 def test_dockerfile_copies_config_directory():
-    """B3 kapisi: runtime asamasi config/ dizinini imaja tasimak zorunda."""
     lines = _dockerfile_lines()
-    assert "COPY config/ ./config/" in [line.strip() for line in lines], (
-        "Dockerfile config/ dizinini kopyalamiyor; konteyner start'ta "
-        "config_loader.py: 'Decision config not found' ile coker."
-    )
+    assert "COPY config/ ./config/" in [line.strip() for line in lines]
 
 
-def test_dockerfile_healthcheck_is_token_aware():
-    """B3 kapisi: PINEAL_TOKEN set'liyken healthcheck 401 yememeli."""
-    lines = _dockerfile_lines()
-    healthcheck = " ".join(
-        line.strip() for line in lines if line.strip().startswith(("HEALTHCHECK", "CMD"))
+def test_dockerfile_defaults_to_fail_closed_production_profile():
+    content = "\n".join(_dockerfile_lines())
+    assert "PINEAL_ENV=production" in content
+
+
+def test_dockerfile_healthcheck_uses_public_startup_health_only():
+    content = " ".join(line.strip() for line in _dockerfile_lines())
+    assert "http://127.0.0.1:8000/health" in content
+    assert "/api/telemetry" not in content
+    assert "PINEAL_TOKEN" not in next(
+        line for line in _dockerfile_lines() if "CMD python -c" in line
     )
-    assert "PINEAL_TOKEN" in healthcheck, "Healthcheck env token'ini okumuyor"
-    assert "X-API-Key" in healthcheck, "Healthcheck X-API-Key header'i tasimiyor"

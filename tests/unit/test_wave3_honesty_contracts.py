@@ -51,14 +51,10 @@ def _transport(payload: bytes, content_type: str, status: int = 200):
 
 async def _download(payload, content_type, status=200):
     va = VisionAnalyzer()
-    import agent_core.utils.security as security
-    real = security.is_safe_url
-    security.is_safe_url = lambda url: True  # test: URL güvenlik katmanı bypass edilmez, izole edilir
-    try:
-        async with httpx.AsyncClient(transport=_transport(payload, content_type, status)) as client:
-            return await va._download_image_record("https://cdn.example/img", client=client)
-    finally:
-        security.is_safe_url = real
+    # Public literal IP makes this network-free MockTransport test independent
+    # of DNS while still exercising the production SSRF-pinned request path.
+    async with httpx.AsyncClient(transport=_transport(payload, content_type, status)) as client:
+        return await va._download_image_record("https://93.184.216.34/img", client=client)
 
 
 @pytest.mark.asyncio

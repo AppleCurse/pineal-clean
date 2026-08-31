@@ -14,6 +14,7 @@ RUN npm run build
 FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PINEAL_ENV=production \
     PINEAL_PORT=8000
 
 # Playwright/Chromium için sistem bağımlılıkları
@@ -33,9 +34,9 @@ COPY main.py scraper.py ./
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
 EXPOSE 8000
-# PINEAL_TOKEN tanimliysa healthcheck X-API-Key header'i tasir;
-# aksi halde 401 alip surekli unhealthy gorunurdu (B3).
+# Public health reports only startup readiness; production startup itself
+# fails closed unless PINEAL_TOKEN is configured.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD python -c "import os,urllib.request;t=os.getenv('PINEAL_TOKEN');req=urllib.request.Request('http://127.0.0.1:8000/api/telemetry?client_id=hc',headers={'X-API-Key':t} if t else {});urllib.request.urlopen(req,timeout=4)" || exit 1
+  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=4)" || exit 1
 
 CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PINEAL_PORT:-8000}"]

@@ -76,83 +76,53 @@ class HumanBehaviorAnalyzer:
         # 3. Visual micro-analysis (remote URLs only; capped)
         visual_signals: List[MicroSignal] = []
 
-        import urllib.parse
-        import socket
-        import ipaddress
-        
+        from agent_core.utils.security import UnsafeURLError, safe_get
+
         async def _fetch_and_analyze_image(client: httpx.AsyncClient, image_url: str) -> List[MicroSignal]:
             if not self._is_http_url(image_url):
                 return []
+            response = None
             try:
-                loop = asyncio.get_running_loop()
-                url = image_url
-                redirects = 0
-                while redirects < 5:
-                    parsed = urllib.parse.urlparse(url)
-                    if not parsed.hostname:
-                        return []
-                        
-                    # DNS / IP check for SSRF
-                    try:
-                        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-                        addr_info = await loop.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
-                        for _, _, _, _, sockaddr in addr_info:
-                            ip_obj = ipaddress.ip_address(sockaddr[0])
-                            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast or ip_obj.is_reserved or ip_obj.is_link_local:
-                                logging.warning(f"SSRF Prevention: Blocked private IP {sockaddr[0]} for {url}")
-                                return []
-                    except Exception as e:
-                        logging.warning(f"DNS resolve failed for {url}: {e}")
-                        return []
-                        
-                    request = client.build_request("GET", url)
-                    response = await client.send(request, stream=True)
-                    
-                    if 300 <= response.status_code < 400:
-                        url_header = response.headers.get("Location")
-                        response.close()
-                        if not url_header:
-                            return []
-                        url = urllib.parse.urljoin(str(request.url), url_header)
-                        redirects += 1
-                        continue
-                        
-                    if response.status_code != 200:
-                        response.close()
-                        return []
-                        
-                    ctype = response.headers.get("Content-Type", "")
-                    if not ctype.startswith("image/"):
-                        response.close()
-                        return []
-                        
-                    clength = response.headers.get("Content-Length")
-                    if clength and int(clength) > self.MAX_IMAGE_BYTES:
-                        response.close()
-                        return []
-                        
-                    chunks = []
-                    downloaded = 0
-                    async for chunk in response.aiter_bytes(8192):
-                        downloaded += len(chunk)
-                        if downloaded > self.MAX_IMAGE_BYTES:
-                            response.close()
-                            return []
-                        chunks.append(chunk)
-                        
-                    response.close()
-                    content = b"".join(chunks)
-                    
-                    arr = np.frombuffer(content, dtype=np.uint8)
-                    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                    if image is not None:
-                        return self._analyze_visual_micro_img(image)
+                response = await safe_get(
+                    client,
+                    image_url,
+                    max_redirects=3,
+                    stream=True,
+                )
+                if response.status_code != 200:
                     return []
-                    
+
+                ctype = response.headers.get("Content-Type", "")
+                if not ctype.startswith("image/"):
+                    return []
+
+                clength = response.headers.get("Content-Length")
+                if clength and int(clength) > self.MAX_IMAGE_BYTES:
+                    return []
+
+                chunks = []
+                downloaded = 0
+                async for chunk in response.aiter_bytes(8192):
+                    downloaded += len(chunk)
+                    if downloaded > self.MAX_IMAGE_BYTES:
+                        return []
+                    chunks.append(chunk)
+
+                content = b"".join(chunks)
+                arr = np.frombuffer(content, dtype=np.uint8)
+                image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if image is not None:
+                    return self._analyze_visual_micro_img(image)
+                return []
+            except UnsafeURLError as exc:
+                logging.warning("SSRF prevention blocked visual URL: %s", exc.reason)
                 return []
             except Exception as exc:
-                logging.warning(f"Visual analysis failed for {image_url}: {exc}")
+                logging.warning("Visual analysis request failed: %s", type(exc).__name__)
                 return []
+            finally:
+                if response is not None:
+                    await response.aclose()
 
         try:
             async with httpx.AsyncClient(

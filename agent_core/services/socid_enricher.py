@@ -78,16 +78,16 @@ async def extract_profile(url: str, client: Optional[httpx.AsyncClient] = None) 
     if not url or not url.startswith("http"):
         return SocidRecord(source_url=url or "", available=False, reason="invalid_url")
 
-    from agent_core.utils.security import is_safe_url
-    if not is_safe_url(url):
-        return SocidRecord(source_url=url, available=False, reason="ssrf_blocked")
+    from agent_core.utils.security import UnsafeURLError, safe_get
 
     try:
         if client is not None:
-            resp = await client.get(url, headers={"User-Agent": USER_AGENT})
+            resp = await safe_get(client, url, headers={"User-Agent": USER_AGENT})
         else:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as own:
-                resp = await own.get(url, headers={"User-Agent": USER_AGENT})
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=False) as own:
+                resp = await safe_get(own, url, headers={"User-Agent": USER_AGENT})
+    except UnsafeURLError:
+        return SocidRecord(source_url=url, available=False, reason="ssrf_blocked")
     except Exception:
         return SocidRecord(source_url=url, available=False, reason="network_error")
 
@@ -108,6 +108,6 @@ async def enrich_urls(urls, limit: int = 3):
     targets = [u for u in (urls or []) if isinstance(u, str)][:limit]
     if not targets:
         return []
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=False) as client:
         records = await asyncio.gather(*(extract_profile(u, client=client) for u in targets))
     return [r for r in records if r.available]

@@ -118,7 +118,9 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
 | `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` | AutonomousVerifier web araması (Tavily/SerpAPI/Exa; yoksa DuckDuckGo yedeği). |
 | `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan `google/gemini-3.7-flash`; VisionAnalyzer ve görselli Aspasia istekleri). |
-| `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. |
+| `PINEAL_ENV` | `development` (varsayılan) veya `production`. Production, `PINEAL_TOKEN` olmadan startup'ta fail-closed durur. Docker varsayılanı production'dır. |
+| `PINEAL_REQUIRE_AUTH` | Development'ta da token zorunluluğunu açar. |
+| `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. WebSocket anahtarı URL yerine ilk auth mesajında taşınır. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
 | `ENABLE_MAIGRET`, `ENABLE_HOLEHE`, `ENABLE_CRAWL4AI` | Deneysel OSINT kapıları — **hepsi default KAPALI**; kapalıyken pipeline davranışı değişmez. Limit/timeout alt değişkenleri `.env.example`'da. |
 | `STEALTH_PROVIDER` | `playwright_stealth` (default) \| `invisible` \| `cloak` \| `none`. invisible/cloak yalnız binary yolu gösterilirse kullanılabilir (indirme yapmaz): `INVISIBLE_BROWSER_BINARY`, `CLOAK_BROWSER_EXECUTABLE`. |

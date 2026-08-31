@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents } from './store';
+  import { API_TOKEN, apiFetch, clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents } from './store';
   import { currentLang, t, type Language } from './i18n';
   import UnifiedCompactPanel from './components/UnifiedCompactPanel.svelte';
 
@@ -14,7 +14,7 @@
 
   async function fetchTelemetry() {
     try {
-      const res = await fetch(`/api/telemetry?client_id=${$clientId}`);
+      const res = await apiFetch(`/api/telemetry?client_id=${$clientId}`);
       if (!res.ok) return;
       telemetryData = await res.json();
     } catch (_e) {
@@ -24,7 +24,7 @@
   
   async function fetchTasks() {
     try {
-      const res = await fetch(`/api/tasks?client_id=${$clientId}`);
+      const res = await apiFetch(`/api/tasks?client_id=${$clientId}`);
       if (!res.ok) return;
       tasksData = await res.json();
     } catch (_e) {
@@ -34,7 +34,7 @@
   
   async function deleteTask(taskId: string) {
     try {
-      await fetch(`/api/tasks/${taskId}?client_id=${$clientId}`, { method: 'DELETE' });
+      await apiFetch(`/api/tasks/${taskId}?client_id=${$clientId}`, { method: 'DELETE' });
       await fetchTasks();
     } catch (_e) {
       /* ignore */
@@ -50,6 +50,7 @@
     ws = new WebSocket(wsUrl($clientId));
 
     ws.onopen = () => {
+      if (API_TOKEN) ws.send(JSON.stringify({ type: 'auth', token: API_TOKEN }));
       logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "UPLINK KURULDU (FastAPI WebSocket)"}]);
     };
 

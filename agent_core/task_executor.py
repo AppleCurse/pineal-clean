@@ -240,17 +240,21 @@ class PinealExecutor:
             return tmp.name
 
         async def fetch_image(c, u):
+            from agent_core.utils.security import safe_get
+
             try:
-                r = await c.get(u, timeout=15)
+                r = await safe_get(c, u, max_redirects=3)
                 r.raise_for_status()
+                if len(r.content) > 8 * 1024 * 1024:
+                    raise ValueError("IMAGE_TOO_LARGE")
                 # Offload synchronous file I/O to a thread to avoid blocking the event loop
                 return await asyncio.to_thread(_write_file, r.content)
             except Exception as e:
-                self._log("WARNING", "Gorsel indirilemedi: " + str(e)[:60])
+                self._log("WARNING", "Gorsel indirilemedi: " + type(e).__name__)
                 return None
 
         # Use a shared httpx.AsyncClient to enable connection pooling
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=15.0) as client:
             results = await asyncio.gather(*(fetch_image(client, u) for u in urls[:2]))
         
         paths = [p for p in results if p is not None]

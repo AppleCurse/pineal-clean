@@ -19,8 +19,9 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 }
 
 export function wsUrl(clientId: string): string {
-  const q = API_TOKEN ? `?token=${encodeURIComponent(API_TOKEN)}` : '';
-  return `${WS_BASE}/ws/${clientId}${q}`;
+  // Secrets never enter URLs or proxy/access logs. The socket authenticates
+  // with its first message instead.
+  return `${WS_BASE}/ws/${clientId}`;
 }
 
 // Benzersiz bir istemci kimliği (session boyunca sabit)
