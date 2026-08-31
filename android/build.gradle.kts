@@ -13,12 +13,21 @@ gradle.buildFinished {
     val causes = generateSequence(problem as Throwable?) { it.cause }
         .mapIndexed { index, cause -> "${index + 1}. ${cause::class.qualifiedName}: ${cause.message}" }
         .joinToString("\n")
-    val escaped = causes
+    val compilerLog = file("app/build/reports/kotlin-compiler-ci.log")
+    val compilerErrors = if (compilerLog.exists()) {
+        compilerLog.readLines()
+            .filter { it.contains(" error:", ignoreCase = true) || it.trimStart().startsWith("e:") }
+            .joinToString("\n")
+    } else {
+        ""
+    }
+    val details = listOf(causes, compilerErrors).filter { it.isNotBlank() }.joinToString("\n")
+    val escaped = details
         .replace("%", "%25")
         .replace("\r", "%0D")
         .replace("\n", "%0A")
     println("::error title=Gradle failure::$escaped")
     System.getenv("GITHUB_STEP_SUMMARY")?.let { summaryPath ->
-        file(summaryPath).appendText("\n## Gradle failure\n\n```text\n$causes\n```\n")
+        file(summaryPath).appendText("\n## Gradle failure\n\n```text\n${details.take(60000)}\n```\n")
     }
 }

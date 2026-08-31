@@ -60,6 +60,23 @@ android {
     }
 }
 
+// Kotlin compiler diagnostics are normally only present in the raw Actions log.
+// Capture them so the root build-failure hook can publish actionable annotations.
+val kotlinCiDiagnostics = layout.buildDirectory.file("reports/kotlin-compiler-ci.log")
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    doFirst {
+        kotlinCiDiagnostics.get().asFile.apply {
+            parentFile.mkdirs()
+            writeText("")
+        }
+    }
+    val listener = org.gradle.api.logging.StandardOutputListener { output ->
+        kotlinCiDiagnostics.get().asFile.appendText(output)
+    }
+    logging.addStandardOutputListener(listener)
+    logging.addStandardErrorListener(listener)
+}
+
 // Keep lint fail-closed while surfacing each concrete error as a GitHub check
 // annotation. This avoids a generic exit-code-only failure on CI.
 val emitLintErrors by tasks.registering {
