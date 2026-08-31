@@ -9,8 +9,10 @@ Kararları `PinealExecutor` + `CognitiveRouter` verir; **Aspasia** karar verici 
 sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
 
 > Bu depo güncel olarak şu yeni bileşenleri içermektedir:
-> `rust_core/` (Rust katmanı — Python ürün çalışma zamanına **bağlanmamış** deneysel kod;
-> CI'da `cargo check` + `cargo test` kapısı vardır, ancak API/pipeline akışında yeri yoktur), 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı), 
+> `rust_core/` (FAZ 9 Karar B: **experimental/optional**, Python ürün çalışma zamanına
+> bağlanmamış kod; CI'da `cargo check` + `cargo test` kapısı vardır, ancak Docker'a
+> paketlenmez, aktivasyon bayrağı yoktur ve hiçbir API/pipeline kararını etkilemez),
+> 6 Forensik Damga Paneli (Snapshot + SearchEngine ayrımı),
 > i18n çift dil desteği (TR/EN) ve yeni OSINTInvestigatorAgent & AuthenticityAuditorAgent zincirleri.
 
 ---
@@ -130,6 +132,17 @@ Deneysel uçlar: `POST /api/experimental/{maigret/scan, holehe/scan, crawl/fetch
 sebep döner; veri ASLA uydurulmaz. Kanıt zinciri ve araç hükümleri: `INTEGRATION_PLAN.md`.
 
 Anahtarlar UI'daki **Kasa (Vault)** panelinden de girilebilir.
+
+### Rust core çalışma zamanı statüsü
+
+FAZ 9'da **Karar B** seçilmiştir: `rust_core/` yalnızca deneysel/optional bir
+repository bileşenidir. Python bağımlılığı değildir, ürün Docker imajına kopyalanmaz,
+çalışma zamanı aktivasyon bayrağı yoktur ve FastAPI → executor → agent zincirinde
+çağrılmaz. `/health` ve `/api/telemetry` bu durumu makine-okunur olarak
+`product_runtime_integrated:false` ve `product_decision_effect:false` alanlarıyla
+raporlar. Rust kodunun CI'da derlenip test edilmesi ürün entegrasyonu kanıtı değildir.
+Bu statü ancak gerçek Python ürün yolu Rust'ı çağırır ve çıktısının ürün kararına
+etkisi cross-stack E2E ile kanıtlanırsa değiştirilebilir.
 
 ## 6. Testler
 ```bash

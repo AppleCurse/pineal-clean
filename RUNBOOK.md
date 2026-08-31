@@ -20,7 +20,7 @@
   Koddaki gerçek zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
   dialogue `solar-pro4 → deepseek-v4-flash` · fast `ling-3.0-flash →
   deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`).
-- Token kipi: `PINEAL_TOKEN=x` (API/WS korunur) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`.
+- Token kipi: `PINEAL_TOKEN=x` (HTTP `X-API-Key`; WS ilk auth mesajı) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`. `PINEAL_ENV=production` tokensız başlatılamaz; Docker varsayılanı production'dır.
 - Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı; env tanımsızsa da 0). Aşılırsa `SpendCapExceeded`.
 
 ## Sık sorunlar
@@ -33,7 +33,7 @@
 | 401 tüm API çağrıları | `PINEAL_TOKEN` tanımlı ama UI/istemci göndermiyor → `VITE_PINEAL_TOKEN` eşle veya token'ı kaldır |
 | Scrape 429/403 (Instagram) | Platform limit/cookie: Kasaya güncel cookie gir |
 | X (Twitter) hedefi | Kazıma devre dışı (B4): `XScraperUnsupportedError`; WS logunda "DESTEKLENMİYOR" görünür, analiz BAŞLATILMAZ — public-web alternatifi için yetki beklenir (`awaiting_authorization`) |
-| WS bağlanmıyor | Token kipinde `?token=` gerekli; port 8000 dışındaysa `VITE_API_BASE` tanımla |
+| WS bağlanmıyor | Token kipinde istemci bağlantıdan sonra ilk JSON mesajında `{type:"auth",token:"..."}` göndermeli; token URL/query'ye yazılmaz. Port 8000 dışındaysa `VITE_API_BASE` tanımla |
 
 ## Görev verisi
 - Liste: `GET /api/tasks?client_id=...`
@@ -46,8 +46,7 @@ pytest -q             # unit+integration+e2e+ws sıra+güvenlik+protokol
                       # güncel sayı: pytest --collect-only -q | tail -1
 cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
-CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest),
-frontend (check + build + dist doğrulama), smoke (uvicorn + curl).
+CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest + coverage), frontend (check + build + dist doğrulama), Rust (`cargo check` + `cargo test`), Android (lint + unit + assemble) ve smoke (uvicorn + curl).
 
 Süitte kalıcı korumalar: `test_no_mock_in_production.py` (production'da mock yasağı,
 AST-bazlı; dedektör canlılık kanıtı içerir), `test_consolidation_faz1_5.py`
@@ -77,6 +76,6 @@ Bu script 360° zincirinin gerçek LLM ile uçtan uca doğrulamasıdır.
 
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
-- Tauri yok (Masaüstü paket istenirse ayrı faz olarak planlanmalı, `rust_core/` CI'da derlenir ama Python ürün yoluna bağlı değildir).
+- **FAZ 9 Karar B:** `rust_core/` experimental/optional'dır. CI'da bağımsız derlenip test edilir; Python ürün yoluna bağlı değildir, Docker'a paketlenmez, aktivasyon bayrağı ve ürün karar etkisi yoktur. `/health` ile `/api/telemetry` bu statüyü raporlar. Tauri masaüstü taslağı release ürünü değildir.
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.
 - X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda ZORUNLU adım: `python -m playwright install chromium` (Docker imajı otomatik kurar).

@@ -32,6 +32,7 @@ from agent_core.services.dependency_health import (
     StartupDependencyError,
     check_startup_dependencies,
 )
+from agent_core.services.runtime_status import rust_core_status
 from agent_core.services.task_lifecycle import TaskLifecycleRegistry
 from agent_core.shadow.shadow_executor import ShadowExecutor
 from agent_core.utils.security import (
@@ -55,6 +56,7 @@ async def lifespan(application: FastAPI):
     try:
         startup_health = check_startup_dependencies()
         startup_health["security"] = security_posture()
+        startup_health["components"] = {"rust_core": rust_core_status()}
         application.state.startup_health = startup_health
     except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()
@@ -70,7 +72,12 @@ async def lifespan(application: FastAPI):
     application.state.rooms.clear()
 
 app = FastAPI(title="PINEAL-HERETIC v2.0 API", lifespan=lifespan)
-app.state.startup_health = {"status": "starting", "error_code": None, "dependencies": []}
+app.state.startup_health = {
+    "status": "starting",
+    "error_code": None,
+    "dependencies": [],
+    "components": {"rust_core": rust_core_status()},
+}
 
 
 @app.get("/health")
@@ -801,6 +808,8 @@ async def api_telemetry(client_id: str):
         "llm_active_reservations": int(budget.get("active_reservations", 0)),
         "telemetry_delivery": _delivery_status(room),
         "task_lifecycle": _lifecycle(room).metrics(),
+        # Phase 9 decision B: visible, tested, and explicitly non-integrated.
+        "rust_core": rust_core_status(),
         # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }

@@ -16,7 +16,7 @@
 | Telemetri | `agent_core/schemas/telemetry.py` + api.py kuyruğu | Pydantic event şemaları → FIFO → WebSocket (Snapshot + SearchEngine ayrımı) |
 | Aspasia | `agent_core/aspasia/aspasia_chief.py` | Gözlemci persona; telemetri özeti + sohbet (karar verici DEĞİL) |
 | Scraper | `agent_core/scraper/instagram_ghost.py` (IG) | Playwright+stealth; Pydantic V2 şema; kanıt yoksa HALT. X (`scraper.py`) **devre dışı** — `XScraperUnsupportedError` (B4) |
-| Rust Core | `rust_core/` | Deneysel: Python ürün yoluna bağlı değil; CI `rust-core` job'u derleyip test eder — ana FastAPI runtime akışında yer almaz |
+| Rust Core | `rust_core/` | **FAZ 9 Karar B — experimental/optional:** Python ürün yoluna bağlı değil, Docker'a paketlenmez ve karar etkisi yoktur; CI `rust-core` job'u yalnız bağımsız derleme/test yapar |
 
 ## Çalışma zamanı zincirleri
 
@@ -50,11 +50,12 @@ UI ──POST /api/aspasia/chat──► room.aspasia.chat(msg, room, model?, im
 ## Alınan mimari kararlar (ADR özeti)
 | Karar | Neden |
 |---|---|
-| **Masaüstü Tauri kapatıldı** | `rust_core/` mevcut ancak Tauri kabuğu ayrı faz olarak planlanmalı |
+| **Rust için Karar B: experimental/optional** | `rust_core/` bağımsız CI kapısına sahiptir; Python ürün bağımlılığı, aktivasyon bayrağı, Docker paketi veya API/pipeline karar etkisi yoktur. Rust CI PASS, ürün entegrasyonu sayılmaz |
+| **Masaüstü Tauri ürün dışında** | Kaynak taslağı mevcut olsa da Tauri kabuğu build/release/runtime ürün grafiğinde değildir; ayrı faz ve E2E olmadan ürün özelliği sayılamaz |
 | **Görev verisi için SQLite yok** | Kanıt belleği JSON dosyasıdır (`memory/<task_id>.json`); SQLite yalnızca LLM yanıt önbelleğinde (`cache/responses.db`) ve opsiyonel hindsight anlamsal indeksinde kullanılır |
 | **LIVE_LLM_E2E kapısı** | Anahtarsız/halüsinasyonlu koşular kodda reddedilir (bilinçli tasarım) |
 | **D5: deneysel API'ler** | shadow/chat/interpreter → `/api/experimental/*` (UI çağrıcısı yok) |
 | **Otomatik mesaj gönderimi yok** | Sistem hiçbir platforma mesaj göndermez; deterministik shadow analizi (dark-triad + NLP dizisi) pipeline'da forensik damga olarak kaydedilir; mesaj/kontra-hamle üretim araçları yalnız `/api/experimental/*` altında kullanıcı çağrısıyla çalışır |
 
 ## Güvenlik yüzeyi
-`PINEAL_TOKEN` (X-API-Key / ?token=) · CORS localhost kümesi · rate limit (initiate 5/dk, aspasia 20/dk) · hata modeli: uygulama hataları `{error:{code,message}}`, şema doğrulama (422) standart FastAPI `{detail:[...]}` · sırlar yalnız gateway belleğinde (log yasağı testli) · retention: `DELETE /api/tasks/{id}`
+`PINEAL_ENV=production` için zorunlu `PINEAL_TOKEN` (HTTP `X-API-Key`; WebSocket ilk auth mesajı, URL'de sır yok) · CORS localhost kümesi · rate limit (initiate 5/dk, aspasia 20/dk, experimental 10/dk) · hata modeli: uygulama hataları `{error:{code,message}}`, şema doğrulama (422) standart FastAPI `{detail:[...]}` · DNS-pinned SSRF/redirect koruması · sırlar yalnız gateway belleğinde (log/event/yanıt redaction testli) · containment kontrollü retention: `DELETE /api/tasks/{id}`
