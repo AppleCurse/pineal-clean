@@ -71,7 +71,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
         }
     }
     val listener = org.gradle.api.logging.StandardOutputListener { output ->
-        kotlinCiDiagnostics.get().asFile.appendText(output)
+        kotlinCiDiagnostics.get().asFile.appendText(output.toString())
     }
     logging.addStandardOutputListener(listener)
     logging.addStandardErrorListener(listener)
