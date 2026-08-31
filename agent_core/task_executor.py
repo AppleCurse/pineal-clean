@@ -51,6 +51,7 @@ except ImportError:
     from config_loader import DecisionConfig
 
 try:
+    from agent_core.services.llm_gateway import agent_call_ids
     from agent_core.domain.memory_models import (
         TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
     )
@@ -124,31 +125,23 @@ class PinealExecutor:
     # rozeti gösterilemez; "kaynak belirsiz" olarak işaretlenir.
     _DETERMINISTIC_AGENTS = frozenset({"resonance_calc"})
 
-    def _provenance_for(self, agent_name: str, result) -> Dict[str, Any]:
-        """P2-9 PROVENANCE: ajan çıktısının kökeni.
-
-        "Bu bilgi gerçek gözlemden mi, model tahmininden mi, yoksa
-        fallback'ten mi geliyor?" sorusunun makine-okunur cevabı.
-        UI bu damgayı rozet olarak gösterir; damgasız çıktı kanıt
-        sayılmaz.
-        """
-        data_conf = getattr(result, "data_confidence", True)
-        fallback = getattr(result, "fallback_reason", None)
-        if data_conf is False or fallback:
-            return {
-                "source": "fallback",
-                "fallback_reason": fallback or "low_confidence",
-                "model": None,
-            }
+    def _provenance_for(self, agent_name: str, result, call_ids: list[str] = None) -> Dict[str, Any]:
+        """Extract provenance tracking info."""
         if agent_name in self._DETERMINISTIC_AGENTS:
             return {"source": "deterministic", "fallback_reason": None, "model": None}
-        meta = getattr(self.llm_gateway, "last_call_meta", None) or {}
-        if meta.get("model"):
-            return {
-                "source": "llm_cache" if meta.get("cached") else "llm",
-                "fallback_reason": None,
-                "model": meta.get("model"),
-            }
+            
+        if call_ids:
+            # find last successful call in gateway's log matching these call_ids
+            # call_log might be limited to 500, so we check from the end
+            if hasattr(self.llm_gateway, "call_log"):
+                for record in reversed(self.llm_gateway.call_log):
+                    if getattr(record, "call_id", None) in call_ids:
+                        return {
+                            "source": "llm_cache" if getattr(record, "cache_hit", False) else "llm",
+                            "fallback_reason": None,
+                            "model": getattr(record, "model", None),
+                        }
+
         # LLM izi yok ve deterministik listede değil -> dürüstçe belirsiz.
         return {"source": "unknown", "fallback_reason": "no_llm_trace", "model": None}
 
@@ -457,10 +450,14 @@ class PinealExecutor:
                 try:
                     agent = self.agents[agent_name]
                     llm_log_start = len(self.llm_gateway.call_log) if hasattr(self.llm_gateway, "call_log") else 0
+                    token = agent_call_ids.set([])
                     try:
                         result = await agent.execute(input_data, self.memory, self.llm_gateway)
                     except TypeError:
                         result = await agent.execute(input_data)
+                    finally:
+                        run.call_ids = agent_call_ids.get()
+                        agent_call_ids.reset(token)
                     if not isinstance(result, BaseModel):
                         raise TypeError(agent_name + " gecersiz cikti: " + str(type(result)))
                 except InsufficientEvidenceError:
@@ -566,7 +563,7 @@ class PinealExecutor:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                run.output_summary["_provenance"] = self._provenance_for(agent_name, result)
+                run.output_summary["_provenance"] = self._provenance_for(agent_name, result, run.call_ids)
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
@@ -704,7 +701,7 @@ class PinealExecutor:
                 run.status = "completed"
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
-                run.output_summary["_provenance"] = self._provenance_for(agent_name, result)
+                run.output_summary["_provenance"] = self._provenance_for(agent_name, result, run.call_ids)
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
@@ -746,9 +743,14 @@ class PinealExecutor:
             # --- P1 + P7 + P8 DERİNLİK VE GERÇEKLİK ANALİZİ (QuoteGuard Korumalı) ---
             try:
                 depth_agent = self.agents.get("depth_analyst") or DepthAnalyst(self.llm_gateway)
-                depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
+                token = agent_call_ids.set([])
+                try:
+                    depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
+                finally:
+                    depth_calls = agent_call_ids.get()
+                    agent_call_ids.reset(token)
                 status.depth_report = depth_rep.model_dump()
-                status.depth_report["_provenance"] = self._provenance_for("depth_analyst", depth_rep)
+                status.depth_report["_provenance"] = self._provenance_for("depth_analyst", depth_rep, depth_calls)
                 q_stats = depth_rep.quote_guard or {}
                 kept = q_stats.get("kept", len(depth_rep.reality_findings))
                 checked = q_stats.get("checked", kept + q_stats.get("dropped_fake_quote", 0))
@@ -764,9 +766,14 @@ class PinealExecutor:
             # durumlarını da status.agent_runs'a kaydediyoruz ki DecisionEngine
             # onları görsün ve sessizce "COMPLETED" damgalanmasınlar.
             try:
-                shadow_result = await self.agents["shadow_executor"].execute(input_data)
+                token = agent_call_ids.set([])
+                try:
+                    shadow_result = await self.agents["shadow_executor"].execute(input_data)
+                finally:
+                    shadow_calls = agent_call_ids.get()
+                    agent_call_ids.reset(token)
                 status.shadow_profile = shadow_result.model_dump()
-                status.shadow_profile["_provenance"] = self._provenance_for("shadow_executor", shadow_result)
+                status.shadow_profile["_provenance"] = self._provenance_for("shadow_executor", shadow_result, shadow_calls)
                 _shadow_summary = shadow_result.model_dump() if hasattr(shadow_result, "model_dump") else {}
                 _shadow_summary["_provenance"] = status.shadow_profile["_provenance"]
                 status.agent_runs["shadow_executor"] = AgentRun(
@@ -793,9 +800,14 @@ class PinealExecutor:
                 self._log("WARNING", f"[{task_id}] Gölge forensiği atlandı: {e}")
 
             try:
-                osint_result = await self.agents["osint_investigator"].execute(input_data)
+                token = agent_call_ids.set([])
+                try:
+                    osint_result = await self.agents["osint_investigator"].execute(input_data)
+                finally:
+                    osint_calls = agent_call_ids.get()
+                    agent_call_ids.reset(token)
                 status.osint_footprint = osint_result.model_dump() if hasattr(osint_result, "model_dump") else osint_result
-                status.osint_footprint["_provenance"] = self._provenance_for("osint_investigator", osint_result)
+                status.osint_footprint["_provenance"] = self._provenance_for("osint_investigator", osint_result, osint_calls)
                 data_conf = getattr(osint_result, "data_confidence", True)
                 fallback = getattr(osint_result, "fallback_reason", None)
                 status.agent_runs["osint_investigator"] = AgentRun(

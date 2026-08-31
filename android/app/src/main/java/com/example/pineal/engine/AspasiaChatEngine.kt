@@ -34,9 +34,6 @@ class AspasiaChatEngine {
             Bilişsel Ton (Cognitive): ${it.cognitive.communicationTone}
 
             -- KARANLIK PROFİL (SHADOW) --
-            Narsisizm Eğilimi: ${it.shadowProfile.darkProfile.narcissism.level}
-            
-            -- KARANLIK PROFİL (SHADOW) --
             Narsisizm Eğilimi: ${it.shadowProfile.darkProfile.narcissism.level} 
             Narsisizm Kanıtı: ${it.shadowProfile.darkProfile.narcissism.semanticEvidence}
             Makyavelizm Eğilimi: ${it.shadowProfile.darkProfile.machiavellianism.level}
@@ -48,18 +45,12 @@ class AspasiaChatEngine {
             -- İLETİŞİM KÖPRÜSÜ (AUTHENTIC BRIDGE) --
             Önerilen İlk Giriş (Kanca): ${it.bridge?.suggestedOpeningMessage ?: ""}
             Taktiksel Açıklama: ${it.bridge?.conversationStarterRationale ?: ""}
-
-            
-            -- İLETİŞİM KÖPRÜSÜ (AUTHENTIC BRIDGE) --
-            Önerilen İlk Giriş (Kanca): ${it.bridge?.suggestedOpeningMessage ?: ""}
-            Taktiksel Açıklama: ${it.bridge?.conversationStarterRationale ?: ""}
             
             -- CANLI SENTEZ AĞI (COGNITIVE HYPOTHESES) --
             $hypothesesStr
             """.trimIndent()
         } ?: """
             Şu an aktif bir profil analiz edilmedi.
-            Şu an aktif bir profil analiz edilmedi. 
             -- CANLI SENTEZ AĞI (COGNITIVE HYPOTHESES) --
             $hypothesesStr
         """.trimIndent()

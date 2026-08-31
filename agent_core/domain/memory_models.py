@@ -13,6 +13,7 @@ class AgentRun(BaseModel):
     output_summary: Dict[str, Any] = {}
     confidence: Optional[float] = None
     evidence_ids: List[str] = []
+    call_ids: List[str] = []
     warnings: List[str] = []
     error_code: Optional[str] = None
     error_message: Optional[str] = None

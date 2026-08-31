@@ -7,8 +7,27 @@ from typing import Type, TypeVar, Any, Optional, List
 
 from agent_core.services.response_cache import build_cache_from_env
 
+import uuid
+import contextvars
+from dataclasses import dataclass
+
 T = TypeVar('T', bound=BaseModel)
 
+agent_call_ids: contextvars.ContextVar[List[str]] = contextvars.ContextVar("agent_call_ids", default=None)
+
+@dataclass(frozen=True)
+class LLMCallRecord:
+    call_id: str
+    kind: str
+    model: str
+    provider: str
+    cache_hit: bool
+    attempts: int
+    duration_ms: int
+    prompt_tokens: Optional[int]
+    completion_tokens: Optional[int]
+    error: Optional[str]
+    at: str
 
 class SpendCapExceeded(RuntimeError):
     """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
@@ -98,11 +117,7 @@ class LLMGateway:
         self.unpriced_calls = 0
         # Gözlemlenebilirlik: her LLM çağrısının model/provider/deneme
         # kaydı. Evidence chain'e ajan bazında yazılır (task_executor).
-        self.call_log: List[dict] = []
-        # P2-9 PROVENANCE: son başarılı çağrının modeli. Executor bunu
-        # AgentRun.output_summary["_provenance"] içine damgalar; UI bu
-        # damga olmadan "gerçek LLM çıktısı" rozeti gösteremez.
-        self.last_call_meta: dict = {}
+        self.call_log: List[LLMCallRecord] = []
         self._rebuild()
         self.cache = build_cache_from_env()
 
@@ -120,21 +135,28 @@ class LLMGateway:
         error: Optional[str] = None,
     ) -> None:
         """Append an auditable record of a single LLM interaction."""
-        self.call_log.append({
-            "kind": kind,
-            "model": model,
-            "provider": provider,
-            "cache_hit": cache_hit,
-            "attempts": attempts,
-            "duration_ms": duration_ms,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "error": error,
-            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        })
+        call_id = str(uuid.uuid4())
+        record = LLMCallRecord(
+            call_id=call_id,
+            kind=kind,
+            model=model,
+            provider=provider,
+            cache_hit=cache_hit,
+            attempts=attempts,
+            duration_ms=duration_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            error=error,
+            at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+        self.call_log.append(record)
         # Sınırsız büyümesin; kanıt zinciri zaten slice ile alır.
         if len(self.call_log) > 500:
             del self.call_log[: len(self.call_log) - 500]
+            
+        c_list = agent_call_ids.get()
+        if c_list is not None:
+            c_list.append(call_id)
 
     @staticmethod
     def _env_float(name: str, default: float) -> float:
@@ -337,7 +359,6 @@ class LLMGateway:
             cached = self.cache.get(cache_key)
             if cached is not None:
                 self._log_call("query", selected_model, "cache", cache_hit=True)
-                self.last_call_meta = {"model": selected_model, "cached": True, "provider": "cache"}
                 return cached
 
         # [017] fix: ücretli çağrı öncesi fiyat guard'ı. Cache hit ücretsizdir;
@@ -371,11 +392,6 @@ class LLMGateway:
                 content = r.choices[0].message.content
                 if cache_key and content:
                     self.cache.put(cache_key, content)
-                self.last_call_meta = {
-                    "model": selected_model,
-                    "cached": False,
-                    "provider": "local" if is_local_request else "openrouter",
-                }
                 self._log_call(
                     "query", selected_model,
                     "local" if is_local_request else "openrouter",
