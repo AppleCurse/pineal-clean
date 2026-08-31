@@ -50,14 +50,6 @@ class ForensicReconEngine {
             Sen profesyonel bir Bilişsel Dilbilim (Cognitive Linguistics) ve Davranışsal Sentez motorusun.
             GÖREVİN: Kullanıcının verdiği kırıntı verileri (ham metin, ritüel, kelime seçimi) inceleyerek psikolojik hipotezler kurmak.
 
-        
-        val currentHypotheses = _liveReconState.value
-        val currentJsonStr = if (currentHypotheses.isEmpty()) "Henüz hipotez yok (İlk Sonar)" else jsonParser.encodeToString(currentHypotheses)
-        
-        val prompt = """
-            Sen profesyonel bir Bilişsel Dilbilim (Cognitive Linguistics) ve Davranışsal Sentez motorusun.
-            GÖREVİN: Kullanıcının verdiği kırıntı verileri (ham metin, ritüel, kelime seçimi) inceleyerek psikolojik hipotezler kurmak.
-            
             KATI KURALLAR (İHLAL EDİLEMEZ):
             1. Asla matematiksel skor, yüzde, olasılık veya istatistik ÜRETME (Örn: 0.82 veya %76 gibi ifadeler KESİNLİKLE YASAK). Tahmin yapmıyoruz, objektif sentez yapıyoruz.
             2. Her hipoteze KATI BİR DURUM ETİKETİ (status) ata. Bu etiketler SADECE şu üçünden biri olabilir:
@@ -71,11 +63,6 @@ class ForensicReconEngine {
             Yeni Gelen Bağlamsal Veri [$contextType]: "$rawEvidence"
 
             Gelen veriyi Bilişsel Dilbilim çerçevesinde incele. Önceki hipotezleri güçlendir, çürüt, durumlarını güncelle (SONAR_ATILDI -> KANITLANDI vb.) veya yenilerini ekle.
-            
-            Mevcut Keşif Haritası (Hipotezler): $currentJsonStr
-            Yeni Gelen Bağlamsal Veri [$contextType]: "$rawEvidence"
-            
-            Gelen veriyi Bilişsel Dilbilim çerçevesinde incele. Önceki hipotezleri güçlendir, çürüt, durumlarını güncelle (SONAR_ATILDI -> KANITLANDI vb.) veya yenilerini ekle. 
             Çıktı SADECE geçerli bir ReconUpdateResponse formatında JSON olmalıdır. Markdown (```json) KULLANMA.
         """.trimIndent()
 
@@ -92,17 +79,12 @@ class ForensicReconEngine {
             val apiResponse = RetrofitClient.service.generateContentPro(apiKey, request)
             var responseText = apiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: throw IllegalStateException("Sentez ağı boş yanıt döndürdü.")
 
-            
-            val apiResponse = RetrofitClient.service.generateContentPro(apiKey, request)
-            var responseText = apiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: throw IllegalStateException("Sentez ağı boş yanıt döndürdü.")
-            
             responseText = responseText.trim()
             if (responseText.startsWith("```json")) responseText = responseText.removePrefix("```json")
             if (responseText.startsWith("```")) responseText = responseText.removePrefix("```")
             if (responseText.endsWith("```")) responseText = responseText.removeSuffix("```")
             responseText = responseText.trim()
 
-            
             val reconUpdate = jsonParser.decodeFromString<ReconUpdateResponse>(responseText)
             val normalizedHypotheses = reconUpdate.updatedHypotheses.map { h ->
                 h.copy(status = h.status.trim().uppercase()
@@ -112,7 +94,6 @@ class ForensicReconEngine {
             }
             _liveReconState.update { normalizedHypotheses }
 
-            
         } catch (e: Exception) {
             _errorState.value = "Keşif Motoru Hatası: ${e.message}"
         }
@@ -127,7 +108,6 @@ class ForensicReconEngine {
         _errorState.value = null
     }
 
-    
     fun setReconState(hypotheses: List<ForensicHypothesis>) {
         _liveReconState.value = hypotheses
     }

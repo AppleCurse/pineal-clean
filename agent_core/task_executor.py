@@ -27,7 +27,7 @@ try:
     from agent_core.agents.depth_analyst import DepthAnalyst
     from agent_core.shadow.shadow_executor import ShadowExecutor
     from agent_core.config_loader import DecisionConfig
-except Exception:
+except ImportError:
     from services.cognitive_router import CognitiveRouter, RoutePlan
     from services.hindsight_memory import build_memory_from_env
     from services.uncertainty_engine import UncertaintyEngine
@@ -54,7 +54,7 @@ try:
     from agent_core.domain.memory_models import (
         TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
     )
-except Exception:
+except ImportError:
     from domain.memory_models import (
         TaskSnapshot, AgentRun, HolisticProfile, PassionProfile, FrictionProfile, CognitiveStyle, AuthenticBridge
     )
@@ -70,7 +70,7 @@ class TaskStatus(TaskSnapshot):
 
 try:
     from agent_core.services.vision_analyzer import VisionAnalyzer
-except Exception:
+except ImportError:
     from services.vision_analyzer import VisionAnalyzer
 
 class PinealExecutor:

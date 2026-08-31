@@ -28,8 +28,6 @@ import androidx.compose.material.icons.Icons
     ) {
         val operationalFindings = hypotheses.filter {
             it.status == ReconConfidence.KANITLANDI.name || it.status == ReconConfidence.KRITIK_FIRSAT.name
-        val operationalFindings = hypotheses.filter { 
-            it.status == ReconConfidence.KANITLANDI.name || it.status == ReconConfidence.KRITIK_FIRSAT.name 
         }
 
         Card(
@@ -60,7 +58,6 @@ import androidx.compose.material.icons.Icons
                                     Yaratıcılık: ${profile.cognitive.metrics.creativity}
                                     Liderlik: ${profile.cognitive.metrics.leadership}
 
-                                    
                                     Motivasyonlar: ${profile.passions.corePassions.joinToString()}
                                     Tavsiye: ${profile.bridge?.conversationStarterRationale}
                                     """.trimIndent()
@@ -81,7 +78,6 @@ import androidx.compose.material.icons.Icons
                     letterSpacing = 0.5.sp
                 )
 
-                
                 Spacer(modifier = Modifier.height(16.dp))
                 if (profile != null) {
                     val m = profile.cognitive.metrics
@@ -101,7 +97,6 @@ import androidx.compose.material.icons.Icons
                 }
 
 
-                
                 if (operationalFindings.isEmpty()) {
                     Text(
                         text = "Henüz derinlemesine bir motivasyon belirlenmedi. Daha fazla veri akışı bekleniyor.",
@@ -118,8 +113,6 @@ import androidx.compose.material.icons.Icons
                                     .border(
                                         1.dp,
                                         if (isCritical) BloodRed.copy(alpha=0.4f) else MatrixGreenDim,
-                                        1.dp, 
-                                        if (isCritical) BloodRed.copy(alpha=0.4f) else MatrixGreenDim, 
                                         RoundedCornerShape(16.dp)
                                     ),
                                 shape = RoundedCornerShape(16.dp),
@@ -128,7 +121,6 @@ import androidx.compose.material.icons.Icons
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Row(
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        horizontalArrangement = Arrangement.SpaceBetween, 
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(

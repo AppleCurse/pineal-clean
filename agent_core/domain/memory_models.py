@@ -87,7 +87,7 @@ class HolisticProfile(BaseModel):
 
 try:
     from agent_core.domain.pipeline_status import PipelineStatus
-except Exception:
+except ImportError:
     from domain.pipeline_status import PipelineStatus
 
 class TaskSnapshot(BaseModel):

@@ -1,6 +1,6 @@
 # PINEAL-CLEAN — MEVCUT DURUM RAPORU
 **Tarih:** 2026-08-30 · **Yöntem:** Kod ağacı yeniden, tek tek okunarak hazırlandı (commit geçmişine ve önceki belgelere dayanmadan). Her bölümün karşılığı koddadır; yalnızca okunanda yazılmıştır.
-**Durum:** 450/450 test geçer · ruff temiz · backend CI yeşil · çalışma ağacı temiz.
+**Durum:** Son bağımsız koşu: 452 passed, 2 skipped; ruff ve hosted Android CI henüz bağımsız doğrulanmadı.
 
 ---
 
@@ -156,7 +156,7 @@ Hız-katmanı denemesi: ajan portları (`mirror_truth`, `resonance_calculator`, 
 - `live_llm_gate.py`: **gerçek** LLM anahtarıyla hakemli uçtan uca doğrulama (sahte çağrı reddedilir)
 - `scripts/benchmark_download.py`: indirme kıyaslaması
 
-**Testler:** 92 test dosyası / **453 test** — birim + entegrasyon + e2e + WS sıra/güvenlik/protokol. Kalıcı korumalar: production'da mock yasağı (AST-bazlı), default-kapı sözleşmesi (tüm deneysel uçlar kapalıyken `disabled` der), beyan→kurulu kütüphane zinciri, ölü-dosya yasağı, psutil çalışma-zamanı sözleşmesi.
+**Testler:** Yerel keşif bu checkoutta 454 test topluyor; son koşu 452 passed, 2 skipped — birim + entegrasyon + e2e + WS sıra/güvenlik/protokol. Kalıcı korumalar: production'da mock yasağı (AST-bazlı), default-kapı sözleşmesi (tüm deneysel uçlar kapalıyken `disabled` der), beyan→kurulu kütüphane zinciri, ölü-dosya yasağı, psutil çalışma-zamanı sözleşmesi.
 
 **Yapılandırma:** tüm env örnekleri `.env.example`'da (LLM, arama anahtarları, bellek, güvenlik, OSINT kapıları, stealth). Kurulum: Windows `baslat.bat` · Docker `docker compose up --build` · Manuel `pip install -r requirements.txt && pip install -r requirements-osint.txt` (ikinci adım: crawl4ai; psutil meta-çatışması nedeniyle iki dosya) + `python -m playwright install chromium`.
 

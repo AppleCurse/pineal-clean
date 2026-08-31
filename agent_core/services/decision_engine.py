@@ -6,7 +6,7 @@ try:
     from agent_core.domain.pipeline_status import PipelineStatus
     from agent_core.domain.memory_models import AgentRun
     from agent_core.services.uncertainty_engine import UncertaintyEngine
-except Exception:
+except ImportError:
     from config_loader import DecisionConfig
     from domain.pipeline_status import PipelineStatus
     from domain.memory_models import AgentRun

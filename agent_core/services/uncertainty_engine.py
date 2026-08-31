@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 try:
     from agent_core.config_loader import DecisionConfig
-except Exception:
+except ImportError:
     from config_loader import DecisionConfig
 
 

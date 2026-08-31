@@ -28,7 +28,7 @@ if sys.platform == 'win32':
 
 try:
     from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
-except Exception:
+except ImportError:
     from task_executor import PinealExecutor, InsufficientEvidenceError
 
 try:
