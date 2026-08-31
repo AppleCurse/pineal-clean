@@ -15,6 +15,7 @@ class AgentEventType(str, Enum):
     ErrorHalt = "ErrorHalt"
     AwaitingHuman = "AwaitingHuman"
     TaskCompleted = "TaskCompleted"
+    TaskCancelled = "TaskCancelled"
     FrequencyUpdate = "FrequencyUpdate"
     GenericLog = "GenericLog"
 
@@ -57,6 +58,14 @@ class TaskCompletedEvent(BaseAgentEvent):
     final_result_hash: str
     duration_ms: int
 
+
+class TaskCancelledEvent(BaseAgentEvent):
+    event_type: AgentEventType = AgentEventType.TaskCancelled
+    task_id: str
+    agent_name: str
+    reason: str
+
+
 class FrequencyUpdateEvent(BaseAgentEvent):
     event_type: AgentEventType = AgentEventType.FrequencyUpdate
     task_id: str
@@ -66,6 +75,7 @@ class FrequencyUpdateEvent(BaseAgentEvent):
 
 class GenericLogEvent(BaseAgentEvent):
     event_type: AgentEventType = AgentEventType.GenericLog
+    task_id: str
     message: str
     level: str = "INFO"
 
@@ -75,11 +85,18 @@ AgentEvent = Union[
     ErrorHaltEvent,
     AwaitingHumanEvent,
     TaskCompletedEvent,
+    TaskCancelledEvent,
     FrequencyUpdateEvent,
     GenericLogEvent
 ]
 
 class TelemetryEvent(BaseModel):
+    task_id: str
+    run_id: str
+    sequence: int = Field(ge=1)
+    event_type: AgentEventType
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event: AgentEvent
     correlation_id: Optional[str] = None
+    delivery_state: str = "NORMAL"
+    dropped_event_count: int = Field(default=0, ge=0)

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from backend.api import app
 
 
-def _collect_for_client(client: TestClient, client_id: str) -> list:
+def _collect_for_client(client: TestClient, client_id: str) -> tuple[list, list]:
     with client.websocket_connect(f"/ws/{client_id}") as ws:
         r = client.post("/api/initiate", json={
             "client_id": client_id,
@@ -27,18 +27,21 @@ def _collect_for_client(client: TestClient, client_id: str) -> list:
         assert r.status_code == 200
 
         types = []
+        events = []
         for _ in range(100):
             m = ws.receive_json()
             t = m.get("type") or (m.get("event") or {}).get("event_type")
             types.append(t)
+            if m.get("event"):
+                events.append(m)
             if t == "result":
                 break
-        return types
+        return types, events
 
 
 def test_events_arrive_in_order_and_result_is_last():
     with TestClient(app) as client:
-        types = _collect_for_client(client, f"wsorder_{uuid.uuid4().hex[:8]}")
+        types, events = _collect_for_client(client, f"wsorder_{uuid.uuid4().hex[:8]}")
 
         assert "result" in types, "görev bitti ama result iletilmedi"
         assert types[-1] == "result", f"result son mesaj olmalı, gelen: {types}"
@@ -50,14 +53,23 @@ def test_events_arrive_in_order_and_result_is_last():
         # Snapshot akışı da sıralı olmalı
         assert "snapshot_update" in types
 
+        # Her event immutable run kimliği ve gap'siz monoton sıra taşır.
+        assert events
+        assert len({event["run_id"] for event in events}) == 1
+        assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+        assert all(event["task_id"] for event in events)
+        assert all(event["event_type"] == event["event"]["event_type"] for event in events)
+        assert all(event["timestamp"] for event in events)
+
 
 def test_events_arrive_deterministically_across_runs():
     """Ardışık 2 koşu: her seferinde aynı sözleşme (yarış yok)."""
     with TestClient(app) as client:
         for i in range(2):
-            types = _collect_for_client(client, f"wsdet_{i}_{uuid.uuid4().hex[:8]}")
+            types, events = _collect_for_client(client, f"wsdet_{i}_{uuid.uuid4().hex[:8]}")
             assert types[-1] == "result"
             assert "TaskStarted" in types
+            assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
 
 # --- HERMETIC TEST GUARD: blocks live LLM calls (money + consistency) ---
 import pytest as _pytest

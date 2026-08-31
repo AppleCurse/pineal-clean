@@ -32,6 +32,7 @@ from agent_core.services.dependency_health import (
     StartupDependencyError,
     check_startup_dependencies,
 )
+from agent_core.services.task_lifecycle import TaskLifecycleRegistry
 from agent_core.shadow.shadow_executor import ShadowExecutor
 from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
 
@@ -225,6 +226,13 @@ def get_room(client_id: str) -> dict:
             "aspasia": AspasiaChief(llm_gateway=executor.llm_gateway) if AspasiaChief else None,
             "queue": asyncio.Queue(maxsize=2000),
             "sender_task": None,
+            "lifecycle": TaskLifecycleRegistry(),
+            "telemetry_delivery": {
+                "state": "NORMAL",
+                "dropped_messages_total": 0,
+                "dropped_event_count": 0,
+                "dropped_by_kind": {},
+            },
         }
         # FIFO gonderici: tum log/event/snapshot/result mesajlari sirayla iletilir.
         try:
@@ -270,6 +278,35 @@ async def _room_sender(room: dict):
         except Exception as e:  # gonderici task asla olmemeli
             print(f"[room_sender] hata: {type(e).__name__}: {e}")
 
+def _lifecycle(room: dict) -> TaskLifecycleRegistry:
+    return room.setdefault("lifecycle", TaskLifecycleRegistry())
+
+
+def _delivery_status(room: dict) -> dict:
+    delivery = room.setdefault("telemetry_delivery", {
+        "state": "NORMAL",
+        "dropped_messages_total": 0,
+        "dropped_event_count": 0,
+        "dropped_by_kind": {},
+    })
+    return {
+        "state": delivery["state"],
+        "dropped_messages_total": delivery["dropped_messages_total"],
+        "dropped_event_count": delivery["dropped_event_count"],
+        "dropped_by_kind": dict(delivery["dropped_by_kind"]),
+    }
+
+
+def _record_queue_drop(room: dict, kind: str) -> None:
+    _delivery_status(room)
+    delivery = room["telemetry_delivery"]
+    delivery["state"] = "DEGRADED_QUEUE_OVERFLOW"
+    delivery["dropped_messages_total"] += 1
+    delivery["dropped_by_kind"][kind] = delivery["dropped_by_kind"].get(kind, 0) + 1
+    if kind == "event":
+        delivery["dropped_event_count"] += 1
+
+
 def _enqueue(client_id: str, item: tuple):
     if client_id in app.state.rooms:
         room = app.state.rooms[client_id]
@@ -278,16 +315,15 @@ def _enqueue(client_id: str, item: tuple):
             q.put_nowait(item)
         except asyncio.QueueFull:
             try:
-                q.get_nowait()  # Drop oldest
-                if "dropped_events" not in room:
-                    room["dropped_events"] = 0
-                room["dropped_events"] += 1
+                dropped_kind, _ = q.get_nowait()  # Explicit drop-oldest policy.
+                _record_queue_drop(room, dropped_kind)
             except asyncio.QueueEmpty:
                 pass
             try:
                 q.put_nowait(item)
             except asyncio.QueueFull:
-                pass
+                # Defensive accounting if another producer fills the slot.
+                _record_queue_drop(room, item[0])
 
 async def _send_ws(room: dict, payload: str):
     ws_set = room["websockets"]
@@ -311,15 +347,25 @@ def broadcast_log(client_id: str, level: str, msg: str):
 def sync_log(client_id: str, level: str, msg: str):
     broadcast_log(client_id, level, msg)
 
-async def _send_event(room: dict, event: Any):
-    from agent_core.schemas.telemetry import TelemetryEvent
-    telemetry = TelemetryEvent(event=event)
-    if "events" not in room: room["events"] = []
+async def _send_event(room: dict, telemetry: Any):
+    delivery = _delivery_status(room)
+    telemetry = telemetry.model_copy(update={
+        "delivery_state": delivery["state"],
+        "dropped_event_count": delivery["dropped_event_count"],
+    })
+    if "events" not in room:
+        room["events"] = []
     room["events"].append(telemetry)
     await _send_ws(room, telemetry.model_dump_json())
 
+
 def broadcast_event(client_id: str, event: Any):
-    _enqueue(client_id, ("event", event))
+    room = app.state.rooms.get(client_id)
+    if room is None:
+        return
+    decision = _lifecycle(room).record_event(event)
+    if decision.accepted:
+        _enqueue(client_id, ("event", decision.envelope))
 
 def sync_event(client_id: str, event: Any):
     broadcast_event(client_id, event)
@@ -331,6 +377,10 @@ async def _send_snapshot(room: dict, snapshot: Any):
         if hasattr(val, "model_dump"):
             return val.model_dump(mode="json")
         return val
+
+    snapshot_telemetry = dict(getattr(snapshot, "telemetry", None) or {})
+    snapshot_telemetry["delivery"] = _delivery_status(room)
+    snapshot_telemetry["lifecycle"] = _lifecycle(room).metrics()
 
     payload = json.dumps({
         "type": "snapshot_update",
@@ -348,7 +398,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
         "visual_evidence": _dump_field(getattr(snapshot, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(snapshot, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(snapshot, "osint_footprint", None)),
-        "telemetry": getattr(snapshot, "telemetry", None),
+        "telemetry": snapshot_telemetry,
         "runs": {
             name: {
                 "status": getattr(r, "status", None),
@@ -366,7 +416,12 @@ async def _send_snapshot(room: dict, snapshot: Any):
     await _send_ws(room, payload)
 
 def broadcast_snapshot(client_id: str, snapshot: Any):
-    _enqueue(client_id, ("snapshot", snapshot))
+    room = app.state.rooms.get(client_id)
+    if room is None:
+        return
+    decision = _lifecycle(room).accept_snapshot(snapshot)
+    if decision.accepted:
+        _enqueue(client_id, ("snapshot", snapshot))
 
 def sync_snapshot(client_id: str, snapshot: Any):
     broadcast_snapshot(client_id, snapshot)
@@ -533,6 +588,13 @@ async def _send_result_error(room: dict, data: dict):
     await _send_ws(room, json.dumps(data))
 
 def broadcast_result(client_id, res):
+    room = app.state.rooms.get(client_id)
+    if room is None:
+        return
+    decision = _lifecycle(room).transition(res.task_id, res.status)
+    if not decision.accepted:
+        return
+
     def find(chain, name):
         for e in chain:
             if e["agent"] == name:
@@ -575,6 +637,10 @@ def broadcast_result(client_id, res):
     }))
 
 async def _send_result(room: dict, data: dict):
+    result_telemetry = dict(data.get("telemetry") or {})
+    result_telemetry["delivery"] = _delivery_status(room)
+    result_telemetry["lifecycle"] = _lifecycle(room).metrics()
+    data = {**data, "telemetry": result_telemetry}
     await _send_ws(room, json.dumps(data))
 
 @app.post("/api/initiate")
@@ -661,8 +727,9 @@ async def api_override(req: OverridePayload):
 
 @app.get("/api/telemetry")
 async def api_telemetry(client_id: str):
-    executor = get_executor(client_id)
-    vault = get_vault(client_id)
+    room = get_room(client_id)
+    executor = room["executor"]
+    vault = room["vault"]
     capability = await _scraper_capability()
     budget_reader = getattr(type(executor.llm_gateway), "budget_status", None)
     budget = budget_reader(executor.llm_gateway) if callable(budget_reader) else {}
@@ -682,6 +749,8 @@ async def api_telemetry(client_id: str):
         "llm_reserved_spend_usd": round(float(budget.get("reserved_usd", 0.0)), 6),
         "llm_spend_cap_usd": float(budget.get("cap_usd", 0.0)),
         "llm_active_reservations": int(budget.get("active_reservations", 0)),
+        "telemetry_delivery": _delivery_status(room),
+        "task_lifecycle": _lifecycle(room).metrics(),
         # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
     }
