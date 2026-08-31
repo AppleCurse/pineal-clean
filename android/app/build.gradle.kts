@@ -54,6 +54,29 @@ android {
         compose = true
         buildConfig = true
     }
+    lint {
+        textReport = true
+        textOutput = layout.buildDirectory.file("reports/lint-results-debug.txt").get().asFile
+    }
+}
+
+// Keep lint fail-closed while surfacing each concrete error as a GitHub check
+// annotation. This avoids a generic exit-code-only failure on CI.
+val emitLintErrors by tasks.registering {
+    doLast {
+        val report = layout.buildDirectory.file("reports/lint-results-debug.txt").get().asFile
+        if (report.exists()) {
+            report.readLines()
+                .filter { it.contains(": Error:") }
+                .forEach { println("::error title=Android lint::${it.replace("%", "%25")}") }
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "lintDebug") {
+        finalizedBy(emitLintErrors)
+    }
 }
 
 dependencies {
