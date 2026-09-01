@@ -50,6 +50,12 @@ cd frontend && npm run check && npm run build   # 0 hata + gerçek-app kilidi
 ```
 CI: `.github/workflows/ci.yml` — her push'ta otomatik çalışır: backend (ruff + pytest + coverage), frontend (check + build + dist doğrulama), Rust (`cargo check` + `cargo test`), Android (lint + unit + assemble) ve smoke (uvicorn + curl).
 
+Disaster recovery / volume persistence (manuel; Docker daemon gerekir):
+```
+bash scripts/test_disaster_recovery.sh              # DR_WAIT_TIMEOUT=600 ile yavaş makine toleransı
+```
+Konteyneri hard-kill edip siler (`down`, `-v` bilinçli YOK) ve sıfırdan yaratır; `pineal_memory` + `pineal_vault` verisinin hayatta kaldığını doğrular. İmaj production'da tokensuz açılmadığından script geçici `PINEAL_TOKEN` override'ı uygular (`.env`'e dokunmaz). Kapsam: compose named-volume persistence — gerçek yedek/geri yükleme ve Railway volume davranışı bu testin dışındadır.
+
 Süitte kalıcı korumalar: `test_no_mock_in_production.py` (production'da mock yasağı,
 AST-bazlı; dedektör canlılık kanıtı içerir), `test_consolidation_faz1_5.py`
 (default-kapı sözleşmesi + beyan→kurulu zinciri).
