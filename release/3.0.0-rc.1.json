@@ -1,0 +1,30 @@
+{
+  "version": "3.0.0-rc.1",
+  "release_type": "prerelease",
+  "date": "2026-09-01",
+  "branch": "arena/01a059dc-pineal-clean",
+  "required_gates": [
+    "backend_ruff_pytest_coverage",
+    "frontend_check_build",
+    "rust_cargo_check_test",
+    "android_lint_unit_assemble",
+    "uvicorn_smoke",
+    "cross_stack_runtime_e2e"
+  ],
+  "phase_evidence": {
+    "phases_1_to_6": {"commit": "82df2fc1", "ci_run": 33449773351},
+    "phase_7": {"commit": "9b892315", "ci_run": 33450674174},
+    "phase_8": {"commit": "fade78d3", "ci_run": 33451720940},
+    "phase_9": {"commit": "e04ec2b4", "ci_run": 33452298750},
+    "phase_10": {"commit": "7cbc027", "ci_run": 33462022412}
+  },
+  "runtime_contracts": {
+    "llm_provenance": "immutable_call_identity",
+    "spend_cap": "atomic_reservation_and_observed_settlement",
+    "memory_corruption": "fail_closed_and_quarantine_recovery",
+    "task_lifecycle": "sequenced_terminal_immutable",
+    "production_auth": "fail_closed",
+    "rust_core": "experimental_optional_not_product_integrated"
+  },
+  "external_live_llm": "operator_credential_gate_not_release_claim"
+}

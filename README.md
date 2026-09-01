@@ -93,7 +93,7 @@ venv kurar, bağımlılıkları indirir, frontend'i derler (dist yoksa) ve
 
 ### B) Docker
 ```bash
-cp .env.example .env      # anahtarları doldurun (opsiyonel)
+cp .env.example .env      # en azından production PINEAL_TOKEN değerini doldurun
 docker compose up --build
 ```
 
@@ -163,6 +163,7 @@ cd frontend && npm run check && npm run build
 
 ## 8. Güvenlik ve Veri
 - Sır koruması: anahtar/cookie yalnızca bellekte; loglara/telemetriye sızmaz (test kilitli).
+- **Görev yaşam döngüsü:** `POST /api/initiate` çağrısı immutable `task_id` döndürür; çalışan görev `POST /api/tasks/{id}/cancel` veya `/halt` ile terminal ve idempotent biçimde durdurulur.
 - **Veri silme (retention):** `GET /api/tasks` ile geçmişi görün, `DELETE /api/tasks/{id}` ile kalıcı silin.
 - Hata modeli: uygulama katmanı hataları (401/429/404/500, Aspasia) `{error:{code,message}}` biçimindedir; FastAPI şema doğrulama hataları (422) ise FastAPI'nin standart `{detail:[...]}` biçimini kullanır (kasten değiştirilmez).
 

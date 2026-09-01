@@ -36,6 +36,8 @@
 | WS bağlanmıyor | Token kipinde istemci bağlantıdan sonra ilk JSON mesajında `{type:"auth",token:"..."}` göndermeli; token URL/query'ye yazılmaz. Port 8000 dışındaysa `VITE_API_BASE` tanımla |
 
 ## Görev verisi
+- Başlatma: `POST /api/initiate` immutable `task_id` döndürür.
+- Çalışan görevi iptal/durdurma: `POST /api/tasks/{task_id}/cancel?client_id=...` veya `/halt` (terminal ve idempotent).
 - Liste: `GET /api/tasks?client_id=...`
 - Kalıcı silme (retention): `DELETE /api/tasks/{task_id}?client_id=...` (json kanıt dosyası + aktif snapshot)
 

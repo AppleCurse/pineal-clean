@@ -442,6 +442,7 @@ class LLMGateway:
                 else model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
             )
             provider = "openrouter"
+        logical_cost_usd = 0.0
 
         def log_call(
             *,
@@ -450,7 +451,7 @@ class LLMGateway:
             cache_hit: bool = False,
             prompt_tokens: Optional[int] = None,
             completion_tokens: Optional[int] = None,
-            cost_usd: float = 0.0,
+            cost_usd: Optional[float] = None,
             record_provider: Optional[str] = None,
         ) -> dict[str, Any]:
             return self._log_call(
@@ -464,7 +465,7 @@ class LLMGateway:
                 duration_ms=int((time.monotonic() - t0) * 1000),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                cost_usd=cost_usd,
+                cost_usd=logical_cost_usd if cost_usd is None else cost_usd,
                 error=error,
             )
 
@@ -546,6 +547,19 @@ class LLMGateway:
         for attempt_index in range(max_retries):
             attempt = attempt_index + 1
             try:
+                # A malformed but billed provider response may have settled the
+                # previous reservation. Every subsequent paid attempt must
+                # reserve again before another request can leave the process.
+                if (
+                    not is_local_request
+                    and self.spend_cap_usd > 0
+                    and not budget_reserved
+                ):
+                    reservation = self._maximum_call_cost(
+                        selected_model, prompt, system_prompt, images
+                    )
+                    self._reserve_budget(call_id, reservation)
+                    budget_reserved = True
                 response = await target_client.chat.completions.create(
                     model=selected_model,
                     temperature=temperature,
@@ -555,11 +569,15 @@ class LLMGateway:
                 )
                 self.failure_count = 0
                 usage = getattr(response, "usage", None)
-                content = response.choices[0].message.content
                 cost_usd = 0.0
                 if not is_local_request:
+                    # Settle observed provider usage before parsing the body.
+                    # Otherwise a malformed paid response could be retried as
+                    # though no billable request had occurred.
                     cost_usd = self._settle_budget(call_id, selected_model, usage)
+                    logical_cost_usd += cost_usd
                     budget_reserved = False
+                content = response.choices[0].message.content
 
                 if cache_key and content:
                     try:
@@ -575,7 +593,7 @@ class LLMGateway:
                     completion_tokens=(
                         int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else None
                     ),
-                    cost_usd=cost_usd,
+                    cost_usd=logical_cost_usd,
                 )
                 return content
             except asyncio.CancelledError:

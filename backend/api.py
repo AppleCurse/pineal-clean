@@ -75,7 +75,7 @@ async def lifespan(application: FastAPI):
                 mission.cancel()
     application.state.rooms.clear()
 
-app = FastAPI(title="PINEAL-HERETIC v2.0 API", lifespan=lifespan)
+app = FastAPI(title="PINEAL-HERETIC v3.0.0-rc.1 API", lifespan=lifespan)
 app.state.startup_health = {
     "status": "starting",
     "error_code": None,

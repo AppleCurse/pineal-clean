@@ -32,6 +32,17 @@ class _FailingCompletions:
         raise ValueError("400 invalid request")
 
 
+class _MalformedThenValidCompletions:
+    def __init__(self):
+        self.calls = 0
+
+    async def create(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return type("MalformedResponse", (), {"usage": _Usage(), "choices": []})()
+        return _Response()
+
+
 class _BlockingCompletions:
     def __init__(self):
         self.started = asyncio.Event()
@@ -104,6 +115,26 @@ async def test_failed_call_releases_reservation(monkeypatch):
     gateway.client = _Client(_SlowCompletions())
     assert await gateway.query("prompt", model="upstage/solar-pro4") == "ok"
     assert gateway.spend_usd <= gateway.spend_cap_usd
+
+
+@pytest.mark.asyncio
+async def test_malformed_paid_response_is_settled_before_bounded_retry(monkeypatch):
+    async def no_wait(_delay):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+    completions = _MalformedThenValidCompletions()
+    gateway = _paid_gateway(monkeypatch, completions, cap="0.001")
+    gateway._is_retryable_error = lambda _exc: True
+
+    assert await gateway.query("prompt", model="upstage/solar-pro4") == "ok"
+
+    assert completions.calls == 2
+    assert gateway.spend_usd == pytest.approx(0.00018)
+    assert gateway.call_log[-1]["cost_usd"] == pytest.approx(0.00018)
+    assert gateway.call_log[-1]["attempt"] == 2
+    assert gateway._reserved_spend_usd == 0.0
+    assert gateway._budget_reservations == {}
 
 
 @pytest.mark.asyncio
