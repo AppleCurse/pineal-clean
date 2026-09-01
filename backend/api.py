@@ -73,9 +73,8 @@ async def lifespan(application: FastAPI):
             application.state.llm_backend_mode == "unified"
             and application.state.openai_router is None
         ):
-            raise RoutingRuntimeError(
-                "PINEAL_ROUTER_CONFIG is required when PINEAL_LLM_BACKEND=unified"
-            )
+            logger.warning("PINEAL_ROUTER_CONFIG is missing or invalid. Falling back to legacy LLM backend.")
+            application.state.llm_backend_mode = "legacy" 
         startup_health["components"] = {
             "rust_core": rust_core_status(),
             "llm_router": {
