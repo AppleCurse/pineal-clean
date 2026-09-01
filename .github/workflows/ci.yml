@@ -5,24 +5,34 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+          cache: pip
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt ruff pytest pytest-asyncio
+          pip install -r requirements.txt ruff pytest pytest-asyncio pytest-cov
       - name: Lint with ruff
         run: ruff check .
-      - name: Run backend tests
-        run: PYTHONPATH=$GITHUB_WORKSPACE pytest -q -p no:cacheprovider
+      - name: Run backend tests with coverage gate
+        run: PYTHONPATH=$GITHUB_WORKSPACE pytest -q -p no:cacheprovider --cov=agent_core --cov=backend --cov-report=term-missing:skip-covered --cov-fail-under=80
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -31,6 +41,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Check Svelte types
@@ -42,12 +54,14 @@ jobs:
 
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: backend
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+          cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: uvicorn smoke
@@ -59,6 +73,7 @@ jobs:
 
   rust-core:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: rust_core
@@ -72,8 +87,10 @@ jobs:
         run: cargo check --all-targets
       - name: Cargo test
         run: cargo test --locked
+
   android:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: android
