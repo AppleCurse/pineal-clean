@@ -69,12 +69,18 @@ async def lifespan(application: FastAPI):
         startup_health["security"] = security_posture()
         application.state.llm_backend_mode = llm_backend_mode_from_env()
         application.state.openai_router = routing_runtime_from_env()
+        router_fallback_active = False
         if (
             application.state.llm_backend_mode == "unified"
             and application.state.openai_router is None
         ):
-            logger.warning("PINEAL_ROUTER_CONFIG is missing or invalid. Falling back to legacy LLM backend.")
-            application.state.llm_backend_mode = "legacy" 
+            logger.error("PINEAL_ROUTER_CONFIG is missing or invalid. Falling back to legacy LLM backend, marking health as DEGRADED.")
+            application.state.llm_backend_mode = "legacy"
+            router_fallback_active = True
+        if router_fallback_active:
+            startup_health["status"] = "degraded"
+            startup_health["error_code"] = "UNIFIED_ROUTER_CONFIG_MISSING"
+
         startup_health["components"] = {
             "rust_core": rust_core_status(),
             "llm_router": {
