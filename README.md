@@ -167,7 +167,17 @@ cd frontend && npm run check && npm run build
 - **Veri silme (retention):** `GET /api/tasks` ile geçmişi görün, `DELETE /api/tasks/{id}` ile kalıcı silin.
 - Hata modeli: uygulama katmanı hataları (401/429/404/500, Aspasia) `{error:{code,message}}` biçimindedir; FastAPI şema doğrulama hataları (422) ise FastAPI'nin standart `{detail:[...]}` biçimini kullanır (kasten değiştirilmez).
 
-## 9. Kullanım Sınırları
+## 9. Android İstemcisi (Bağımsız Uygulama)
+
+`android/` dizini, Python backend'den **tamamen bağımsız** bir Kotlin/Jetpack Compose
+Android uygulamasıdır. Python FastAPI sunucusunu kullanmaz; doğrudan
+`https://generativelanguage.googleapis.com/` (Google Gemini API) ile konuşur.
+API anahtarı `x-goog-api-key` HTTP başlığıyla taşınır (query string'de değil).
+
+CI'da ayrı bir `android` job'u olarak lint + unit test + assemble doğrular.
+**Android release, backend release'den bağımsızdır.**
+
+## 10. Kullanım Sınırları
 Araştırma/analitik amaçlıdır; kişisel veri işler — yasalara ve platform şartlarına
 uymak kullanıcının sorumluluğundadır. Ürün kimliği "sahici iletişim köprüsü"dür ve
 sistem hiçbir platforma otomatik/gizli mesaj **göndermez**. Şeffaflık notu: pipeline

@@ -77,9 +77,30 @@ async def lifespan(application: FastAPI):
             logger.error("PINEAL_ROUTER_CONFIG is missing or invalid. Falling back to legacy LLM backend, marking health as DEGRADED.")
             application.state.llm_backend_mode = "legacy"
             router_fallback_active = True
+        degraded_reasons: list[str] = []
         if router_fallback_active:
+            degraded_reasons.append("UNIFIED_ROUTER_CONFIG_MISSING")
+
+        # Production'da harcama tavanı sıfırsa uyarı yüzey
+        _is_prod = os.getenv("PINEAL_ENV", "development").strip().lower() in {"production", "prod"}
+        try:
+            _spend_cap = float(os.getenv("OPENROUTER_MAX_SPEND_USD", "0").strip())
+        except ValueError:
+            _spend_cap = 0.0
+        _spend_unlimited = (_spend_cap == 0.0)
+        if _is_prod and _spend_unlimited:
+            logger.warning(
+                "SPEND_CAP_UNLIMITED: OPENROUTER_MAX_SPEND_USD=0 in production "
+                "allows unbounded LLM spending. Set a non-zero cap."
+            )
+            degraded_reasons.append("SPEND_CAP_UNLIMITED")
+
+        startup_health["spend_cap_usd"] = None if _spend_unlimited else _spend_cap
+        startup_health["spend_cap_unlimited"] = _spend_unlimited
+
+        if degraded_reasons:
             startup_health["status"] = "degraded"
-            startup_health["error_code"] = "UNIFIED_ROUTER_CONFIG_MISSING"
+            startup_health["degraded_reasons"] = degraded_reasons
 
         startup_health["components"] = {
             "rust_core": rust_core_status(),
@@ -125,9 +146,17 @@ app.state.startup_health = {
 @app.get("/health")
 async def health():
     health_status = app.state.startup_health
-    if health_status.get("status") != "ready":
+    status = health_status.get("status")
+    # "failed" → 503 (bağımlılık eksik veya security gate açılmamış)
+    # "degraded" → 200 (servis çalışıyor ama kısmi; load-balancer geçirir,
+    #   monitoring aracı degraded_reasons / error_code ile alarm üretir)
+    # "ready" → 200
+    # diğer (starting, None) → 503
+    if status == "failed":
         return JSONResponse(health_status, status_code=503)
-    return health_status
+    if status in ("ready", "degraded"):
+        return JSONResponse(health_status, status_code=200)
+    return JSONResponse(health_status, status_code=503)
 
 
 # --- CORS (FAZ 3): ayni-origin serviste CORS gereksizdir; disaridan erisim

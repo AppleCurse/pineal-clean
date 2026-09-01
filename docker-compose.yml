@@ -9,10 +9,17 @@ services:
     environment:
       - PINEAL_PORT=8000
     volumes:
-      - pineal_memory:/app/memory      # kalıcı kanıt/öğrenme belleği
+      - pineal_memory:/app/memory      # kalıcı kanıt/öğrenme belleği (kritik - kayıp = veri kaybı)
+      - pineal_cache:/app/cache        # SQLite response cache (kaybedilebilir; yeniden doldurulur)
       - pineal_vault:/app/vault-data   # (isteğe bağlı) vault dışa aktarımı
+    # ⚠ MULTI-REPLICA DESTEKLENMEZ: app.state.rooms ve rate-limit sayaçları
+    # process-local tutulur. 2+ instance aynı anda çalıştırılamaz.
+    # Yatay ölçekleme: paylaşımlı session store (Redis vb.) gerektirir.
+    deploy:
+      replicas: 1
     restart: unless-stopped
 
 volumes:
   pineal_memory:
+  pineal_cache:
   pineal_vault:

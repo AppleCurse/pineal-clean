@@ -57,5 +57,20 @@ UI ──POST /api/aspasia/chat──► room.aspasia.chat(msg, room, model?, im
 | **D5: deneysel API'ler** | shadow/chat/interpreter → `/api/experimental/*` (UI çağrıcısı yok) |
 | **Otomatik mesaj gönderimi yok** | Sistem hiçbir platforma mesaj göndermez; deterministik shadow analizi (dark-triad + NLP dizisi) pipeline'da forensik damga olarak kaydedilir; mesaj/kontra-hamle üretim araçları yalnız `/api/experimental/*` altında kullanıcı çağrısıyla çalışır |
 
+## Android İstemcisi (Bağımsız Ürün)
+
+`android/` — Kotlin/Jetpack Compose Android uygulaması. Python backend'e **hiç bağlanmaz.**
+
+```
+Android App
+   └─ AspasiaChatEngine / PinealAnalyzerEngine
+        └─ GeminiClient (Retrofit)
+             └─► https://generativelanguage.googleapis.com/
+                  Header: x-goog-api-key: <GEMINI_KEY>   ← query param değil
+```
+
+CI `android` job'u: lint + unit test + assemble. Bu, backend pipeline entegrasyonu
+kanıtı değildir. Android ve backend ayrı release döngülerine sahiptir.
+
 ## Güvenlik yüzeyi
 `PINEAL_ENV=production` için zorunlu `PINEAL_TOKEN` (HTTP `X-API-Key`; WebSocket ilk auth mesajı, URL'de sır yok) · CORS localhost kümesi · rate limit (initiate 5/dk, aspasia 20/dk, experimental 10/dk) · hata modeli: uygulama hataları `{error:{code,message}}`, şema doğrulama (422) standart FastAPI `{detail:[...]}` · DNS-pinned SSRF/redirect koruması · sırlar yalnız gateway belleğinde (log/event/yanıt redaction testli) · containment kontrollü retention: `DELETE /api/tasks/{id}`
