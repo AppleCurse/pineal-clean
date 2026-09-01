@@ -184,15 +184,23 @@ class ModelDescriptor:
     def canonical_id(self) -> str:
         return f"{self.provider_id}/{self.id}"
 
-    def satisfies(self, capabilities: Iterable[str], minimum_context: Optional[int] = None) -> bool:
+    def satisfies(
+        self,
+        capabilities: Iterable[str],
+        minimum_context: Optional[int] = None,
+        *,
+        allow_unknown_context: bool = False,
+    ) -> bool:
         required = frozenset(capabilities)
         if not required <= self.capabilities:
             return False
+        if not isinstance(allow_unknown_context, bool):
+            raise CatalogError("allow_unknown_context must be a boolean")
         if minimum_context is None:
             return True
-        # Unknown context remains eligible. The router must expose that uncertainty
-        # rather than inventing a limit or silently classifying it as exhausted.
-        return self.context_window is None or self.context_window >= minimum_context
+        if self.context_window is None:
+            return allow_unknown_context
+        return self.context_window >= minimum_context
 
 
 @dataclass(frozen=True)
@@ -496,9 +504,12 @@ class ProviderManager:
         *,
         required_capabilities: Iterable[str] = (),
         minimum_context: Optional[int] = None,
+        allow_unknown_context: bool = False,
         include_exhausted: bool = False,
     ) -> tuple[RouteTarget, ...]:
         required = frozenset(required_capabilities)
+        if not isinstance(allow_unknown_context, bool):
+            raise CatalogError("allow_unknown_context must be a boolean")
         unknown = required - _ALLOWED_CAPABILITIES
         if unknown:
             raise CatalogError(f"unknown required capabilities: {sorted(unknown)}")
@@ -522,7 +533,11 @@ class ProviderManager:
             if requested and not provider.models and provider.passthrough_models:
                 models = (requested,)
             for model in models:
-                if not model.enabled or not model.satisfies(required, minimum_context):
+                if not model.enabled or not model.satisfies(
+                    required,
+                    minimum_context,
+                    allow_unknown_context=allow_unknown_context,
+                ):
                     continue
                 if connection.model_allowlist and model.id not in connection.model_allowlist:
                     continue
@@ -696,6 +711,23 @@ def _resolve_local_url(
     )
 
 
+_MISSING_BOOLEAN = object()
+
+
+def _boolean_from_mapping(
+    data: Mapping[str, Any],
+    field_name: str,
+    *,
+    default: object = _MISSING_BOOLEAN,
+) -> bool:
+    value = data.get(field_name, default)
+    if value is _MISSING_BOOLEAN:
+        raise CatalogError(f"missing boolean field: {field_name}")
+    if not isinstance(value, bool):
+        raise CatalogError(f"{field_name} must be a boolean")
+    return value
+
+
 def _pricing_from_mapping(data: object) -> ModelPricing:
     if data is None:
         return ModelPricing()
@@ -719,7 +751,7 @@ def _free_tier_from_mapping(data: object) -> Optional[FreeTierMetadata]:
             kind=str(data["kind"]),
             source_url=str(data["source_url"]),
             checked_at=str(data["checked_at"]),
-            recurring=bool(data["recurring"]),
+            recurring=_boolean_from_mapping(data, "recurring"),
             quota_note=str(data["quota_note"]) if data.get("quota_note") is not None else None,
         )
     except KeyError as exc:
@@ -744,7 +776,7 @@ def _model_from_mapping(provider_id: str, data: object) -> ModelDescriptor:
         context_window=data.get("context_window"),
         pricing=_pricing_from_mapping(data.get("pricing")),
         free_tier=_free_tier_from_mapping(data.get("free_tier")),
-        enabled=bool(data.get("enabled", True)),
+        enabled=_boolean_from_mapping(data, "enabled", default=True),
     )
 
 
@@ -779,8 +811,12 @@ def _provider_from_mapping(data: object) -> ProviderDescriptor:
         base_url=str(data["base_url"]) if data.get("base_url") else None,
         aliases=tuple(raw_aliases),
         models=tuple(_model_from_mapping(provider_id, item) for item in raw_models),
-        passthrough_models=bool(data.get("passthrough_models", False)),
-        allow_custom_base_url=bool(data.get("allow_custom_base_url", False)),
+        passthrough_models=_boolean_from_mapping(
+            data, "passthrough_models", default=False
+        ),
+        allow_custom_base_url=_boolean_from_mapping(
+            data, "allow_custom_base_url", default=False
+        ),
         support=CatalogSupport(str(data.get("support", CatalogSupport.CATALOG_ONLY.value))),
         documentation_url=(
             str(data["documentation_url"]) if data.get("documentation_url") else None

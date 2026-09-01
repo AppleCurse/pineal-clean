@@ -130,6 +130,7 @@ class OptimizationStats:
     bytes_before: int = 0
     bytes_after: int = 0
     skipped_error_items: int = 0
+    skipped_immutable_items: int = 0
     skipped_small_items: int = 0
     skipped_oversize_items: int = 0
     skipped_total_limit_items: int = 0
@@ -150,6 +151,7 @@ class OptimizationStats:
             "bytes_after": self.bytes_after,
             "bytes_saved": self.bytes_saved,
             "skipped_error_items": self.skipped_error_items,
+            "skipped_immutable_items": self.skipped_immutable_items,
             "skipped_small_items": self.skipped_small_items,
             "skipped_oversize_items": self.skipped_oversize_items,
             "skipped_total_limit_items": self.skipped_total_limit_items,
@@ -181,6 +183,7 @@ class _MutableStats:
     bytes_before: int = 0
     bytes_after: int = 0
     skipped_error_items: int = 0
+    skipped_immutable_items: int = 0
     skipped_small_items: int = 0
     skipped_oversize_items: int = 0
     skipped_total_limit_items: int = 0
@@ -196,6 +199,7 @@ class _MutableStats:
             bytes_before=self.bytes_before,
             bytes_after=self.bytes_after,
             skipped_error_items=self.skipped_error_items,
+            skipped_immutable_items=self.skipped_immutable_items,
             skipped_small_items=self.skipped_small_items,
             skipped_oversize_items=self.skipped_oversize_items,
             skipped_total_limit_items=self.skipped_total_limit_items,
@@ -256,6 +260,9 @@ class TokenOptimizer:
 
             if slot.explicit_error:
                 stats.skipped_error_items += 1
+                continue
+            if _contains_fenced_code(original) or _contains_immutable_evidence(original):
+                stats.skipped_immutable_items += 1
                 continue
             if len(original) < selected_policy.min_item_chars:
                 stats.skipped_small_items += 1
@@ -343,6 +350,15 @@ def _compact_json(text: str, _context: ToolOutputContext) -> str:
 
 def _contains_fenced_code(text: str) -> bool:
     return bool(re.search(r"(?m)^\s*(?:```|~~~)", text))
+
+
+_IMMUTABLE_EVIDENCE_FIELD = re.compile(
+    r"(?i)(?:\"|')?(?:display_url|shortcode|taken_at)(?:\"|')?\s*[:=]"
+)
+
+
+def _contains_immutable_evidence(text: str) -> bool:
+    return bool(_IMMUTABLE_EVIDENCE_FIELD.search(text))
 
 
 def _collapse_repeated_lines(text: str, context: ToolOutputContext) -> str:
