@@ -1,0 +1,349 @@
+{
+  "schema_version": 1,
+  "catalog_updated_at": "2026-09-01",
+  "scope": "Authorized official APIs, operator-owned compatible endpoints, and local inference only. Catalog entries are not claims of live verification.",
+  "providers": [
+    {
+      "id": "openrouter",
+      "display_name": "OpenRouter",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://openrouter.ai/api/v1",
+      "aliases": ["or"],
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://openrouter.ai/docs",
+      "models": [
+        {
+          "id": "upstage/solar-pro4",
+          "display_name": "Solar Pro 4",
+          "capabilities": ["chat", "streaming"],
+          "pricing": {"input_per_million_usd": 0.03, "output_per_million_usd": 0.12}
+        },
+        {
+          "id": "inclusionai/ling-3.0-flash",
+          "display_name": "Ling 3.0 Flash",
+          "capabilities": ["chat", "streaming"],
+          "pricing": {"input_per_million_usd": 0.021, "output_per_million_usd": 0.063}
+        },
+        {
+          "id": "deepseek/deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "capabilities": ["chat", "streaming"],
+          "pricing": {"input_per_million_usd": 0.0679, "output_per_million_usd": 0.168}
+        },
+        {
+          "id": "z-ai/glm-5.2",
+          "display_name": "GLM 5.2",
+          "capabilities": ["chat", "streaming"],
+          "pricing": {"input_per_million_usd": 0.3276, "output_per_million_usd": 1.03}
+        },
+        {
+          "id": "deepseek/deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "capabilities": ["chat", "streaming"],
+          "pricing": {"input_per_million_usd": 0.4679, "output_per_million_usd": 0.9358}
+        },
+        {
+          "id": "google/gemini-3.7-flash",
+          "display_name": "Gemini 3.7 Flash",
+          "capabilities": ["chat", "streaming", "vision"],
+          "pricing": {"input_per_million_usd": 0.75, "output_per_million_usd": 3.75}
+        },
+        {
+          "id": "openai/gpt-5.6-sol-pro",
+          "display_name": "GPT 5.6 Sol Pro",
+          "capabilities": ["chat", "streaming"],
+          "pricing": {"input_per_million_usd": 2.0, "output_per_million_usd": 10.0}
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "display_name": "OpenAI API",
+      "protocol": "openai_responses",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.openai.com/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://platform.openai.com/docs"
+    },
+    {
+      "id": "anthropic",
+      "display_name": "Anthropic API",
+      "protocol": "anthropic_messages",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.anthropic.com/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.anthropic.com"
+    },
+    {
+      "id": "google-gemini",
+      "display_name": "Google Gemini API",
+      "protocol": "gemini_generate",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "aliases": ["gemini"],
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://ai.google.dev/gemini-api/docs"
+    },
+    {
+      "id": "azure-openai",
+      "display_name": "Azure OpenAI",
+      "protocol": "openai_responses",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "passthrough_models": true,
+      "allow_custom_base_url": true,
+      "support": "catalog_only",
+      "documentation_url": "https://learn.microsoft.com/azure/ai-services/openai/"
+    },
+    {
+      "id": "cohere",
+      "display_name": "Cohere API",
+      "protocol": "cohere_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.cohere.com/v2",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.cohere.com"
+    },
+    {
+      "id": "deepseek",
+      "display_name": "DeepSeek API",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "cheap",
+      "base_url": "https://api.deepseek.com/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://api-docs.deepseek.com"
+    },
+    {
+      "id": "groq",
+      "display_name": "Groq API",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.groq.com/openai/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://console.groq.com/docs"
+    },
+    {
+      "id": "mistral",
+      "display_name": "Mistral AI API",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.mistral.ai/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.mistral.ai"
+    },
+    {
+      "id": "xai",
+      "display_name": "xAI API",
+      "protocol": "openai_responses",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.x.ai/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.x.ai"
+    },
+    {
+      "id": "cerebras",
+      "display_name": "Cerebras Inference",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.cerebras.ai/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://inference-docs.cerebras.ai"
+    },
+    {
+      "id": "together",
+      "display_name": "Together AI",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.together.xyz/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.together.ai"
+    },
+    {
+      "id": "fireworks",
+      "display_name": "Fireworks AI",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.fireworks.ai/inference/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.fireworks.ai"
+    },
+    {
+      "id": "sambanova",
+      "display_name": "SambaNova Cloud",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.sambanova.ai/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.sambanova.ai"
+    },
+    {
+      "id": "nvidia-nim",
+      "display_name": "NVIDIA NIM",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "aliases": ["nvidia"],
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.api.nvidia.com/nim/"
+    },
+    {
+      "id": "huggingface",
+      "display_name": "Hugging Face Inference Providers",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://router.huggingface.co/v1",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://huggingface.co/docs/inference-providers"
+    },
+    {
+      "id": "deepinfra",
+      "display_name": "DeepInfra",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "cheap",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://deepinfra.com/docs"
+    },
+    {
+      "id": "perplexity",
+      "display_name": "Perplexity API",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://api.perplexity.ai",
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.perplexity.ai"
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "display_name": "Cloudflare Workers AI",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "passthrough_models": true,
+      "allow_custom_base_url": true,
+      "support": "catalog_only",
+      "documentation_url": "https://developers.cloudflare.com/workers-ai/"
+    },
+    {
+      "id": "alibaba-dashscope",
+      "display_name": "Alibaba Model Studio",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "aliases": ["dashscope"],
+      "passthrough_models": true,
+      "support": "catalog_only",
+      "documentation_url": "https://www.alibabacloud.com/help/en/model-studio/"
+    },
+    {
+      "id": "ollama-local",
+      "display_name": "Ollama Local",
+      "protocol": "openai_chat",
+      "access_method": "local",
+      "connection_types": ["local"],
+      "default_tier": "free",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "aliases": ["ollama"],
+      "passthrough_models": true,
+      "allow_custom_base_url": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.ollama.com/api/openai-compatibility"
+    },
+    {
+      "id": "lm-studio-local",
+      "display_name": "LM Studio Local",
+      "protocol": "openai_chat",
+      "access_method": "local",
+      "connection_types": ["local"],
+      "default_tier": "free",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "aliases": ["lm-studio"],
+      "passthrough_models": true,
+      "allow_custom_base_url": true,
+      "support": "catalog_only",
+      "documentation_url": "https://lmstudio.ai/docs/developer/openai-compat"
+    },
+    {
+      "id": "vllm-local",
+      "display_name": "vLLM Local",
+      "protocol": "openai_chat",
+      "access_method": "local",
+      "connection_types": ["local"],
+      "default_tier": "free",
+      "base_url": "http://127.0.0.1:8001/v1",
+      "aliases": ["vllm"],
+      "passthrough_models": true,
+      "allow_custom_base_url": true,
+      "support": "catalog_only",
+      "documentation_url": "https://docs.vllm.ai/en/latest/serving/openai_compatible_server/"
+    },
+    {
+      "id": "openai-compatible",
+      "display_name": "Operator OpenAI-Compatible Endpoint",
+      "protocol": "openai_chat",
+      "access_method": "operator_compatible",
+      "connection_types": ["api_key", "no_auth"],
+      "default_tier": "api_key",
+      "passthrough_models": true,
+      "allow_custom_base_url": true,
+      "support": "catalog_only",
+      "documentation_url": "https://platform.openai.com/docs/api-reference/chat"
+    }
+  ]
+}
