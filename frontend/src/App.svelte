@@ -3,6 +3,7 @@
   import { API_TOKEN, apiFetch, clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents } from './store';
   import { currentLang, t, type Language } from './i18n';
   import UnifiedCompactPanel from './components/UnifiedCompactPanel.svelte';
+  import NeuralTelemetryBoard from './components/visualizers/NeuralTelemetryBoard.svelte';
 
   let ws: WebSocket;
 
@@ -147,9 +148,9 @@
     </div>
     
     {#if telemetryData}
-      <div style="background: #111; padding:10px; border-radius: 4px; border: 1px solid #333; font-size: 11px;">
-        <h4 style="margin: 0 0 5px 0; color:var(--gold);">TELEMETRY:</h4>
-        <pre style="margin:0; color: #ccc;">{JSON.stringify(telemetryData, null, 2)}</pre>
+      <!-- Şeffaf Su Borusu (Neural Fluid Pipeline) -->
+      <div style="margin-bottom: 20px;">
+        <NeuralTelemetryBoard telemetry={telemetryData} />
       </div>
     {/if}
 
