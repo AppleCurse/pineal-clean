@@ -45,3 +45,4 @@ memory/*.db
 .venv/
 venv/
 test_mem/
+backups/

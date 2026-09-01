@@ -33,10 +33,22 @@ COPY config/ ./config/
 COPY main.py scraper.py ./
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
+# Persistent data directories — production'da bunları kalıcı volume'a bağlayın.
+# memory/: görev kanıt zinciri (kritik — kayıp geri alınamaz)
+# cache/:  SQLite response cache (kaybedilebilir — yeniden doldurulur)
+# ⚠ 2+ container aynı volume'u paylaşırsa tutarsızlık oluşur (process-local state).
+RUN mkdir -p /app/memory /app/cache
+VOLUME ["/app/memory", "/app/cache"]
+
 EXPOSE 8000
-# Public health reports only startup readiness; production startup itself
-# fails closed unless PINEAL_TOKEN is configured.
+# Production startup fails closed unless PINEAL_TOKEN is configured.
+# Health: "ready" veya "degraded" → HTTP 200 (servis ayakta);
+#         "failed" veya "starting" → HTTP 503 (container unhealthy sayılır).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=4)" || exit 1
+  CMD python -c "\
+import urllib.request, json, sys; \
+r = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4); \
+d = json.loads(r.read()); \
+sys.exit(0 if d.get('status') in ('ready', 'degraded') else 1)" || exit 1
 
 CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PINEAL_PORT:-8000}"]

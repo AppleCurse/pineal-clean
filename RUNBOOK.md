@@ -82,6 +82,54 @@ fallback + dolu HolisticProfile + hakem onayı (varsayılan hakem:
 `openai/gpt-5.6-sol-pro`; `OPENROUTER_JUDGE_MODEL` ile ezilebilir).
 Bu script 360° zincirinin gerçek LLM ile uçtan uca doğrulamasıdır.
 
+## Yedekleme ve Geri Yükleme
+```bash
+# Yedek oluştur (memory/ + cache/ → tar.gz + SHA-256)
+bash scripts/backup_restore.sh backup
+
+# Yedekleri listele (SHA-256 bütünlük kontrolüyle)
+bash scripts/backup_restore.sh list
+
+# Geri yükle (restore öncesi mevcut memory/ otomatik pre-backup alınır)
+bash scripts/backup_restore.sh restore backups/pineal_20260901_120000.tar.gz
+
+# Yedek bütünlüğünü doğrula
+bash scripts/backup_restore.sh verify backups/pineal_20260901_120000.tar.gz
+```
+Docker volume ortamında:
+```bash
+docker run --rm \
+  -v pineal_memory:/app/memory \
+  -v pineal_cache:/app/cache \
+  -v "$(pwd)/backups:/app/backups" \
+  pineal bash scripts/backup_restore.sh backup
+```
+`memory/` — görev kanıt zinciri. **Kayıp geri alınamaz.**
+`cache/` — SQLite response cache. Kaybedilirse yeniden doldurulur.
+
+## ⚠ Multi-Replica / Yatay Ölçekleme
+`app.state.rooms` ve `_rate_buckets` **process-local** bellekte tutulur.
+2+ instance aynı anda çalıştırılmamalıdır:
+- Farklı replica'daki aynı `client_id` → ayrı room state → WebSocket kopukluğu
+- Rate-limit sayaçları replica başına bağımsız → gerçek limitin N katı istek geçebilir
+
+**İlk production release için `replicas: 1` zorunludur.**
+Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gerektirir.
+
+## Production Kontrol Listesi
+| # | Kontrol | Nasıl Doğrulanır |
+|---|---|---|
+| 1 | `/app/memory` kalıcı volume'a bağlı | Container yeniden başlatma sonrası `GET /api/tasks` aynı görevleri döndürüyor |
+| 2 | `PINEAL_TOKEN` tanımlı | `PINEAL_ENV=production` ile tokensız start etmez (`PRODUCTION_AUTH_REQUIRED`) |
+| 3 | `OPENROUTER_MAX_SPEND_USD` > 0 | `/health → spend_cap_unlimited: false` |
+| 4 | `LIVE_LLM_E2E=1` | Aspasia gerçek yanıt veriyor; telemetride `gateway: true` |
+| 5 | `PINEAL_ALLOWED_ORIGINS` explicit | Localhost dışı origin için açıkça belirt |
+| 6 | Tek instance | `railway.toml → numReplicas=1` / `docker-compose → replicas: 1` |
+| 7 | Yedek alındı ve doğrulandı | `bash scripts/backup_restore.sh backup && verify` |
+| 8 | Chromium kurulu | `python -c "from playwright.async_api import async_playwright; print('ok')"` |
+| 9 | `/health` HTTP 200 `status: ready` | `curl -sf http://localhost:8000/health \| python3 -m json.tool` |
+| 10 | Canlı LLM gate geçti | `OPENROUTER_API_KEY=... LIVE_LLM_E2E=1 python live_llm_gate.py` |
+
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
 - **FAZ 9 Karar B:** `rust_core/` experimental/optional'dır. CI'da bağımsız derlenip test edilir; Python ürün yoluna bağlı değildir, Docker'a paketlenmez, aktivasyon bayrağı ve ürün karar etkisi yoktur. `/health` ile `/api/telemetry` bu statüyü raporlar. Tauri masaüstü taslağı release ürünü değildir.
