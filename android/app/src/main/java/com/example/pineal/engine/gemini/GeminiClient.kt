@@ -10,6 +10,7 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
 import retrofit2.http.Query
+import retrofit2.http.Header
 
 @Serializable
 data class GenerateContentRequest(
@@ -69,20 +70,20 @@ data class Candidate(
 interface GeminiApiService {
     @POST("v1beta/models/gemini-3.1-pro-preview:generateContent")
     suspend fun generateContentPro(
-        @Query("key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String,
         @Body request: GenerateContentRequest
     ): GenerateContentResponse
 
     @POST("v1beta/models/gemini-1.5-flash:generateContent")
     suspend fun generateContentFlash(
-        @Query("key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String,
         @Body request: GenerateContentRequest
     ): GenerateContentResponse
 
     
     @POST("v1beta/models/gemini-1.5-flash:generateContent")
     suspend fun generateContentVision(
-        @Query("key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String,
         @Body request: GenerateContentRequest
     ): GenerateContentResponse
 }
