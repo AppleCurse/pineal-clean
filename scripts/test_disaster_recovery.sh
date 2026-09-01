@@ -27,6 +27,7 @@
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
+export MSYS_NO_PATHCONV=1
 
 SERVICE="pineal"
 MEMORY_FILE="/app/memory/dr_test.json"
