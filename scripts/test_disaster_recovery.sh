@@ -47,7 +47,12 @@ bad()  { printf '  %s[XX] %s%s\n' "$RED" "$*" "$RESET"; }
 cd "$(dirname "$0")/.."
 
 # Test amaçlı token override'ı: production tokensuz açılmaz (RUNBOOK: Token kipi).
-OVERRIDE_FILE="$(mktemp)"
+# Git Bash uyumu: mktemp'in /tmp'i Windows docker.exe'e C:\tmp olarak görünür
+# ("The system cannot find the file specified" — docker compose -f açamaz).
+# Bu yüzden override dosyası repo kökünde, $(pwd) tabanlı mutlak yol ile
+# oluşturulur: /c/... yolları MSYS→Windows dönüşümünde doğru eşlenir.
+# (Script bu noktada zaten repo köküne cd yapmış durumda.)
+OVERRIDE_FILE="$(mktemp "$(pwd)/.dr_override.XXXXXX")"
 cat >"$OVERRIDE_FILE" <<'YAML'
 services:
   pineal:
