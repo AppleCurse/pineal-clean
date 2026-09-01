@@ -50,7 +50,7 @@ export const t = {
     agentDeckTitle: "ASPASIA KOKPİT ŞEFİ VE DİYALOG",
     memoryStatus: "BELLEK: 1 Bütüncül Profil • Hash Doğrulandı",
     aspasiaRole: "Sistem Gözlemcisi",
-    aspasiaWelcome: "Sistem çevrimiçi. Hedef verilerini ve telemetriyi incelemeye hazırım şefim.",
+    aspasiaWelcome: "Sistem çevrimiçi. Hedef verilerini ve telemetriyi incelemeye hazırım.",
     you: "SİZ",
     system: "SİSTEM",
     chatPlaceholder: "Aspasia'ya soru sorun veya yönlendirin...",
