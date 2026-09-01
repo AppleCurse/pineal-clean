@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY requirements.txt requirements-osint.txt ./
 RUN pip install --default-timeout=300 -r requirements.txt && pip install --default-timeout=300 -r requirements-osint.txt
+
+# Opsiyonel Playwright indirme aynası (bölgesel CDN engeli; build-time).
+# Kullanım: .env → PLAYWRIGHT_DOWNLOAD_HOST=... sonra docker compose build pineal
+ARG PLAYWRIGHT_DOWNLOAD_HOST=""
+ENV PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST}
 RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000     python -m playwright install --with-deps chromium ||     (echo "Retrying Playwright download..." && sleep 15 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium) ||     (echo "Retrying Playwright download 2..." && sleep 30 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium)
 
 COPY backend/ ./backend/

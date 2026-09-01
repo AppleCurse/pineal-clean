@@ -135,3 +135,4 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 - **FAZ 9 Karar B:** `rust_core/` experimental/optional'dır. CI'da bağımsız derlenip test edilir; Python ürün yoluna bağlı değildir, Docker'a paketlenmez, aktivasyon bayrağı ve ürün karar etkisi yoktur. `/health` ile `/api/telemetry` bu statüyü raporlar. Tauri masaüstü taslağı release ürünü değildir.
 - Deneysel API'ler (`/api/experimental/*`) ürün sözleşmesi dışıdır.
 - X (Twitter) kazıması devre dışıdır (B4). Instagram kazıması tarayıcı kurulumuna bağlıdır: manuel kurulumda ZORUNLU adım: `python -m playwright install chromium` (Docker imajı otomatik kurar).
+- Docker build `playwright install chromium` adımında düşüyorsa: Dockerfile 3 deneme + 300 sn t/o ile retry eder; süreklileşirse DNS/VPN'i kontrol edin veya `.env`'e `PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright` yazıp `docker compose build pineal` çalıştırın (compose bu build-arg'ı otomatik geçirir).
