@@ -27,7 +27,6 @@
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
-export MSYS_NO_PATHCONV=1
 
 SERVICE="pineal"
 MEMORY_FILE="/app/memory/dr_test.json"
@@ -88,7 +87,7 @@ dcomp up -d "${WAIT_ARGS[@]}"
 ok "konteyner çalışıyor ve /health hazır"
 
 step "2/6 Kalıcı volume'lara test verisi yaz"
-dcomp exec -T "$SERVICE" sh -c \
+MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" sh -c \
     "mkdir -p /app/memory /app/vault-data \
      && printf '{\"status\": \"%s\"}' '$MARKER' > '$MEMORY_FILE' \
      && printf '{\"status\": \"%s\"}' '$MARKER' > '$VAULT_FILE'"
@@ -105,12 +104,12 @@ ok "konteyner yeniden oluşturuldu ve sağlıklı"
 
 step "5/6 Veri hayatta mı?"
 RESULT=0
-if dcomp exec -T "$SERVICE" cat "$MEMORY_FILE" 2>/dev/null | grep -q "$MARKER"; then
+if MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" cat "$MEMORY_FILE" 2>/dev/null | grep -q "$MARKER"; then
     ok "pineal_memory -> veri HAYATTA"
 else
     bad "pineal_memory -> veri KAYIP"; RESULT=1
 fi
-if dcomp exec -T "$SERVICE" cat "$VAULT_FILE" 2>/dev/null | grep -q "$MARKER"; then
+if MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" cat "$VAULT_FILE" 2>/dev/null | grep -q "$MARKER"; then
     ok "pineal_vault  -> veri HAYATTA"
 else
     bad "pineal_vault  -> veri KAYIP"; RESULT=1
@@ -118,7 +117,7 @@ fi
 
 step "6/6 Temizlik"
 if [ "$RESULT" -eq 0 ]; then
-    dcomp exec -T "$SERVICE" sh -c "rm -f '$MEMORY_FILE' '$VAULT_FILE'" || true
+    MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" sh -c "rm -f '$MEMORY_FILE' '$VAULT_FILE'" || true
     ok "test verisi volume'lardan silindi (stack 'down' ile durduruldu)"
 else
     echo "  Hata ayıklama için dr_test.json dosyaları volume'larda bırakıldı."
