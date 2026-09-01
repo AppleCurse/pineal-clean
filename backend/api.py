@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -35,9 +35,15 @@ from agent_core.services.dependency_health import (
     check_startup_dependencies,
 )
 from agent_core.schemas.telemetry import ErrorHaltEvent, Severity, TaskCancelledEvent
+from agent_core.services.routed_chat import (
+    RoutingRuntimeError,
+    llm_backend_mode_from_env,
+    routing_runtime_from_env,
+)
 from agent_core.services.runtime_status import rust_core_status
 from agent_core.services.task_lifecycle import TaskLifecycleRegistry
 from agent_core.services.token_optimizer import OptimizationPolicy, TokenOptimizer
+from agent_core.services.unified_router import RoutingStrategy
 from agent_core.shadow.shadow_executor import ShadowExecutor
 from agent_core.utils.security import (
     SecurityConfigurationError,
@@ -61,7 +67,28 @@ async def lifespan(application: FastAPI):
     try:
         startup_health = check_startup_dependencies()
         startup_health["security"] = security_posture()
-        startup_health["components"] = {"rust_core": rust_core_status()}
+        application.state.llm_backend_mode = llm_backend_mode_from_env()
+        application.state.openai_router = routing_runtime_from_env()
+        if (
+            application.state.llm_backend_mode == "unified"
+            and application.state.openai_router is None
+        ):
+            raise RoutingRuntimeError(
+                "PINEAL_ROUTER_CONFIG is required when PINEAL_LLM_BACKEND=unified"
+            )
+        startup_health["components"] = {
+            "rust_core": rust_core_status(),
+            "llm_router": {
+                "backend_mode": application.state.llm_backend_mode,
+                "configured": application.state.openai_router is not None,
+                "active": application.state.llm_backend_mode == "unified",
+                "model_groups": (
+                    sorted(application.state.openai_router.model_groups)
+                    if application.state.openai_router is not None
+                    else []
+                ),
+            },
+        }
         application.state.startup_health = startup_health
     except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()
@@ -80,6 +107,8 @@ async def lifespan(application: FastAPI):
     application.state.rooms.clear()
 
 app = FastAPI(title="PINEAL-HERETIC v3.0.0-rc.1 API", lifespan=lifespan)
+app.state.llm_backend_mode = "legacy"
+app.state.openai_router = None
 app.state.startup_health = {
     "status": "starting",
     "error_code": None,
@@ -115,9 +144,14 @@ app.add_middleware(
         "X-API-Key",
         "Authorization",
         "X-Pineal-Tool-Optimization",
+        "X-Pineal-Routing-Strategy",
     ],
     expose_headers=[
         "X-Pineal-Call-ID",
+        "X-Pineal-Call-IDs",
+        "X-Pineal-Route-ID",
+        "X-Pineal-Route-Mode",
+        "X-Pineal-Routing-Strategy",
         "X-Pineal-Optimization-Mode",
         "X-Pineal-Optimization-Bytes-Saved",
         "X-Pineal-Optimization-Lossy",
@@ -437,16 +471,34 @@ def _tool_optimization_policy(request: Request) -> tuple[str, OptimizationPolicy
     raise ValueError("tool optimization mode must be disabled, safe, or lossy")
 
 
+def _routing_strategy(request: Request) -> RoutingStrategy:
+    requested = request.headers.get("x-pineal-routing-strategy")
+    value = (requested or os.getenv("PINEAL_ROUTING_STRATEGY", "auto")).strip().lower()
+    try:
+        return RoutingStrategy(value)
+    except ValueError as exc:
+        raise ValueError("unknown Pineal routing strategy") from exc
+
+
 @app.get("/v1/models")
 async def openai_models():
     gateway = _openai_gateway()
     now = int(time.time())
     models: dict[str, str] = {}
-    cloud_enabled = gateway.client is not None and (os.getenv("LIVE_LLM_E2E") == "1" or gateway.live_unlocked)
-    if cloud_enabled:
-        models.update({model_id: "openrouter" for model_id in gateway.MODEL_PRICING})
-    if gateway.use_local and gateway.local_client is not None:
-        models[gateway.local_model] = "local"
+    routed = app.state.openai_router
+    if app.state.llm_backend_mode == "unified" and routed is not None:
+        models.update({
+            model_id: "pineal-router"
+            for model_id in routed.executable_models(gateway)
+        })
+    else:
+        cloud_enabled = gateway.client is not None and (
+            os.getenv("LIVE_LLM_E2E") == "1" or gateway.live_unlocked
+        )
+        if cloud_enabled:
+            models.update({model_id: "openrouter" for model_id in gateway.MODEL_PRICING})
+        if gateway.use_local and gateway.local_client is not None:
+            models[gateway.local_model] = "local"
     return {
         "object": "list",
         "data": [
@@ -461,17 +513,87 @@ async def openai_models():
     }
 
 
+def _stream_chunk_dict(chunk: Any) -> dict[str, Any]:
+    if hasattr(chunk, "model_dump"):
+        value = chunk.model_dump(mode="json", exclude_none=True)
+    elif isinstance(chunk, dict):
+        value = chunk
+    else:
+        raise ValueError("invalid upstream stream chunk")
+    if not isinstance(value, dict):
+        raise ValueError("invalid upstream stream chunk")
+    return value
+
+
+def _openai_streaming_response(
+    routed_stream,
+    *,
+    call_ids: tuple[str, ...],
+    optimization_mode: str,
+    optimization_bytes_saved: int,
+    optimization_lossy: bool,
+) -> StreamingResponse:
+    async def event_source():
+        try:
+            async for chunk in routed_stream.stream.chunks:
+                data = json.dumps(
+                    _stream_chunk_dict(chunk),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            error = _openai_error(
+                "The selected provider stream was interrupted after output began",
+                "server_error",
+                "stream_interrupted",
+            )
+            yield "data: " + json.dumps(error, separators=(",", ":")) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    plan = routed_stream.plan
+    headers = {
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+        "X-Pineal-Call-ID": routed_stream.stream.call_id,
+        "X-Pineal-Call-IDs": ",".join(call_ids),
+        "X-Pineal-Route-ID": plan.route_id,
+        "X-Pineal-Route-Mode": plan.mode.value,
+        "X-Pineal-Routing-Strategy": plan.strategy.value,
+        "X-Pineal-Optimization-Mode": optimization_mode,
+        "X-Pineal-Optimization-Bytes-Saved": str(optimization_bytes_saved),
+        "X-Pineal-Optimization-Lossy": str(optimization_lossy).lower(),
+    }
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
 @app.post("/v1/chat/completions")
 async def openai_chat_completions(payload: OpenAIChatCompletionPayload, request: Request):
     from agent_core.services.llm_gateway import SpendCapExceeded
 
-    if payload.stream:
+    if payload.stream and app.state.llm_backend_mode != "unified":
         return JSONResponse(
             _openai_error(
-                "Streaming is not enabled on this compatibility endpoint",
+                "Streaming requires PINEAL_LLM_BACKEND=unified",
                 "invalid_request_error",
-                "streaming_not_supported",
+                "streaming_requires_unified_backend",
                 "stream",
+            ),
+            status_code=400,
+        )
+    if payload.stream and payload.tools:
+        return JSONResponse(
+            _openai_error(
+                "Streaming tool calls are not enabled",
+                "invalid_request_error",
+                "streaming_tools_not_supported",
+                "tools",
             ),
             status_code=400,
         )
@@ -484,6 +606,17 @@ async def openai_chat_completions(payload: OpenAIChatCompletionPayload, request:
                 str(exc),
                 "invalid_request_error",
                 "invalid_optimization_mode",
+            ),
+            status_code=400,
+        )
+    try:
+        routing_strategy = _routing_strategy(request)
+    except ValueError as exc:
+        return JSONResponse(
+            _openai_error(
+                str(exc),
+                "invalid_request_error",
+                "invalid_routing_strategy",
             ),
             status_code=400,
         )
@@ -500,25 +633,79 @@ async def openai_chat_completions(payload: OpenAIChatCompletionPayload, request:
     )
 
     gateway = _openai_gateway()
+    routed = app.state.openai_router
     effective_max_tokens = payload.max_tokens or payload.max_completion_tokens
+    route_plan = None
+    call_ids: tuple[str, ...] = ()
     try:
         with gateway.capture_calls(
             task_id=_new_task_id(),
             agent_id="openai-compatible",
-        ):
-            result = await gateway.chat_completion(
-                messages=optimized_messages,
-                model=payload.model,
-                temperature=payload.temperature,
-                max_tokens=effective_max_tokens,
-                top_p=payload.top_p,
-                stop=payload.stop,
-                tools=optimized_tools,
-                tool_choice=payload.tool_choice,
-                response_format=payload.response_format,
-                seed=payload.seed,
-                user=payload.user,
-            )
+        ) as call_scope:
+            if app.state.llm_backend_mode == "unified":
+                if routed is None:
+                    raise RoutingRuntimeError("unified router is not configured")
+                if not routed.handles(payload.model):
+                    raise RoutingRuntimeError(
+                        f"unknown unified model group: {payload.model}"
+                    )
+                if payload.stream:
+                    routed_stream = await routed.start_chat_stream(
+                        gateway,
+                        messages=optimized_messages,
+                        model=payload.model,
+                        strategy=routing_strategy,
+                        temperature=payload.temperature,
+                        max_tokens=effective_max_tokens,
+                        top_p=payload.top_p,
+                        stop=payload.stop,
+                        response_format=payload.response_format,
+                        seed=payload.seed,
+                        user=payload.user,
+                        stream_options=payload.stream_options,
+                    )
+                    stream_call_ids = tuple(call_scope.call_ids)
+                    if routed_stream.stream.call_id not in stream_call_ids:
+                        stream_call_ids += (routed_stream.stream.call_id,)
+                    return _openai_streaming_response(
+                        routed_stream,
+                        call_ids=stream_call_ids,
+                        optimization_mode=optimization_mode,
+                        optimization_bytes_saved=optimized.stats.bytes_saved,
+                        optimization_lossy=lossy_applied,
+                    )
+                routed_result = await routed.chat_completion(
+                    gateway,
+                    messages=optimized_messages,
+                    model=payload.model,
+                    strategy=routing_strategy,
+                    temperature=payload.temperature,
+                    max_tokens=effective_max_tokens,
+                    top_p=payload.top_p,
+                    stop=payload.stop,
+                    tools=optimized_tools,
+                    tool_choice=payload.tool_choice,
+                    response_format=payload.response_format,
+                    seed=payload.seed,
+                    user=payload.user,
+                )
+                result = routed_result.result
+                route_plan = routed_result.plan
+            else:
+                result = await gateway.chat_completion(
+                    messages=optimized_messages,
+                    model=payload.model,
+                    temperature=payload.temperature,
+                    max_tokens=effective_max_tokens,
+                    top_p=payload.top_p,
+                    stop=payload.stop,
+                    tools=optimized_tools,
+                    tool_choice=payload.tool_choice,
+                    response_format=payload.response_format,
+                    seed=payload.seed,
+                    user=payload.user,
+                )
+            call_ids = tuple(call_scope.call_ids)
     except SpendCapExceeded:
         return JSONResponse(
             _openai_error(
@@ -574,16 +761,21 @@ async def openai_chat_completions(payload: OpenAIChatCompletionPayload, request:
             _openai_error("Invalid upstream response", "server_error", "invalid_upstream_response"),
             status_code=502,
         )
-    return JSONResponse(
-        body,
-        headers={
-            "Cache-Control": "no-store",
-            "X-Pineal-Call-ID": result.call_id,
-            "X-Pineal-Optimization-Mode": optimization_mode,
-            "X-Pineal-Optimization-Bytes-Saved": str(optimized.stats.bytes_saved),
-            "X-Pineal-Optimization-Lossy": str(lossy_applied).lower(),
-        },
-    )
+    response_headers = {
+        "Cache-Control": "no-store",
+        "X-Pineal-Call-ID": result.call_id,
+        "X-Pineal-Call-IDs": ",".join(call_ids),
+        "X-Pineal-Optimization-Mode": optimization_mode,
+        "X-Pineal-Optimization-Bytes-Saved": str(optimized.stats.bytes_saved),
+        "X-Pineal-Optimization-Lossy": str(lossy_applied).lower(),
+    }
+    if route_plan is not None:
+        response_headers.update({
+            "X-Pineal-Route-ID": route_plan.route_id,
+            "X-Pineal-Route-Mode": route_plan.mode.value,
+            "X-Pineal-Routing-Strategy": route_plan.strategy.value,
+        })
+    return JSONResponse(body, headers=response_headers)
 
 
 # ---------------------------------------------------------------

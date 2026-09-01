@@ -1,4 +1,5 @@
 import contextvars
+import hashlib
 import json
 import os
 import threading
@@ -7,8 +8,11 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterator, List, Optional, Type, TypeVar
+from typing import Any, AsyncIterator, Iterator, List, Mapping, Optional, Type, TypeVar
 
+import httpcore
+import httpx
+from httpcore._backends.auto import AutoBackend
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -17,12 +21,77 @@ from agent_core.services.response_cache import build_cache_from_env
 T = TypeVar("T", bound=BaseModel)
 
 
+class _PinnedNetworkBackend:
+    """Connect one verified hostname to one pre-resolved address."""
+
+    def __init__(self, hostname: str, address: str):
+        self._hostname = hostname.rstrip(".").lower()
+        self._address = address
+        self._backend = AutoBackend()
+
+    async def connect_tcp(self, host, port, **kwargs):
+        if host.rstrip(".").lower() != self._hostname:
+            raise OSError("PINNED_ROUTE_HOST_MISMATCH")
+        return await self._backend.connect_tcp(self._address, port, **kwargs)
+
+    async def connect_unix_socket(self, path, **kwargs):
+        raise OSError("PINNED_ROUTE_UNIX_SOCKET_FORBIDDEN")
+
+    async def sleep(self, seconds):
+        await self._backend.sleep(seconds)
+
+
+class _PinnedAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """httpx transport that preserves TLS SNI while preventing DNS rebinding."""
+
+    def __init__(self, hostname: str, address: str):
+        super().__init__(retries=0)
+        self._pool = httpcore.AsyncConnectionPool(
+            network_backend=_PinnedNetworkBackend(hostname, address),
+            retries=0,
+        )
+
+
 @dataclass(frozen=True)
 class LLMChatResult:
     """One OpenAI-compatible response bound to its immutable gateway call id."""
 
     call_id: str
     response: Any = field(repr=False)
+
+
+@dataclass(frozen=True)
+class GatewayRoute:
+    """One authorized OpenAI-compatible transport selected by the router."""
+
+    connection_id: str
+    provider_id: str
+    model: str
+    base_url: str
+    api_key: Optional[str] = field(default=None, repr=False)
+    local: bool = False
+    hostname: Optional[str] = None
+    pinned_address: Optional[str] = None
+    host_header: Optional[str] = None
+    input_per_million_usd: Optional[float] = None
+    output_per_million_usd: Optional[float] = None
+
+    @property
+    def pricing(self) -> Optional[dict[str, float]]:
+        if self.input_per_million_usd is None or self.output_per_million_usd is None:
+            return None
+        return {
+            "in": self.input_per_million_usd,
+            "out": self.output_per_million_usd,
+        }
+
+
+@dataclass(frozen=True)
+class LLMChatStream:
+    """A prefetched provider stream bound to one immutable gateway call id."""
+
+    call_id: str
+    chunks: AsyncIterator[Any] = field(repr=False)
 
 
 @dataclass
@@ -131,6 +200,7 @@ class LLMGateway:
         self.use_local = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
         self.client = None
         self.local_client = None
+        self._routed_clients: dict[tuple[str, str, str], Any] = {}
         self.failure_count = 0
         self.circuit_open = False
         self.circuit_opened_at = 0.0
@@ -181,9 +251,10 @@ class LLMGateway:
         completion_tokens: Optional[int] = None,
         cost_usd: float = 0.0,
         error: Optional[str] = None,
+        captured_scope: Optional[LLMCallScope] = None,
     ) -> dict[str, Any]:
         """Append one JSON-serializable record for a logical gateway call."""
-        scope = _active_call_scope.get()
+        scope = captured_scope or _active_call_scope.get()
         finished_at = self._utc_now()
         record: dict[str, Any] = {
             "call_id": call_id or str(uuid.uuid4()),
@@ -221,20 +292,57 @@ class LLMGateway:
         except (TypeError, ValueError):
             return default
 
-    def _usage_cost(self, model: str, usage: Any) -> float:
+    @staticmethod
+    def _usage_tokens(usage: Any) -> Optional[tuple[int, int]]:
+        """Return trustworthy token counts, rejecting missing or malformed usage."""
+        if usage is None:
+            return None
+        missing = object()
+        prompt_tokens = getattr(usage, "prompt_tokens", missing)
+        completion_tokens = getattr(usage, "completion_tokens", missing)
+        if (
+            prompt_tokens is missing
+            or completion_tokens is missing
+            or not isinstance(prompt_tokens, int)
+            or not isinstance(completion_tokens, int)
+            or isinstance(prompt_tokens, bool)
+            or isinstance(completion_tokens, bool)
+        ):
+            return None
+        if prompt_tokens < 0 or completion_tokens < 0:
+            return None
+        total_tokens = getattr(usage, "total_tokens", missing)
+        if total_tokens is not missing:
+            fields_set = getattr(usage, "model_fields_set", None)
+            total_was_explicit = fields_set is None or "total_tokens" in fields_set
+            if not total_was_explicit and (total_tokens is None or total_tokens == 0):
+                total_tokens = missing
+            if total_tokens is not missing and (
+                not isinstance(total_tokens, int)
+                or isinstance(total_tokens, bool)
+                or total_tokens <= 0
+            ):
+                return None
+        if prompt_tokens + completion_tokens <= 0:
+            return None
+        return prompt_tokens, completion_tokens
+
+    def _usage_cost(
+        self,
+        model: str,
+        usage: Any,
+        pricing: Optional[Mapping[str, float]] = None,
+    ) -> float:
         """Return observed provider cost from token usage without mutating state."""
         import logging
-        if usage is None:
+        tokens = self._usage_tokens(usage)
+        if tokens is None:
             return 0.0
-        rates = self.MODEL_PRICING.get(model)
+        rates = pricing or self.MODEL_PRICING.get(model)
         if rates is None:
             logging.warning("SPEND: fiyati bilinmeyen model, harcama takip edilemiyor: %s", model)
             return 0.0
-        try:
-            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-        except (TypeError, ValueError):
-            return 0.0
+        prompt_tokens, completion_tokens = tokens
         return (
             prompt_tokens * rates["in"] + completion_tokens * rates["out"]
         ) / 1_000_000.0
@@ -269,9 +377,10 @@ class LLMGateway:
         model: str,
         request_payload: dict[str, Any],
         max_tokens: int,
+        pricing: Optional[Mapping[str, float]] = None,
     ) -> float:
         """Conservatively reserve a structured chat request before dispatch."""
-        rates = self.MODEL_PRICING[model]
+        rates = pricing or self.MODEL_PRICING[model]
         encoded = json.dumps(
             request_payload,
             ensure_ascii=False,
@@ -287,11 +396,9 @@ class LLMGateway:
 
     def _reserve_budget(self, call_id: str, amount: float) -> None:
         """Atomically reserve worst-case cost before any paid provider call."""
-        if self.spend_cap_usd <= 0:
-            return
         with self._budget_lock:
             projected = self.spend_usd + self._reserved_spend_usd + amount
-            if projected > self.spend_cap_usd:
+            if self.spend_cap_usd > 0 and projected > self.spend_cap_usd:
                 raise SpendCapExceeded(self._cap_message_locked(projected=projected))
             self._budget_reservations[call_id] = amount
             self._reserved_spend_usd += amount
@@ -302,12 +409,29 @@ class LLMGateway:
             amount = self._budget_reservations.pop(call_id, 0.0)
             self._reserved_spend_usd = max(0.0, self._reserved_spend_usd - amount)
 
-    def _settle_budget(self, call_id: str, model: str, usage: Any) -> float:
-        """Replace a reservation with observed cost in one atomic operation."""
-        cost = self._usage_cost(model, usage)
+    def _settle_budget(
+        self,
+        call_id: str,
+        model: str,
+        usage: Any,
+        pricing: Optional[Mapping[str, float]] = None,
+    ) -> float:
+        """Replace a reservation with observed or conservative accounted cost."""
+        usage_is_trustworthy = self._usage_tokens(usage) is not None
+        observed_cost = self._usage_cost(model, usage, pricing)
         with self._budget_lock:
             reserved = self._budget_reservations.pop(call_id, 0.0)
             self._reserved_spend_usd = max(0.0, self._reserved_spend_usd - reserved)
+            # A paid response without trustworthy usage must not erase its spend
+            # reservation and silently reopen capacity under the hard cap.
+            cost = reserved if reserved > 0 and not usage_is_trustworthy else observed_cost
+            if reserved > 0 and not usage_is_trustworthy:
+                import logging
+
+                logging.warning(
+                    "Provider returned missing or invalid usage; retaining full "
+                    "reserved cost as spend"
+                )
             self.spend_usd += cost
             self.total_cost += cost
         return cost
@@ -342,7 +466,13 @@ class LLMGateway:
                 "active_reservations": len(self._budget_reservations),
             }
 
-    def _pricing_guard(self, model: str, *, kind: str) -> None:
+    def _pricing_guard(
+        self,
+        model: str,
+        *,
+        kind: str,
+        pricing: Optional[Mapping[str, float]] = None,
+    ) -> None:
         """[017] fix: fiyatı bilinmeyen model için ÜCRETLİ canlı çağrı varsayılan
         olarak REDDEDİLİR. Eski davranış yalnızca uyarı loglayıp harcamayı 0
         sayıyordu; bu, bilinmeyen modelle spend cap'in sessiz bypass'ı demekti.
@@ -350,7 +480,7 @@ class LLMGateway:
         Açık kabul: PINEAL_ALLOW_UNPRICED_MODELS=1 (takipsiz maliyet bilinçli
         seçimdir; unpriced_calls sayacı gözlemlenebilirlikte raporlanır).
         """
-        if model in self.MODEL_PRICING:
+        if pricing is not None or model in self.MODEL_PRICING:
             return
         if os.getenv("PINEAL_ALLOW_UNPRICED_MODELS", "0") == "1":
             self.unpriced_calls += 1
@@ -449,6 +579,38 @@ class LLMGateway:
             )
         except Exception:
             self.local_client = None
+
+    def _client_for_route(self, route: GatewayRoute):
+        """Build/cache transport clients without moving network I/O out of the gateway."""
+        credential_fingerprint = hashlib.sha256(
+            (route.api_key or "").encode("utf-8")
+        ).hexdigest()
+        cache_key = (route.connection_id, route.base_url, credential_fingerprint)
+        client = self._routed_clients.get(cache_key)
+        if client is None:
+            http_client = None
+            if route.hostname and route.pinned_address:
+                http_client = httpx.AsyncClient(
+                    transport=_PinnedAsyncHTTPTransport(
+                        route.hostname,
+                        route.pinned_address,
+                    ),
+                    follow_redirects=False,
+                    trust_env=False,
+                )
+            client = AsyncOpenAI(
+                base_url=route.base_url,
+                api_key=route.api_key or "not-needed",
+                default_headers=(
+                    {"Host": route.host_header} if route.host_header else None
+                ),
+                http_client=http_client,
+                max_retries=0,
+            )
+            if len(self._routed_clients) >= 128:
+                self._routed_clients.pop(next(iter(self._routed_clients)))
+            self._routed_clients[cache_key] = client
+        return client
 
     async def query(
         self,
@@ -573,19 +735,24 @@ class LLMGateway:
             except RuntimeError:
                 log_call(error="UNKNOWN_PRICING")
                 raise
-            if self.spend_cap_usd > 0:
-                if selected_model not in self.MODEL_PRICING:
-                    log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
-                    raise RuntimeError(
-                        "UNKNOWN_PRICING_FOR_SPEND_CAP: unpriced models cannot run while a spend cap is active"
-                    )
-                reservation = self._maximum_call_cost(selected_model, prompt, system_prompt, images)
+            if selected_model in self.MODEL_PRICING:
+                reservation = self._maximum_call_cost(
+                    selected_model,
+                    prompt,
+                    system_prompt,
+                    images,
+                )
                 try:
                     self._reserve_budget(call_id, reservation)
                     budget_reserved = True
                 except SpendCapExceeded:
                     log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
                     raise
+            elif self.spend_cap_usd > 0:
+                log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
+                raise RuntimeError(
+                    "UNKNOWN_PRICING_FOR_SPEND_CAP: unpriced models cannot run while a spend cap is active"
+                )
 
         max_retries = 3
         for attempt_index in range(max_retries):
@@ -596,7 +763,7 @@ class LLMGateway:
                 # reserve again before another request can leave the process.
                 if (
                     not is_local_request
-                    and self.spend_cap_usd > 0
+                    and selected_model in self.MODEL_PRICING
                     and not budget_reserved
                 ):
                     reservation = self._maximum_call_cost(
@@ -680,16 +847,15 @@ class LLMGateway:
                         except RuntimeError:
                             log_call(error="UNKNOWN_PRICING", attempt=attempt)
                             raise
-                        if self.spend_cap_usd > 0:
-                            reservation = self._maximum_call_cost(
-                                selected_model, prompt, system_prompt, images
-                            )
-                            try:
-                                self._reserve_budget(call_id, reservation)
-                                budget_reserved = True
-                            except SpendCapExceeded:
-                                log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
-                                raise
+                        reservation = self._maximum_call_cost(
+                            selected_model, prompt, system_prompt, images
+                        )
+                        try:
+                            self._reserve_budget(call_id, reservation)
+                            budget_reserved = True
+                        except SpendCapExceeded:
+                            log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
+                            raise
                         continue
 
                 is_auth_error = any(
@@ -754,6 +920,7 @@ class LLMGateway:
         response_format: Optional[dict[str, Any]] = None,
         seed: Optional[int] = None,
         user: Optional[str] = None,
+        route: Optional[GatewayRoute] = None,
     ) -> LLMChatResult:
         """Execute a non-streaming OpenAI chat request under gateway controls.
 
@@ -768,11 +935,14 @@ class LLMGateway:
             raise ValueError("model is required")
         if not messages:
             raise ValueError("at least one message is required")
-        selected_model = self.MODEL_REGISTRY.get(model, model)
-        is_local_request = bool(self.use_local)
-        if is_local_request and selected_model == "local":
+        selected_model = route.model if route is not None else self.MODEL_REGISTRY.get(model, model)
+        is_local_request = route.local if route is not None else bool(self.use_local)
+        if route is None and is_local_request and selected_model == "local":
             selected_model = self.local_model
-        provider = "local" if is_local_request else "openrouter"
+        provider = route.provider_id if route is not None else (
+            "local" if is_local_request else "openrouter"
+        )
+        pricing = route.pricing if route is not None else None
         effective_max_tokens = self.max_output_tokens if max_tokens is None else max_tokens
         if effective_max_tokens < 1 or effective_max_tokens > self.max_output_tokens:
             raise ValueError(f"max_tokens must be between 1 and gateway cap {self.max_output_tokens}")
@@ -821,7 +991,9 @@ class LLMGateway:
                 error=error,
             )
 
-        if self.circuit_open:
+        # Routed calls use provider-scoped circuits in UnifiedRouter. The legacy
+        # gateway circuit remains only for the single-provider compatibility path.
+        if route is None and self.circuit_open:
             if time.time() - self.circuit_opened_at > 60.0:
                 self.circuit_open = False
                 self.failure_count = 0
@@ -829,7 +1001,17 @@ class LLMGateway:
                 log_call(error="CIRCUIT_OPEN")
                 raise RuntimeError("LLM_CIRCUIT_OPEN")
 
-        if is_local_request:
+        if route is not None:
+            if (
+                not is_local_request
+                and os.getenv("LIVE_LLM_E2E") != "1"
+                and os.getenv("PINEAL_ROUTER_LIVE") != "1"
+                and not self.live_unlocked
+            ):
+                log_call(error="REAL_LLM_CALL_NOT_EXECUTED")
+                raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED")
+            target_client = self._client_for_route(route)
+        elif is_local_request:
             target_client = self.local_client
             if target_client is None:
                 log_call(error="LOCAL_PROVIDER_UNAVAILABLE")
@@ -846,18 +1028,20 @@ class LLMGateway:
         budget_reserved = False
         if not is_local_request:
             try:
-                self._pricing_guard(selected_model, kind="chat.completions")
+                self._pricing_guard(
+                    selected_model,
+                    kind="chat.completions",
+                    pricing=pricing,
+                )
             except RuntimeError:
                 log_call(error="UNKNOWN_PRICING")
                 raise
-            if self.spend_cap_usd > 0:
-                if selected_model not in self.MODEL_PRICING:
-                    log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
-                    raise RuntimeError("UNKNOWN_PRICING_FOR_SPEND_CAP")
+            if pricing is not None or selected_model in self.MODEL_PRICING:
                 reservation = self._maximum_chat_cost(
                     selected_model,
                     request_payload,
                     effective_max_tokens,
+                    pricing,
                 )
                 try:
                     self._reserve_budget(call_id, reservation)
@@ -865,8 +1049,13 @@ class LLMGateway:
                 except SpendCapExceeded:
                     log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
                     raise
+            elif self.spend_cap_usd > 0:
+                log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
+                raise RuntimeError("UNKNOWN_PRICING_FOR_SPEND_CAP")
 
-        max_retries = 3
+        # A unified AttemptLease maps to exactly one provider HTTP attempt.
+        # Legacy mode retains its existing bounded same-provider retry behavior.
+        max_retries = 1 if route is not None else 3
         for attempt_index in range(max_retries):
             attempt = attempt_index + 1
             try:
@@ -874,17 +1063,20 @@ class LLMGateway:
                     **request_payload,
                     timeout=self.request_timeout_seconds,
                 )
-                self.failure_count = 0
+                if route is None:
+                    self.failure_count = 0
                 usage = getattr(response, "usage", None)
                 if not is_local_request:
                     logical_cost_usd = self._settle_budget(
                         call_id,
                         selected_model,
                         usage,
+                        pricing,
                     )
                     budget_reserved = False
-                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else None
-                completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else None
+                usage_tokens = self._usage_tokens(usage)
+                prompt_tokens = usage_tokens[0] if usage_tokens is not None else None
+                completion_tokens = usage_tokens[1] if usage_tokens is not None else None
                 log_call(
                     attempt=attempt,
                     prompt_tokens=prompt_tokens,
@@ -916,7 +1108,7 @@ class LLMGateway:
                 if budget_reserved:
                     self._release_budget(call_id)
                     budget_reserved = False
-                if retryable:
+                if retryable and route is None:
                     self.failure_count += 1
                     if self.failure_count > 5:
                         self.circuit_open = True
@@ -929,6 +1121,182 @@ class LLMGateway:
                 raise
 
         raise AssertionError("unreachable chat completion retry state")
+
+    async def start_chat_stream(
+        self,
+        *,
+        messages: List[dict[str, Any]],
+        model: str,
+        route: GatewayRoute,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        stop: Any = None,
+        response_format: Optional[dict[str, Any]] = None,
+        seed: Optional[int] = None,
+        user: Optional[str] = None,
+        stream_options: Optional[dict[str, Any]] = None,
+    ) -> LLMChatStream:
+        """Start one routed HTTP stream and prefetch its first SSE chunk.
+
+        Unified routing gives every lease exactly one provider request. Failure
+        before this method returns is therefore eligible for router fallback;
+        errors after the prefetched chunk are surfaced as interruptions and can
+        never switch provider mid-stream.
+        """
+        import asyncio
+
+        if not messages:
+            raise ValueError("at least one message is required")
+        selected_model = route.model
+        effective_max_tokens = self.max_output_tokens if max_tokens is None else max_tokens
+        if effective_max_tokens < 1 or effective_max_tokens > self.max_output_tokens:
+            raise ValueError(f"max_tokens must be between 1 and gateway cap {self.max_output_tokens}")
+        if (
+            not route.local
+            and os.getenv("LIVE_LLM_E2E") != "1"
+            and os.getenv("PINEAL_ROUTER_LIVE") != "1"
+            and not self.live_unlocked
+        ):
+            raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED")
+
+        request_payload: dict[str, Any] = {
+            "model": selected_model,
+            "messages": messages,
+            "max_tokens": effective_max_tokens,
+            "stream": True,
+        }
+        optional_parameters = {
+            "temperature": temperature,
+            "top_p": top_p,
+            "stop": stop,
+            "response_format": response_format,
+            "seed": seed,
+            "user": user,
+            "stream_options": stream_options,
+        }
+        request_payload.update({
+            key: value for key, value in optional_parameters.items() if value is not None
+        })
+
+        call_id = str(uuid.uuid4())
+        started_at = self._utc_now()
+        started_monotonic = time.monotonic()
+        captured_scope = _active_call_scope.get()
+        pricing = route.pricing
+        budget_reserved = False
+        reservation = 0.0
+
+        def log_call(
+            *,
+            error: Optional[str] = None,
+            usage: Any = None,
+            cost_usd: float = 0.0,
+        ) -> None:
+            usage_tokens = self._usage_tokens(usage)
+            self._log_call(
+                "chat.completions.stream",
+                selected_model,
+                route.provider_id,
+                call_id=call_id,
+                started_at=started_at,
+                attempt=1,
+                duration_ms=int((time.monotonic() - started_monotonic) * 1000),
+                prompt_tokens=usage_tokens[0] if usage_tokens else None,
+                completion_tokens=usage_tokens[1] if usage_tokens else None,
+                cost_usd=cost_usd,
+                error=error,
+                captured_scope=captured_scope,
+            )
+
+        if not route.local:
+            try:
+                self._pricing_guard(
+                    selected_model,
+                    kind="chat.completions.stream",
+                    pricing=pricing,
+                )
+            except RuntimeError:
+                log_call(error="UNKNOWN_PRICING")
+                raise
+            if pricing is not None or selected_model in self.MODEL_PRICING:
+                reservation = self._maximum_chat_cost(
+                    selected_model,
+                    request_payload,
+                    effective_max_tokens,
+                    pricing,
+                )
+                try:
+                    self._reserve_budget(call_id, reservation)
+                    budget_reserved = True
+                except SpendCapExceeded:
+                    log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
+                    raise
+            elif self.spend_cap_usd > 0:
+                log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
+                raise RuntimeError("UNKNOWN_PRICING_FOR_SPEND_CAP")
+
+        target_client = self._client_for_route(route)
+        try:
+            upstream = await target_client.chat.completions.create(
+                **request_payload,
+                timeout=self.request_timeout_seconds,
+            )
+            first_chunk = await anext(upstream)
+        except asyncio.CancelledError:
+            if budget_reserved:
+                self._release_budget(call_id)
+            log_call(error="CANCELLED")
+            raise
+        except Exception as exc:
+            if budget_reserved:
+                self._release_budget(call_id)
+            log_call(error=type(exc).__name__)
+            raise
+
+        async def chunks() -> AsyncIterator[Any]:
+            settled = False
+            observed_usage = None
+
+            def observe(chunk: Any) -> None:
+                nonlocal observed_usage
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    observed_usage = usage
+
+            def finalize(error: Optional[str]) -> None:
+                nonlocal settled
+                if settled:
+                    return
+                settled = True
+                cost = 0.0
+                if not route.local:
+                    cost = self._settle_budget(
+                        call_id,
+                        selected_model,
+                        observed_usage,
+                        pricing,
+                    )
+                log_call(error=error, usage=observed_usage, cost_usd=cost)
+
+            try:
+                observe(first_chunk)
+                yield first_chunk
+                async for chunk in upstream:
+                    observe(chunk)
+                    yield chunk
+            except asyncio.CancelledError:
+                finalize("CANCELLED")
+                raise
+            except Exception as exc:
+                finalize(f"STREAM_INTERRUPTED::{type(exc).__name__}")
+                raise
+            else:
+                finalize(None)
+            finally:
+                finalize("STREAM_CLOSED")
+
+        return LLMChatStream(call_id=call_id, chunks=chunks())
 
     def extract_json(self, text: str) -> dict:
         """Markdown fence ve etiketleri temizleyip JSON ayıklar."""
