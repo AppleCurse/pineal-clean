@@ -311,7 +311,7 @@ def test_streaming_is_rejected_honestly_before_provider_execution(monkeypatch):
         )
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "streaming_not_supported"
+    assert response.json()["error"]["code"] == "streaming_requires_unified_backend"
     assert calls == 0
     assert gateway.call_log == []
 
