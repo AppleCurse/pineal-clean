@@ -29,8 +29,8 @@
 set -euo pipefail
 
 SERVICE="pineal"
-MEMORY_FILE="/app/memory/dr_test.json"
-VAULT_FILE="/app/vault-data/dr_test.json"
+MEMORY_FILE="//app/memory/dr_test.json"
+VAULT_FILE="//app/vault-data/dr_test.json"
 MARKER="persisted_test_data"
 WAIT_TIMEOUT="${DR_WAIT_TIMEOUT:-300}"
 
@@ -87,7 +87,7 @@ dcomp up -d "${WAIT_ARGS[@]}"
 ok "konteyner çalışıyor ve /health hazır"
 
 step "2/6 Kalıcı volume'lara test verisi yaz"
-MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" sh -c \
+dcomp exec -T "$SERVICE" sh -c \
     "mkdir -p /app/memory /app/vault-data \
      && printf '{\"status\": \"%s\"}' '$MARKER' > '$MEMORY_FILE' \
      && printf '{\"status\": \"%s\"}' '$MARKER' > '$VAULT_FILE'"
@@ -104,12 +104,12 @@ ok "konteyner yeniden oluşturuldu ve sağlıklı"
 
 step "5/6 Veri hayatta mı?"
 RESULT=0
-if MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" cat "$MEMORY_FILE" 2>/dev/null | grep -q "$MARKER"; then
+if dcomp exec -T "$SERVICE" cat "$MEMORY_FILE" 2>/dev/null | grep -q "$MARKER"; then
     ok "pineal_memory -> veri HAYATTA"
 else
     bad "pineal_memory -> veri KAYIP"; RESULT=1
 fi
-if MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" cat "$VAULT_FILE" 2>/dev/null | grep -q "$MARKER"; then
+if dcomp exec -T "$SERVICE" cat "$VAULT_FILE" 2>/dev/null | grep -q "$MARKER"; then
     ok "pineal_vault  -> veri HAYATTA"
 else
     bad "pineal_vault  -> veri KAYIP"; RESULT=1
@@ -117,7 +117,7 @@ fi
 
 step "6/6 Temizlik"
 if [ "$RESULT" -eq 0 ]; then
-    MSYS_NO_PATHCONV=1 dcomp exec -T "$SERVICE" sh -c "rm -f '$MEMORY_FILE' '$VAULT_FILE'" || true
+    dcomp exec -T "$SERVICE" sh -c "rm -f '$MEMORY_FILE' '$VAULT_FILE'" || true
     ok "test verisi volume'lardan silindi (stack 'down' ile durduruldu)"
 else
     echo "  Hata ayıklama için dr_test.json dosyaları volume'larda bırakıldı."
