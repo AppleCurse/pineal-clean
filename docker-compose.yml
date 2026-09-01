@@ -1,6 +1,11 @@
 services:
   pineal:
-    build: .
+    build:
+      context: .
+      # Playwright indirme aynası (build-time). .env'e örn:
+      #   PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+      args:
+        PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
     ports:
       - "8000:8000"
     env_file:

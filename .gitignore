@@ -46,3 +46,6 @@ memory/*.db
 venv/
 test_mem/
 backups/
+
+# scripts/test_disaster_recovery.sh geçici compose override dosyası
+.dr_override.*
