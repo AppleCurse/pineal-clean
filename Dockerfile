@@ -24,8 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt \
-    && python -m playwright install --with-deps chromium
+RUN pip install --default-timeout=300 -r requirements.txt
+RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000     python -m playwright install --with-deps chromium ||     (echo "Retrying Playwright download..." && sleep 15 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium) ||     (echo "Retrying Playwright download 2..." && sleep 30 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium)
 
 COPY backend/ ./backend/
 COPY agent_core/ ./agent_core/
