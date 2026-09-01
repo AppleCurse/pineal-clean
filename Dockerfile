@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --default-timeout=300 -r requirements.txt
+COPY requirements.txt requirements-osint.txt ./
+RUN pip install --default-timeout=300 -r requirements.txt && pip install --default-timeout=300 -r requirements-osint.txt
 RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000     python -m playwright install --with-deps chromium ||     (echo "Retrying Playwright download..." && sleep 15 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium) ||     (echo "Retrying Playwright download 2..." && sleep 30 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium)
 
 COPY backend/ ./backend/
