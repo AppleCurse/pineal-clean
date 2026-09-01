@@ -3,10 +3,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, WebSocket, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
@@ -106,58 +108,128 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+    expose_headers=["X-Pineal-Call-ID"],
 )
 
-# --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa tum /api/* X-API-Key ister;
-# tanimli degilse sistem acik calisir (yerel tek kullanicili arac, geriye uyumluluk). ---
+# --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa /api/* ve OpenAI uyumlu /v1/*
+# kimlik doğrulaması ister. /v1 ayrıca standart Authorization: Bearer biçimini
+# kabul eder; bu anahtar hiçbir zaman upstream provider anahtarı olarak kullanılmaz. ---
+def _openai_error(message: str, error_type: str, code: str, param: Optional[str] = None) -> dict:
+    return {
+        "error": {
+            "message": message,
+            "type": error_type,
+            "param": param,
+            "code": code,
+        }
+    }
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+    is_api = request.url.path.startswith("/api/")
+    is_openai = request.url.path.startswith("/v1/")
+    if (is_api or is_openai) and request.method != "OPTIONS":
         try:
             posture = security_posture()
         except SecurityConfigurationError as exc:
-            return JSONResponse(
-                {"error": {"code": exc.error_code, "message": "Secure startup configuration required"}},
-                status_code=503,
+            body = (
+                _openai_error(
+                    "Secure startup configuration required",
+                    "server_error",
+                    exc.error_code,
+                )
+                if is_openai
+                else {"error": {"code": exc.error_code, "message": "Secure startup configuration required"}}
             )
-        if posture["auth_required"] and not token_matches(request.headers.get("x-api-key")):
-            return JSONResponse(
-                {"error": {"code": "UNAUTHORIZED", "message": "X-API-Key gerekli veya hatalı"}},
-                status_code=401,
+            return JSONResponse(body, status_code=503)
+
+        presented_token = request.headers.get("x-api-key")
+        if is_openai:
+            authorization = request.headers.get("authorization", "")
+            scheme, separator, bearer = authorization.partition(" ")
+            if separator and scheme.lower() == "bearer" and bearer:
+                presented_token = bearer
+        if posture["auth_required"] and not token_matches(presented_token):
+            body = (
+                _openai_error(
+                    "Invalid or missing API key",
+                    "authentication_error",
+                    "invalid_api_key",
+                )
+                if is_openai
+                else {"error": {"code": "UNAUTHORIZED", "message": "X-API-Key gerekli veya hatalı"}}
             )
+            return JSONResponse(body, status_code=401)
+
+        identity = presented_token or (request.client.host if request.client else "unknown")
+        identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
         if request.url.path.startswith("/api/experimental/"):
-            identity = request.headers.get("x-api-key") or (request.client.host if request.client else "unknown")
-            identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
             if not rate_limit(f"experimental:{identity_hash}", "experimental"):
                 return JSONResponse(
                     {"error": {"code": "RATE_LIMITED", "message": "Experimental endpoint rate limit exceeded"}},
                     status_code=429,
                 )
+        elif is_openai and not rate_limit(f"openai:{identity_hash}", "openai"):
+            return JSONResponse(
+                _openai_error(
+                    "OpenAI-compatible endpoint rate limit exceeded",
+                    "rate_limit_error",
+                    "rate_limit_exceeded",
+                ),
+                status_code=429,
+            )
     return await call_next(request)
+
 
 # --- Tutarli hata modeli (FAZ 3) ---
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 @app.exception_handler(StarletteHTTPException)
 async def http_error_handler(request: Request, exc: StarletteHTTPException):
-    return JSONResponse(
-        {"error": {"code": str(exc.status_code), "message": str(exc.detail)}},
-        status_code=exc.status_code,
+    body = (
+        _openai_error(str(exc.detail), "invalid_request_error", str(exc.status_code))
+        if request.url.path.startswith("/v1/")
+        else {"error": {"code": str(exc.status_code), "message": str(exc.detail)}}
     )
+    return JSONResponse(body, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    if not request.url.path.startswith("/v1/"):
+        return await request_validation_exception_handler(request, exc)
+    first_error = exc.errors()[0] if exc.errors() else {}
+    location = first_error.get("loc", ())
+    param = ".".join(str(part) for part in location if part != "body") or None
+    return JSONResponse(
+        _openai_error(
+            "Invalid chat completion request",
+            "invalid_request_error",
+            "validation_error",
+            param,
+        ),
+        status_code=422,
+    )
+
 
 @app.exception_handler(Exception)
 async def unhandled_error_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        {"error": {"code": "INTERNAL", "message": type(exc).__name__}},
-        status_code=500,
+    body = (
+        _openai_error("Internal server error", "server_error", "internal_error")
+        if request.url.path.startswith("/v1/")
+        else {"error": {"code": "INTERNAL", "message": type(exc).__name__}}
     )
+    return JSONResponse(body, status_code=500)
+
 
 # --- Basit kayan-pencere rate limit (FAZ 3; ek bagimlilik yok) ---
 RATE_LIMITS = {
     "initiate": (5, 60),
     "aspasia": (20, 60),
     "experimental": (10, 60),
+    "openai": (60, 60),
 }  # (request count, window seconds)
 _rate_buckets: Dict[str, deque] = defaultdict(deque)
 
@@ -287,6 +359,172 @@ def get_executor(client_id: str) -> PinealExecutor:
 
 def get_vault(client_id: str) -> dict:
     return get_room(client_id)["vault"]
+
+
+class OpenAIChatCompletionPayload(BaseModel):
+    """Supported, bounded subset of the OpenAI chat-completions request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1, max_length=256)
+    messages: list[dict[str, Any]] = Field(min_length=1, max_length=1024)
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    top_p: Optional[float] = Field(default=None, ge=0, le=1)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    max_completion_tokens: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    stop: Any = None
+    tools: Optional[list[dict[str, Any]]] = Field(default=None, max_length=128)
+    tool_choice: Any = None
+    response_format: Optional[dict[str, Any]] = None
+    seed: Optional[int] = None
+    user: Optional[str] = Field(default=None, max_length=256)
+    n: int = Field(default=1, ge=1, le=1)
+    stream: bool = False
+    stream_options: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_protocol_shape(self):
+        if self.max_tokens is not None and self.max_completion_tokens is not None:
+            raise ValueError("max_tokens and max_completion_tokens are mutually exclusive")
+        allowed_roles = {"system", "developer", "user", "assistant", "tool", "function"}
+        for message in self.messages:
+            if not isinstance(message, dict) or message.get("role") not in allowed_roles:
+                raise ValueError("every message requires a supported role")
+        encoded = json.dumps(
+            self.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > 1_048_576:
+            raise ValueError("chat completion request exceeds 1 MiB")
+        return self
+
+
+def _openai_gateway():
+    return get_executor("openai-compatible").llm_gateway
+
+
+@app.get("/v1/models")
+async def openai_models():
+    gateway = _openai_gateway()
+    now = int(time.time())
+    models: dict[str, str] = {}
+    cloud_enabled = gateway.client is not None and (os.getenv("LIVE_LLM_E2E") == "1" or gateway.live_unlocked)
+    if cloud_enabled:
+        models.update({model_id: "openrouter" for model_id in gateway.MODEL_PRICING})
+    if gateway.use_local and gateway.local_client is not None:
+        models[gateway.local_model] = "local"
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": model_id,
+                "object": "model",
+                "created": now,
+                "owned_by": owner,
+            }
+            for model_id, owner in sorted(models.items())
+        ],
+    }
+
+
+@app.post("/v1/chat/completions")
+async def openai_chat_completions(payload: OpenAIChatCompletionPayload):
+    from agent_core.services.llm_gateway import SpendCapExceeded
+
+    if payload.stream:
+        return JSONResponse(
+            _openai_error(
+                "Streaming is not enabled on this compatibility endpoint",
+                "invalid_request_error",
+                "streaming_not_supported",
+                "stream",
+            ),
+            status_code=400,
+        )
+
+    gateway = _openai_gateway()
+    effective_max_tokens = payload.max_tokens or payload.max_completion_tokens
+    try:
+        with gateway.capture_calls(
+            task_id=_new_task_id(),
+            agent_id="openai-compatible",
+        ):
+            result = await gateway.chat_completion(
+                messages=payload.messages,
+                model=payload.model,
+                temperature=payload.temperature,
+                max_tokens=effective_max_tokens,
+                top_p=payload.top_p,
+                stop=payload.stop,
+                tools=payload.tools,
+                tool_choice=payload.tool_choice,
+                response_format=payload.response_format,
+                seed=payload.seed,
+                user=payload.user,
+            )
+    except SpendCapExceeded:
+        return JSONResponse(
+            _openai_error(
+                "Configured spend cap would be exceeded",
+                "insufficient_quota",
+                "spend_cap_exceeded",
+            ),
+            status_code=429,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            _openai_error(str(exc), "invalid_request_error", "invalid_request"),
+            status_code=400,
+        )
+    except RuntimeError as exc:
+        code = str(exc).split(":", 1)[0]
+        if code.startswith("UNKNOWN_PRICING"):
+            status_code = 400
+            message = "Requested model has no verified pricing record"
+            error_type = "invalid_request_error"
+        else:
+            status_code = 503
+            message = "Configured LLM provider is unavailable"
+            error_type = "server_error"
+        return JSONResponse(
+            _openai_error(message, error_type, code.lower()),
+            status_code=status_code,
+        )
+    except Exception as exc:
+        upstream_status = getattr(exc, "status_code", None)
+        if upstream_status in {400, 404, 408, 413, 422, 429}:
+            status_code = upstream_status
+            error_type = "rate_limit_error" if upstream_status == 429 else "invalid_request_error"
+        else:
+            status_code = 502
+            error_type = "server_error"
+        return JSONResponse(
+            _openai_error(
+                "Upstream provider rejected the chat completion request",
+                error_type,
+                f"upstream_{upstream_status or 'error'}",
+            ),
+            status_code=status_code,
+        )
+
+    response = result.response
+    if hasattr(response, "model_dump"):
+        body = response.model_dump(mode="json", exclude_none=True)
+    elif isinstance(response, dict):
+        body = response
+    else:
+        return JSONResponse(
+            _openai_error("Invalid upstream response", "server_error", "invalid_upstream_response"),
+            status_code=502,
+        )
+    return JSONResponse(
+        body,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Pineal-Call-ID": result.call_id,
+        },
+    )
 
 
 # ---------------------------------------------------------------
