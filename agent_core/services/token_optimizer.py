@@ -341,7 +341,13 @@ def _compact_json(text: str, _context: ToolOutputContext) -> str:
     return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
 
 
+def _contains_fenced_code(text: str) -> bool:
+    return bool(re.search(r"(?m)^\s*(?:```|~~~)", text))
+
+
 def _collapse_repeated_lines(text: str, context: ToolOutputContext) -> str:
+    if _contains_fenced_code(text):
+        return text
     minimum_repeats = _bounded_option(context.options, "minimum_repeats", 3, 2, 1000)
     lines = text.splitlines()
     if len(lines) < minimum_repeats:
@@ -365,6 +371,8 @@ def _collapse_repeated_lines(text: str, context: ToolOutputContext) -> str:
 
 
 def _head_tail(text: str, context: ToolOutputContext) -> str:
+    if _contains_fenced_code(text):
+        return text
     max_lines = _bounded_option(context.options, "max_lines", 400, 20, 20_000)
     head_lines = _bounded_option(context.options, "head_lines", max_lines // 2, 10, max_lines - 10)
     lines = text.splitlines()

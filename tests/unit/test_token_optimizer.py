@@ -157,6 +157,21 @@ def test_head_tail_is_bounded_and_only_runs_with_lossy_consent():
     assert "80 lines omitted by explicit lossy policy" in output
 
 
+def test_lossy_engines_preserve_fenced_code_even_with_explicit_consent():
+    fenced_code = "```python\n" + "print('keep exact')\n" * 500 + "```"
+    body = {"messages": [{"role": "tool", "content": fenced_code}]}
+    policy = _policy(
+        "collapse-repeated-lines",
+        "head-tail",
+        allow_lossy=True,
+        engine_options={"head-tail": {"max_lines": 20}},
+    )
+
+    result = TokenOptimizer().optimize(body, policy)
+    assert result.body == body
+    assert result.stats.items_changed == 0
+
+
 def test_engine_failures_empty_outputs_and_growth_all_fail_open_without_error_text():
     request_secret = "tool-output-secret"
 

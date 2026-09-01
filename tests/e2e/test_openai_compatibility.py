@@ -120,6 +120,120 @@ def test_chat_completions_preserves_messages_tools_accounting_and_call_identity(
     assert gateway.call_log[0]["prompt_tokens"] == 100
     assert gateway.budget_status()["active_reservations"] == 0
     assert gateway.spend_usd > 0
+    assert response.headers["x-pineal-optimization-mode"] == "disabled"
+    assert response.headers["x-pineal-optimization-bytes-saved"] == "0"
+    assert response.headers["x-pineal-optimization-lossy"] == "false"
+
+
+def test_safe_tool_optimization_is_exactly_reported_and_preserves_non_tool_fields(monkeypatch):
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return _completion_response()
+
+    gateway = _gateway(handler)
+    monkeypatch.setattr(api_module, "_openai_gateway", lambda: gateway)
+    pretty_tool_json = (
+        "\x1b[31m"
+        + json.dumps(
+            {"records": [{"id": index, "value": "x" * 30} for index in range(20)]},
+            indent=2,
+        )
+        + "\x1b[0m"
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    messages = [
+        {"role": "system", "content": "Keep this spacing exactly."},
+        {"role": "user", "content": "Do not rewrite me."},
+        {"role": "tool", "tool_call_id": "call-1", "content": pretty_tool_json},
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"X-Pineal-Tool-Optimization": "safe"},
+            json={"model": "solar_pro4", "messages": messages, "tools": tools},
+        )
+
+    assert response.status_code == 200
+    forwarded = captured["body"]
+    assert forwarded["messages"][:2] == messages[:2]
+    assert forwarded["tools"] == tools
+    assert "\x1b" not in forwarded["messages"][2]["content"]
+    assert "\n" not in forwarded["messages"][2]["content"]
+    assert response.headers["x-pineal-optimization-mode"] == "safe"
+    assert int(response.headers["x-pineal-optimization-bytes-saved"]) > 0
+    assert response.headers["x-pineal-optimization-lossy"] == "false"
+
+
+def test_lossy_mode_still_preserves_fenced_code_and_reports_no_loss(monkeypatch):
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return _completion_response()
+
+    gateway = _gateway(handler)
+    monkeypatch.setattr(api_module, "_openai_gateway", lambda: gateway)
+    fenced_code = "```python\n" + "print('must remain exact')\n" * 500 + "```"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"X-Pineal-Tool-Optimization": "lossy"},
+            json={
+                "model": "solar_pro4",
+                "messages": [{"role": "tool", "tool_call_id": "call-1", "content": fenced_code}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured["body"]["messages"][0]["content"] == fenced_code
+    assert response.headers["x-pineal-optimization-mode"] == "lossy"
+    assert response.headers["x-pineal-optimization-lossy"] == "false"
+
+
+def test_lossy_tool_optimization_requires_opt_in_and_marks_the_response(monkeypatch):
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return _completion_response()
+
+    gateway = _gateway(handler)
+    monkeypatch.setattr(api_module, "_openai_gateway", lambda: gateway)
+    repeated_output = "still running\n" * 40
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"X-Pineal-Tool-Optimization": "lossy"},
+            json={
+                "model": "solar_pro4",
+                "messages": [
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-1",
+                        "content": repeated_output,
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    output = captured["body"]["messages"][0]["content"]
+    assert "previous line repeated 39 times" in output
+    assert response.headers["x-pineal-optimization-lossy"] == "true"
+    assert int(response.headers["x-pineal-optimization-bytes-saved"]) > 0
 
 
 @pytest.mark.asyncio

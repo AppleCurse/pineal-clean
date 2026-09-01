@@ -37,6 +37,7 @@ from agent_core.services.dependency_health import (
 from agent_core.schemas.telemetry import ErrorHaltEvent, Severity, TaskCancelledEvent
 from agent_core.services.runtime_status import rust_core_status
 from agent_core.services.task_lifecycle import TaskLifecycleRegistry
+from agent_core.services.token_optimizer import OptimizationPolicy, TokenOptimizer
 from agent_core.shadow.shadow_executor import ShadowExecutor
 from agent_core.utils.security import (
     SecurityConfigurationError,
@@ -53,6 +54,7 @@ from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
 shadow_executor = ShadowExecutor()
 dialogue_manager = DialogueManager()
 aspasia_chief = AspasiaChief()
+_tool_output_optimizer = TokenOptimizer()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -108,8 +110,18 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
-    expose_headers=["X-Pineal-Call-ID"],
+    allow_headers=[
+        "Content-Type",
+        "X-API-Key",
+        "Authorization",
+        "X-Pineal-Tool-Optimization",
+    ],
+    expose_headers=[
+        "X-Pineal-Call-ID",
+        "X-Pineal-Optimization-Mode",
+        "X-Pineal-Optimization-Bytes-Saved",
+        "X-Pineal-Optimization-Lossy",
+    ],
 )
 
 # --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa /api/* ve OpenAI uyumlu /v1/*
@@ -404,6 +416,27 @@ def _openai_gateway():
     return get_executor("openai-compatible").llm_gateway
 
 
+def _tool_optimization_policy(request: Request) -> tuple[str, OptimizationPolicy]:
+    requested = request.headers.get("x-pineal-tool-optimization")
+    mode = (requested or os.getenv("PINEAL_TOOL_OPTIMIZATION", "disabled")).strip().lower()
+    if mode in {"disabled", "off", "none"}:
+        return "disabled", OptimizationPolicy()
+    if mode == "safe":
+        return "safe", OptimizationPolicy(enabled=True)
+    if mode == "lossy":
+        return "lossy", OptimizationPolicy(
+            enabled=True,
+            engine_ids=(
+                "strip-ansi",
+                "compact-json",
+                "collapse-repeated-lines",
+                "head-tail",
+            ),
+            allow_lossy=True,
+        )
+    raise ValueError("tool optimization mode must be disabled, safe, or lossy")
+
+
 @app.get("/v1/models")
 async def openai_models():
     gateway = _openai_gateway()
@@ -429,7 +462,7 @@ async def openai_models():
 
 
 @app.post("/v1/chat/completions")
-async def openai_chat_completions(payload: OpenAIChatCompletionPayload):
+async def openai_chat_completions(payload: OpenAIChatCompletionPayload, request: Request):
     from agent_core.services.llm_gateway import SpendCapExceeded
 
     if payload.stream:
@@ -443,6 +476,29 @@ async def openai_chat_completions(payload: OpenAIChatCompletionPayload):
             status_code=400,
         )
 
+    try:
+        optimization_mode, optimization_policy = _tool_optimization_policy(request)
+    except ValueError as exc:
+        return JSONResponse(
+            _openai_error(
+                str(exc),
+                "invalid_request_error",
+                "invalid_optimization_mode",
+            ),
+            status_code=400,
+        )
+    optimized = _tool_output_optimizer.optimize(
+        {"messages": payload.messages, "tools": payload.tools},
+        optimization_policy,
+    )
+    optimized_messages = optimized.body["messages"]
+    optimized_tools = optimized.body["tools"]
+    lossy_applied = any(
+        engine_id in {"collapse-repeated-lines", "head-tail"}
+        and savings.applications > 0
+        for engine_id, savings in optimized.stats.engine_savings.items()
+    )
+
     gateway = _openai_gateway()
     effective_max_tokens = payload.max_tokens or payload.max_completion_tokens
     try:
@@ -451,13 +507,13 @@ async def openai_chat_completions(payload: OpenAIChatCompletionPayload):
             agent_id="openai-compatible",
         ):
             result = await gateway.chat_completion(
-                messages=payload.messages,
+                messages=optimized_messages,
                 model=payload.model,
                 temperature=payload.temperature,
                 max_tokens=effective_max_tokens,
                 top_p=payload.top_p,
                 stop=payload.stop,
-                tools=payload.tools,
+                tools=optimized_tools,
                 tool_choice=payload.tool_choice,
                 response_format=payload.response_format,
                 seed=payload.seed,
@@ -523,6 +579,9 @@ async def openai_chat_completions(payload: OpenAIChatCompletionPayload):
         headers={
             "Cache-Control": "no-store",
             "X-Pineal-Call-ID": result.call_id,
+            "X-Pineal-Optimization-Mode": optimization_mode,
+            "X-Pineal-Optimization-Bytes-Saved": str(optimized.stats.bytes_saved),
+            "X-Pineal-Optimization-Lossy": str(lossy_applied).lower(),
         },
     )
 
