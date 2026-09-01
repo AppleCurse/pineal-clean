@@ -65,10 +65,23 @@
         })
       });
       if (!res.ok) throw new Error("API hatası: " + res.statusText);
+      const started = await res.json();
+      if (started.task_id) taskStatus.update(s => ({ ...s, task_id: started.task_id, status: 'processing' }));
       logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ANALİZ EMRİ GÖNDERİLDİ: ${targetUrl}`}]);
     } catch (e: any) {
       logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `HATA: ${e.message}`}]);
       isProcessing.set(false);
+    }
+  }
+
+  async function cancelAnalysis() {
+    const activeTaskId = $taskStatus?.task_id;
+    if (!activeTaskId) return;
+    const res = await apiFetch(`/api/tasks/${activeTaskId}/cancel?client_id=${$clientId}`, {
+      method: 'POST'
+    });
+    if (!res.ok) {
+      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `İPTAL HATASI: ${res.status}`}]);
     }
   }
 
@@ -423,6 +436,11 @@
           >
             {$isProcessing ? t[$currentLang].runningBtn : t[$currentLang].initiateBtn}
           </button>
+          {#if $isProcessing && $taskStatus?.task_id}
+            <button class="btn-dark" style="padding: 8px 14px; font-size: 11px; color: #fca5a5;" on:click={cancelAnalysis}>
+              İPTAL
+            </button>
+          {/if}
         </div>
       </div>
     </div>

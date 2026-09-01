@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, WebSocket, Request, BackgroundTasks
+from fastapi import FastAPI, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -32,6 +32,7 @@ from agent_core.services.dependency_health import (
     StartupDependencyError,
     check_startup_dependencies,
 )
+from agent_core.schemas.telemetry import ErrorHaltEvent, Severity, TaskCancelledEvent
 from agent_core.services.runtime_status import rust_core_status
 from agent_core.services.task_lifecycle import TaskLifecycleRegistry
 from agent_core.shadow.shadow_executor import ShadowExecutor
@@ -69,6 +70,9 @@ async def lifespan(application: FastAPI):
         task = room.get("sender_task")
         if task and not task.done():
             task.cancel()
+        for mission in room.get("mission_tasks", {}).values():
+            if not mission.done():
+                mission.cancel()
     application.state.rooms.clear()
 
 app = FastAPI(title="PINEAL-HERETIC v2.0 API", lifespan=lifespan)
@@ -259,6 +263,7 @@ def get_room(client_id: str) -> dict:
             "aspasia": AspasiaChief(llm_gateway=executor.llm_gateway) if AspasiaChief else None,
             "queue": asyncio.Queue(maxsize=2000),
             "sender_task": None,
+            "mission_tasks": {},
             "lifecycle": TaskLifecycleRegistry(),
             "telemetry_delivery": {
                 "state": "NORMAL",
@@ -442,6 +447,13 @@ async def _send_snapshot(room: dict, snapshot: Any):
                 "started_at": r.started_at.isoformat() if getattr(r, "started_at", None) else None,
                 "completed_at": r.completed_at.isoformat() if getattr(r, "completed_at", None) else None,
                 "error_message": getattr(r, "error_message", None),
+                "call_ids": list(getattr(r, "call_ids", []) or []),
+                "output_summary": redact_structure(
+                    getattr(r, "output_summary", None) or {}
+                ),
+                "provenance": redact_structure(
+                    (getattr(r, "output_summary", None) or {}).get("_provenance")
+                ),
             }
             for name, r in snapshot.agent_runs.items()
         }
@@ -525,7 +537,7 @@ def _new_task_id() -> str:
     return f"op_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
-async def run_mission(req: InitiatePayload):
+async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
     client_id = req.client_id
     executor = get_executor(client_id)
     vault = get_vault(client_id)
@@ -603,7 +615,7 @@ async def run_mission(req: InitiatePayload):
                 if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
                     raise e
 
-        task_id = _new_task_id()
+        task_id = task_id or _new_task_id()
         max_attempts = _bounded_env_int("PINEAL_TASK_MAX_ATTEMPTS", 3, 1, 3)
         task_timeout = _bounded_env_int("PINEAL_TASK_TIMEOUT_SECONDS", 300, 1, 1800)
         for attempt in range(1, max_attempts + 1):
@@ -630,16 +642,24 @@ async def run_mission(req: InitiatePayload):
                     broadcast_result_error(
                         client_id, "failed",
                         f"SİSTEM PANİĞİ: MAKSİMUM DENEME AŞILDI ({max_attempts}/{max_attempts}).",
+                        task_id,
                     )
                     return
     except InsufficientEvidenceError:
-        broadcast_result_error(client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT")
+        broadcast_result_error(
+            client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT", task_id
+        )
     except Exception as e:
-        broadcast_result_error(client_id, "failed", f"SİSTEM PANİĞİ: {str(e)}")
+        broadcast_result_error(
+            client_id, "failed", f"SİSTEM PANİĞİ: {str(e)}", task_id
+        )
 
-def broadcast_result_error(client_id, status, msg):
+def broadcast_result_error(client_id, status, msg, task_id: Optional[str] = None):
     broadcast_log(client_id, "ERROR", msg)
-    _enqueue(client_id, ("result_error", {"type": "result", "status": status}))
+    payload = {"type": "result", "status": status}
+    if task_id:
+        payload["task_id"] = task_id
+    _enqueue(client_id, ("result_error", payload))
 
 async def _send_result_error(room: dict, data: dict):
     await _send_ws(room, json.dumps(data))
@@ -667,7 +687,9 @@ def broadcast_result(client_id, res):
 
     _enqueue(client_id, ("result", {
         "type": "result",
+        "task_id": res.task_id,
         "status": res.status,
+        "evidence_chain": redact_structure(getattr(res, "evidence_chain", []) or []),
         "mirror": find(res.evidence_chain, "mirror_truth"),
         "reading": find(res.evidence_chain, "human_behavior"),
         "reso": find(res.evidence_chain, "resonance_calc"),
@@ -681,6 +703,13 @@ def broadcast_result(client_id, res):
                 "status": getattr(run, "status", None),
                 "confidence": getattr(run, "confidence", None),
                 "error_message": getattr(run, "error_message", None),
+                "call_ids": list(getattr(run, "call_ids", []) or []),
+                "output_summary": redact_structure(
+                    getattr(run, "output_summary", None) or {}
+                ),
+                "provenance": redact_structure(
+                    (getattr(run, "output_summary", None) or {}).get("_provenance")
+                ),
             }
             for name, run in (getattr(res, "agent_runs", None) or {}).items()
         },
@@ -701,14 +730,19 @@ async def _send_result(room: dict, data: dict):
     await _send_ws(room, json.dumps(data))
 
 @app.post("/api/initiate")
-async def api_initiate(req: InitiatePayload, background_tasks: BackgroundTasks):
+async def api_initiate(req: InitiatePayload):
     if not rate_limit(f"initiate:{req.client_id}", "initiate"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
             status_code=429,
         )
-    background_tasks.add_task(run_mission, req)
-    return {"status": "started"}
+    room = get_room(req.client_id)
+    task_id = _new_task_id()
+    _lifecycle(room).transition(task_id, "processing")
+    mission = asyncio.create_task(run_mission(req, task_id))
+    room["mission_tasks"][task_id] = mission
+    mission.add_done_callback(lambda _task: room["mission_tasks"].pop(task_id, None))
+    return {"status": "started", "task_id": task_id}
 
 class VaultPayload(BaseModel):
     client_id: str
@@ -1241,6 +1275,63 @@ async def api_list_tasks(client_id: str):
     tasks = await asyncio.to_thread(_read_tasks_sync, storage)
     active = list(room.get("active_tasks", {}).keys())
     return {"tasks": tasks, "active_tasks": active}
+
+
+def _terminate_mission(client_id: str, task_id: str, action: str, reason: str):
+    room = get_room(client_id)
+    run = _lifecycle(room).get_run(task_id)
+    if run is None:
+        return JSONResponse(
+            {"error": {"code": "TASK_NOT_FOUND", "message": "Task not found"}},
+            status_code=404,
+        )
+    decision = _lifecycle(room).terminate(task_id, action)
+    if not decision.accepted:
+        return JSONResponse(
+            {"error": {"code": "TASK_ALREADY_TERMINAL", "message": "Task already reached a terminal state"}},
+            status_code=409,
+        )
+
+    mission = room.get("mission_tasks", {}).get(task_id)
+    if mission is not None and not mission.done():
+        mission.cancel()
+    if decision.outcome != "IDEMPOTENT":
+        if action == "cancel":
+            broadcast_event(client_id, TaskCancelledEvent(
+                task_id=task_id,
+                agent_name="PinealExecutor",
+                reason=reason or "Cancelled by user",
+            ))
+            broadcast_result_error(client_id, "cancelled", "GÖREV İPTAL EDİLDİ", task_id)
+        else:
+            broadcast_event(client_id, ErrorHaltEvent(
+                task_id=task_id,
+                agent_name="PinealExecutor",
+                error_code="USER_HALT",
+                error_message=reason or "Halted by user",
+                severity=Severity.Warning,
+            ))
+            broadcast_result_error(
+                client_id,
+                "halted_user",
+                "GÖREV KULLANICI TARAFINDAN DURDURULDU",
+                task_id,
+            )
+    return {
+        "status": "cancelled" if action == "cancel" else "halted_user",
+        "task_id": task_id,
+        "outcome": decision.outcome,
+    }
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def api_cancel_task(task_id: str, client_id: str, reason: str = ""):
+    return _terminate_mission(client_id, task_id, "cancel", reason)
+
+
+@app.post("/api/tasks/{task_id}/halt")
+async def api_halt_task(task_id: str, client_id: str, reason: str = ""):
+    return _terminate_mission(client_id, task_id, "halt", reason)
 
 
 @app.delete("/api/tasks/{task_id}")

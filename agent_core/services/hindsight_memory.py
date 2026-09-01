@@ -316,4 +316,4 @@ def build_memory_from_env() -> CanonicalMemory:
             db_path=db_path,
             embedding_model=embedding_model,
         )
-    return CanonicalMemory()
+    return CanonicalMemory(os.getenv("PINEAL_MEMORY_PATH", "./memory/"))

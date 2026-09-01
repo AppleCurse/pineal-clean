@@ -111,8 +111,15 @@ class LLMGateway:
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
+        self.openrouter_base_url = os.getenv(
+            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+        ).rstrip("/")
         self.local_base_url = self.LOCAL_DEFAULT_URL
         self.local_model = self.LOCAL_DEFAULT_MODEL
+        self.request_timeout_seconds = min(
+            45.0,
+            max(0.1, self._env_float("LLM_REQUEST_TIMEOUT_SECONDS", 45.0)),
+        )
         self.use_local = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
         self.client = None
         self.local_client = None
@@ -384,10 +391,18 @@ class LLMGateway:
 
     def _rebuild(self):
         if self.api_key:
-            self.client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
+            self.client = AsyncOpenAI(
+                base_url=self.openrouter_base_url,
+                api_key=self.api_key,
+                max_retries=0,
+            )
         # Local client (Ollama/LM Studio/vLLM)
         try:
-            self.local_client = AsyncOpenAI(base_url=self.local_base_url, api_key="ollama")
+            self.local_client = AsyncOpenAI(
+                base_url=self.local_base_url,
+                api_key="ollama",
+                max_retries=0,
+            )
         except Exception:
             self.local_client = None
 
@@ -535,7 +550,7 @@ class LLMGateway:
                     model=selected_model,
                     temperature=temperature,
                     messages=messages,
-                    timeout=45.0,
+                    timeout=self.request_timeout_seconds,
                     max_tokens=self.max_output_tokens,
                 )
                 self.failure_count = 0
