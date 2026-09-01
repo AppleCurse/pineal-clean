@@ -17,6 +17,14 @@ from agent_core.services.response_cache import build_cache_from_env
 T = TypeVar("T", bound=BaseModel)
 
 
+@dataclass(frozen=True)
+class LLMChatResult:
+    """One OpenAI-compatible response bound to its immutable gateway call id."""
+
+    call_id: str
+    response: Any = field(repr=False)
+
+
 @dataclass
 class LLMCallScope:
     """Task-local collector used to bind call records to one agent execution.
@@ -256,6 +264,27 @@ class LLMGateway:
             prompt_tokens * rates["in"] + self.max_output_tokens * rates["out"]
         ) / 1_000_000.0
 
+    def _maximum_chat_cost(
+        self,
+        model: str,
+        request_payload: dict[str, Any],
+        max_tokens: int,
+    ) -> float:
+        """Conservatively reserve a structured chat request before dispatch."""
+        rates = self.MODEL_PRICING[model]
+        encoded = json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        image_parts = 0
+        for message in request_payload.get("messages", []):
+            content = message.get("content") if isinstance(message, dict) else None
+            if isinstance(content, list):
+                image_parts += sum(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
+        prompt_tokens = len(encoded) + 64 + self.image_token_reserve * image_parts
+        return (prompt_tokens * rates["in"] + max_tokens * rates["out"]) / 1_000_000.0
+
     def _reserve_budget(self, call_id: str, amount: float) -> None:
         """Atomically reserve worst-case cost before any paid provider call."""
         if self.spend_cap_usd <= 0:
@@ -371,6 +400,21 @@ class LLMGateway:
         )):
             return False
         return True
+
+    @staticmethod
+    def _is_strict_retryable_error(exc: Exception) -> bool:
+        """Retry only errors known to be transient on new gateway surfaces."""
+        try:
+            from openai import APIConnectionError, APITimeoutError
+
+            if isinstance(exc, (APITimeoutError, APIConnectionError)):
+                return True
+        except Exception:
+            pass
+        if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+            return True
+        status = getattr(exc, "status_code", None)
+        return isinstance(status, int) and (status in (408, 429) or 500 <= status < 600)
 
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
@@ -695,6 +739,196 @@ class LLMGateway:
                     self.circuit_opened_at = time.time()
                 log_call(error=type(exc).__name__, attempt=attempt)
                 raise
+
+    async def chat_completion(
+        self,
+        *,
+        messages: List[dict[str, Any]],
+        model: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        stop: Any = None,
+        tools: Optional[List[dict[str, Any]]] = None,
+        tool_choice: Any = None,
+        response_format: Optional[dict[str, Any]] = None,
+        seed: Optional[int] = None,
+        user: Optional[str] = None,
+    ) -> LLMChatResult:
+        """Execute a non-streaming OpenAI chat request under gateway controls.
+
+        This is the compatibility transport boundary: arbitrary conversation and
+        tool shapes are preserved, while this gateway remains the only owner of
+        call identity, retries, circuit state, spend reservations, and capture.
+        """
+        import asyncio
+        import logging
+
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("model is required")
+        if not messages:
+            raise ValueError("at least one message is required")
+        selected_model = self.MODEL_REGISTRY.get(model, model)
+        is_local_request = bool(self.use_local)
+        if is_local_request and selected_model == "local":
+            selected_model = self.local_model
+        provider = "local" if is_local_request else "openrouter"
+        effective_max_tokens = self.max_output_tokens if max_tokens is None else max_tokens
+        if effective_max_tokens < 1 or effective_max_tokens > self.max_output_tokens:
+            raise ValueError(f"max_tokens must be between 1 and gateway cap {self.max_output_tokens}")
+
+        request_payload: dict[str, Any] = {
+            "model": selected_model,
+            "messages": messages,
+            "max_tokens": effective_max_tokens,
+        }
+        optional_parameters = {
+            "temperature": temperature,
+            "top_p": top_p,
+            "stop": stop,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "response_format": response_format,
+            "seed": seed,
+            "user": user,
+        }
+        request_payload.update({key: value for key, value in optional_parameters.items() if value is not None})
+
+        call_id = str(uuid.uuid4())
+        started_at = self._utc_now()
+        started_monotonic = time.monotonic()
+        logical_cost_usd = 0.0
+
+        def log_call(
+            *,
+            error: Optional[str] = None,
+            attempt: int = 0,
+            prompt_tokens: Optional[int] = None,
+            completion_tokens: Optional[int] = None,
+            cost_usd: Optional[float] = None,
+        ) -> dict[str, Any]:
+            return self._log_call(
+                "chat.completions",
+                selected_model,
+                provider,
+                call_id=call_id,
+                started_at=started_at,
+                attempt=attempt,
+                duration_ms=int((time.monotonic() - started_monotonic) * 1000),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=logical_cost_usd if cost_usd is None else cost_usd,
+                error=error,
+            )
+
+        if self.circuit_open:
+            if time.time() - self.circuit_opened_at > 60.0:
+                self.circuit_open = False
+                self.failure_count = 0
+            else:
+                log_call(error="CIRCUIT_OPEN")
+                raise RuntimeError("LLM_CIRCUIT_OPEN")
+
+        if is_local_request:
+            target_client = self.local_client
+            if target_client is None:
+                log_call(error="LOCAL_PROVIDER_UNAVAILABLE")
+                raise RuntimeError("LOCAL_PROVIDER_UNAVAILABLE")
+        else:
+            if os.getenv("LIVE_LLM_E2E") != "1" and not self.live_unlocked:
+                log_call(error="REAL_LLM_CALL_NOT_EXECUTED")
+                raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED")
+            if self.client is None:
+                log_call(error="LLM_KEY_MISSING")
+                raise RuntimeError("LLM_KEY_MISSING")
+            target_client = self.client
+
+        budget_reserved = False
+        if not is_local_request:
+            try:
+                self._pricing_guard(selected_model, kind="chat.completions")
+            except RuntimeError:
+                log_call(error="UNKNOWN_PRICING")
+                raise
+            if self.spend_cap_usd > 0:
+                if selected_model not in self.MODEL_PRICING:
+                    log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
+                    raise RuntimeError("UNKNOWN_PRICING_FOR_SPEND_CAP")
+                reservation = self._maximum_chat_cost(
+                    selected_model,
+                    request_payload,
+                    effective_max_tokens,
+                )
+                try:
+                    self._reserve_budget(call_id, reservation)
+                    budget_reserved = True
+                except SpendCapExceeded:
+                    log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
+                    raise
+
+        max_retries = 3
+        for attempt_index in range(max_retries):
+            attempt = attempt_index + 1
+            try:
+                response = await target_client.chat.completions.create(
+                    **request_payload,
+                    timeout=self.request_timeout_seconds,
+                )
+                self.failure_count = 0
+                usage = getattr(response, "usage", None)
+                if not is_local_request:
+                    logical_cost_usd = self._settle_budget(
+                        call_id,
+                        selected_model,
+                        usage,
+                    )
+                    budget_reserved = False
+                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else None
+                completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else None
+                log_call(
+                    attempt=attempt,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=logical_cost_usd,
+                )
+                return LLMChatResult(call_id=call_id, response=response)
+            except asyncio.CancelledError:
+                if budget_reserved:
+                    self._release_budget(call_id)
+                log_call(error="CANCELLED", attempt=attempt)
+                raise
+            except SpendCapExceeded:
+                if budget_reserved:
+                    self._release_budget(call_id)
+                log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED", attempt=attempt)
+                raise
+            except Exception as exc:
+                retryable = self._is_strict_retryable_error(exc)
+                if retryable and attempt_index < max_retries - 1:
+                    try:
+                        await asyncio.sleep(2**attempt_index)
+                    except asyncio.CancelledError:
+                        if budget_reserved:
+                            self._release_budget(call_id)
+                        log_call(error="CANCELLED", attempt=attempt)
+                        raise
+                    continue
+                if budget_reserved:
+                    self._release_budget(call_id)
+                    budget_reserved = False
+                if retryable:
+                    self.failure_count += 1
+                    if self.failure_count > 5:
+                        self.circuit_open = True
+                        self.circuit_opened_at = time.time()
+                logging.error(
+                    "OpenAI-compatible gateway request failed (%s)",
+                    type(exc).__name__,
+                )
+                log_call(error=type(exc).__name__, attempt=attempt)
+                raise
+
+        raise AssertionError("unreachable chat completion retry state")
 
     def extract_json(self, text: str) -> dict:
         """Markdown fence ve etiketleri temizleyip JSON ayıklar."""
