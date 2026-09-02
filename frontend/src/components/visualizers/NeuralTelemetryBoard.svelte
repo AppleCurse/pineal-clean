@@ -3,6 +3,34 @@
   
   // Backend'den gelen canlı telemetri objesi (App.svelte'den beslenecek)
   export let telemetry: any = null;
+
+  // Fallback simulation mode
+  let isSimulating = false;
+  
+  onMount(() => {
+    setInterval(() => {
+      if (!telemetry || Object.keys(telemetry).length === 0) {
+        isSimulating = true;
+        // Randomly turn on nodes to show fluid
+        const nodes = ['gateway', 'router', 'memory', 'llm'];
+        activeNodes.clear();
+        
+        // Always gateway and router
+        activeNodes.add('gateway');
+        activeNodes.add('router');
+        
+        // Randomly pick memory or llm
+        if (Math.random() > 0.5) activeNodes.add('memory');
+        else activeNodes.add('llm');
+        
+        activeNodes = activeNodes;
+        flowSpeed = 1.5;
+      } else {
+        isSimulating = false;
+      }
+    }, 2000);
+  });
+
   
   // Görseldeki sıvı akış hızını kontrol eden iç değişkenler
   let flowSpeed = 2; 
@@ -55,12 +83,12 @@
   <div class="board-header">
     <div class="title-container">
       <div class="status-dot" class:pulsing={activeNodes.size > 0}></div>
-      <h2 class="board-title">PINEAL NEURAL FLUID PIPELINE</h2>
+      <h2 class="board-title">HERETIC TELEMETRY PIPELINE</h2>
     </div>
     <div class="metrics">
       <div class="metric-box">
         <span class="metric-lbl">SYSTEM STATUS</span>
-        <span class="metric-val" style="color: {activeNodes.size > 0 ? '#00ffa3' : '#a0aec0'}">
+        <span class="metric-val" style="color: {activeNodes.size > 0 ? '#d4af37' : '#a0aec0'}">
           {activeNodes.size > 0 ? 'PROCESSING' : 'IDLE'}
         </span>
       </div>
@@ -92,9 +120,9 @@
         </linearGradient>
 
         <linearGradient id="fluid-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#00ffa3" />
-          <stop offset="50%" stop-color="#00b8ff" />
-          <stop offset="100%" stop-color="#7000ff" />
+          <stop offset="0%" stop-color="#d4af37" />
+          <stop offset="50%" stop-color="#b8860b" />
+          <stop offset="100%" stop-color="#8b4513" />
         </linearGradient>
       </defs>
 
@@ -109,25 +137,25 @@
       <!-- Gateway -> Router -->
       <path d="M 100,200 L 300,200" 
             class="fluid-path" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('gateway') ? 1 : 0.1};" />
+            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('gateway') ? 1 : 0.3};" />
             
       <!-- Router -> Memory/OSINT (Üst Kol) -->
       <path d="M 300,200 L 500,100 L 700,100" 
             class="fluid-path" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('memory') ? 1 : 0.05};" />
+            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('memory') ? 1 : 0.3};" />
             
       <!-- Router -> LLM Engine (Alt Kol) -->
       <path d="M 300,200 L 500,300 L 700,300" 
             class="fluid-path alt-fluid" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('llm') ? 1 : 0.05};" />
+            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('llm') ? 1 : 0.3};" />
             
       <!-- Merge -> Output -->
       <path d="M 700,100 L 900,200" 
             class="fluid-path" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('memory') ? 1 : 0.05};" />
+            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('memory') ? 1 : 0.3};" />
       <path d="M 700,300 L 900,200" 
             class="fluid-path alt-fluid" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('llm') ? 1 : 0.05};" />
+            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('llm') ? 1 : 0.3};" />
     </svg>
 
     <!-- Node UI'ları (Cam Kartlar) -->
@@ -176,7 +204,7 @@
     width: 100%;
     height: 450px;
     background: radial-gradient(circle at center, #0a0f1d 0%, #03050a 100%);
-    border: 1px solid rgba(0, 255, 163, 0.1);
+    border: 1px solid rgba(212, 175, 55, 0.1);
     border-radius: 16px;
     overflow: hidden;
     font-family: 'Courier New', Courier, monospace;
@@ -185,7 +213,7 @@
 
   .ambient-particle {
     position: absolute;
-    background: #00b8ff;
+    background: #b8860b;
     border-radius: 50%;
     opacity: 0.3;
     animation: floatUp linear infinite;
@@ -220,14 +248,14 @@
   }
 
   .status-dot.pulsing {
-    background: #00ffa3;
+    background: #d4af37;
     animation: redAlert 1.5s infinite;
   }
 
   .board-title {
     margin: 0;
     color: #fff;
-    font-size: 14px;
+    font-size: 18px;
     letter-spacing: 4px;
     font-weight: 600;
     text-shadow: 0 0 10px rgba(255,255,255,0.3);
@@ -246,12 +274,12 @@
 
   .metric-lbl {
     font-size: 10px;
-    color: #4a5568;
+    color: #a0aec0; font-size: 11px;
     letter-spacing: 1px;
   }
 
   .metric-val {
-    font-size: 14px;
+    font-size: 18px;
     font-weight: bold;
     color: #fff;
   }
@@ -275,7 +303,7 @@
   .glass-path {
     fill: none;
     stroke: url(#glass-pipe);
-    stroke-width: 12;
+    stroke-width: 24;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
@@ -284,17 +312,17 @@
   .fluid-path {
     fill: none;
     stroke: url(#fluid-gradient);
-    stroke-width: 6;
+    stroke-width: 12;
     stroke-linecap: round;
     stroke-linejoin: round;
-    stroke-dasharray: 20 40;
+    stroke-dasharray: 40 60;
     animation: flowData linear infinite;
     transition: opacity 0.4s ease;
   }
 
   /* İkinci akışkan (Neon mor/kırmızı - LLM ateşi) */
   .alt-fluid {
-    stroke: #ff0055;
+    stroke: #ff4500;
     stroke-dasharray: 15 30;
   }
 
@@ -324,14 +352,14 @@
   }
 
   .node-icon.active {
-    border-color: #00ffa3;
-    box-shadow: 0 0 20px rgba(0, 255, 163, 0.4), inset 0 0 10px rgba(0, 255, 163, 0.2);
+    border-color: #d4af37;
+    box-shadow: 0 0 20px rgba(212, 175, 55, 0.4), inset 0 0 10px rgba(212, 175, 55, 0.2);
     transform: scale(1.1);
   }
 
   .node-label {
     margin-top: 10px;
-    color: #a0aec0;
+    color: #e2e8f0; font-size: 13px; font-weight: bold;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 1px;
@@ -346,7 +374,7 @@
     height: 50px;
     transform: translate(-50%, -50%);
     border-radius: 12px;
-    border: 2px solid #00b8ff;
+    border: 2px solid #b8860b;
     opacity: 0;
     pointer-events: none;
   }
@@ -358,9 +386,9 @@
   .mini-hud {
     position: absolute;
     top: -25px;
-    background: rgba(0, 255, 163, 0.1);
-    border: 1px solid #00ffa3;
-    color: #00ffa3;
+    background: rgba(212, 175, 55, 0.1);
+    border: 1px solid #d4af37;
+    color: #d4af37;
     padding: 2px 6px;
     font-size: 9px;
     border-radius: 4px;
@@ -368,8 +396,8 @@
   }
 
   .stream-text {
-    color: #ff0055;
-    border-color: #ff0055;
+    color: #ff4500;
+    border-color: #ff4500;
     background: rgba(255, 0, 85, 0.1);
   }
 
@@ -383,9 +411,9 @@
   }
 
   @keyframes redAlert {
-    0% { box-shadow: 0 0 0 0 rgba(0, 255, 163, 0.7); }
-    70% { box-shadow: 0 0 0 10px rgba(0, 255, 163, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(0, 255, 163, 0); }
+    0% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(212, 175, 55, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(212, 175, 55, 0); }
   }
 
   @keyframes floatUp {
