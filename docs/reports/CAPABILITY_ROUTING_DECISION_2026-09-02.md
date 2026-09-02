@@ -32,8 +32,11 @@ gerekçeyi sabitler; halüsinasyon/skor iddiası içermez.
 - `solar-pro4`, `ling-3.0-flash`, `glm-5.2`, `grok-4-1-fast-*`: hiçbir
   varsayılan zincirde yok. `MODEL_REGISTRY` kayıtları yalnızca /v1 yüzey
   uyumluluğu için korunuyor.
-- Genel tier varsayılanları: TIER_1 = gemini-3.7-flash, TIER_2 =
-  deepseek-v4-flash (env ile override edilebilir).
+- Genel tier varsayılanları: TIER_1 = claude-sonnet-5, TIER_2 =
+  deepseek-v4-flash (env ile override edilebilir). — 2026-09-02 uzlaştırma
+  denetimi: bu satır daha önce "TIER_1 = gemini-3.7-flash" yazıyordu; kod
+  (`llm_gateway.py:157`), `.env.example:10` ve `README.md:34` üçü birden
+  sonnet-5 diyor — belge kod'a hizalandı.
 - `VISION_MODELS` genişletildi: gemini-3.7-flash, claude-sonnet-5, grok-4.6.
   Böylece vision isteği metin-only birincil yerine vision'lı yedeğe düşer.
 - Cookie / MITM / reverse-engineer / Kiro-proxy: yok.
