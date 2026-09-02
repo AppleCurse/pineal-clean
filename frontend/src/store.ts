@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 
 // API adresi tek yerden yönetilir:
 //  - Üretimde (FastAPI aynı origin'de servis eder): window.location.origin kullanılır.
@@ -9,13 +9,53 @@ const origin = typeof window !== 'undefined' ? window.location.origin : 'http://
 export const API_BASE = (envBase && envBase.trim()) || origin;
 export const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
-// FAZ 3: PINEAL_TOKEN kipinde UI da kimligini tasir (VITE_PINEAL_TOKEN).
-export const API_TOKEN = (((import.meta.env && (import.meta.env as any).VITE_PINEAL_TOKEN) as string | undefined) || '').trim();
+// FAZ 3: PINEAL_TOKEN kipinde UI da kimligini tasir.
+// İki kaynak (öncelik sırasıyla):
+//  1. Çalışma zamanı: kullanıcı arayüzden (Kasa) girdiği token — localStorage'da kalıcı.
+//  2. Derleme zamanı: VITE_PINEAL_TOKEN (üretim imajına gömülür).
+// Önceden token yalnızca derleme zamanında gömülebiliyordu; PINEAL_TOKEN set edilmiş
+// ama VITE_PINEAL_TOKEN gömülmemişse arayüz 401'e takılıp "ağ hatası" gibi yanıltıcı
+// mesajlar veriyordu (bkz. App.svelte onclose + UnifiedCompactPanel hata yolları).
+const bakedToken = (((import.meta.env && (import.meta.env as any).VITE_PINEAL_TOKEN) as string | undefined) || '').trim();
+
+const TOKEN_STORAGE_KEY = 'pineal_api_token';
+
+function readStoredToken(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export const apiToken = writable<string>(readStoredToken() || bakedToken);
+
+export function currentApiToken(): string {
+  return (get(apiToken) || bakedToken).trim();
+}
+
+export function setApiToken(value: string): void {
+  const v = (value || '').trim();
+  apiToken.set(v);
+  try {
+    if (v) localStorage.setItem(TOKEN_STORAGE_KEY, v);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    /* localStorage erişilemiyorsa sessizce geç; token oturum boyunca bellekte kalır */
+  }
+}
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers || {});
-  if (API_TOKEN) headers.set('X-API-Key', API_TOKEN);
+  const token = currentApiToken();
+  if (token) headers.set('X-API-Key', token);
   return fetch(`${API_BASE}${path}`, { ...init, headers });
+}
+
+// 401/403 yanıtını ağ hatasından ayırır; arayüzün dürüst mesaj basması için tek yardımcı.
+export function isAuthFailure(res: Response): boolean {
+  return res.status === 401 || res.status === 403;
 }
 
 export function wsUrl(clientId: string): string {

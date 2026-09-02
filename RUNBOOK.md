@@ -22,6 +22,7 @@
   deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`).
 - Token kipi: `PINEAL_TOKEN=x` (HTTP `X-API-Key`; WS ilk auth mesajı) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`. `PINEAL_ENV=production` tokensız başlatılamaz; Docker varsayılanı production'dır.
 - Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı; env tanımsızsa da 0). Aşılırsa `SpendCapExceeded`.
+- Native yönlendirici: `PINEAL_LLM_BACKEND=legacy|unified` + `PINEAL_ROUTER_CONFIG` (şablon: `config/router.example.json`). `unified` seçilip config verilmezse startup **çökmez**: legacy'ye düşer, `/health` `UNIFIED_ROUTER_CONFIG_MISSING` ile DEGRADED döner (fail-safe; fail-closed değil).
 
 ## Sık sorunlar
 | Belirti | Neden → Çözüm |
@@ -30,10 +31,10 @@
 | Aspasia "bağlantıda kırılma" yanıtı | Aynı — zarif fallback; anahtar girilince gerçek yanıt |
 | Tarayıcı boş | `frontend/dist` yok → build et; `/src/main.ts` 404 çıkarsa dist eski demektir |
 | 429 (initiate/aspasia) | Rate limit — 1 dk bekle (bilinçli koruma) |
-| 401 tüm API çağrıları | `PINEAL_TOKEN` tanımlı ama UI/istemci göndermiyor → `VITE_PINEAL_TOKEN` eşle veya token'ı kaldır |
+| 401 tüm API çağrıları | `PINEAL_TOKEN` tanımlı ama UI göndermiyor → arayüzde Kasa → "API ERİŞİM ANAHTARI (PINEAL_TOKEN)" alanına gir (çalışma zamanı, yeniden derleme gerekmez) veya `VITE_PINEAL_TOKEN` ile eşle (build zamanı) — ya da token'ı kaldır |
 | Scrape 429/403 (Instagram) | Platform limit/cookie: Kasaya güncel cookie gir |
 | X (Twitter) hedefi | Kazıma devre dışı (B4): `XScraperUnsupportedError`; WS logunda "DESTEKLENMİYOR" görünür, analiz BAŞLATILMAZ — public-web alternatifi için yetki beklenir (`awaiting_authorization`) |
-| WS bağlanmıyor | Token kipinde istemci bağlantıdan sonra ilk JSON mesajında `{type:"auth",token:"..."}` göndermeli; token URL/query'ye yazılmaz. Port 8000 dışındaysa `VITE_API_BASE` tanımla |
+| WS bağlanmıyor | Token kipinde istemci bağlantıdan sonra ilk JSON mesajında `{type:"auth",token:"..."}` göndermeli; token URL/query'ye yazılmaz. Sunucu ~5 sn içinde auth mesajı almazsa 1008 ile kapatır (UI artık bunu "UPLINK YETKİ HATASI" diye loglar ve otomatik yeniden bağlanır). Port 8000 dışındaysa `VITE_API_BASE` tanımla |
 
 ## Görev verisi
 - Başlatma: `POST /api/initiate` immutable `task_id` döndürür.
