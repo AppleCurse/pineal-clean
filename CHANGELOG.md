@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.0.0-rc.2 — 2026-09-02
+
+### Release evidence
+
+- Integrated the sealed rc.2 evidence record (`RELEASE_EVIDENCE.md` + `release/3.0.0-rc.2.json`, sealed 2026-09-01 on branch `8e3b2918`): 14/14 static + runtime checks PASS, 6 negative security tests PASS, DR 63→0→63 verified, deployment gates PASS; 2 live gates remain open (live LLM E2E + Docker/Chromium smoke).
+- `VERSION` bumped `3.0.0-rc.1` → `3.0.0-rc.2`.
+
+### Routing (post-seal main work)
+
+- `#50` — WebSocket/token handling + UnifiedRouter gap closures.
+- `#52` — UnifiedRouter connected to `/v1`, capability-based agent routing, catalog auto-config.
+- `#53` — 2026-09-02 decision matrix: Sonnet-5 primaries (profiler/mapper/aspasia/synthesizer+friction, V4-Pro fallback), vision = Gemini 3.7 Flash + Grok 4.6, OSINT synthesis = Grok 4.6, verifier extract (V4-Flash) split from judgment (Sonnet-5); catalog/pricing + `claude_sonnet_5`, `grok_4_6`; retired slugs (`solar-pro4`, `ling-3.0-flash`, `glm-5.2`) out of every chain.
+
+### Performance / fixes
+
+- Hindsight Memory semantic index: batched inserts via single-connection `executemany` (revived from PR #49) — O(N) commits → 1 commit.
+- WaterHoseVisualizer: PR #49's implicit-`any` fix confirmed **superseded** — current main already types particles via the `Particle` interface (no code change needed).
+
+### Re-validation at `b14a8e16`
+
+- Backend: 634 passed, 2 skipped, 0 failed; coverage 83.31% ≥ 80%; `ruff check .` clean.
+- Main CI matrix green (run `33590408702`): backend · frontend · rust-core · android · smoke.
+- Open gates unchanged: `live_llm_openrouter_e2e`, `docker_chromium_smoke` → GO LIVE pending.
+
 ## 3.0.0-rc.1 — 2026-09-01
 
 ### Production repair

@@ -194,43 +194,49 @@ class HindsightMemory(CanonicalMemory):
     async def merge_evidence(self, task_id: str, evidence_chain: List[Dict]):
         """Canonical davranışı korur + anlamsal indekse ekler."""
         await super().merge_evidence(task_id, evidence_chain)
-
         # Anlamsal indekse de yaz (en iyi çaba — hata kanıt akışını bozmaz)
         def _index_all_evidence():
+            records = []
             for evidence in evidence_chain:
                 try:
-                    self._index_evidence(task_id, evidence)
+                    content_text = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+                    content_hash = self._hash(content_text)
+                    embedding = self._embed(content_text)
+                    embedding_str = json.dumps(embedding) if embedding is not None else None
+                    metadata_str = json.dumps(evidence, ensure_ascii=False, default=str)
+                    records.append((
+                        task_id,
+                        content_hash,
+                        content_text,
+                        embedding_str,
+                        metadata_str,
+                        datetime.now(timezone.utc).timestamp(),
+                    ))
                 except Exception as exc:
-                    logger.debug("HindsightMemory indeksleme hatası (yoksayıldı): %s", exc)
+                    logger.debug("HindsightMemory kanıt hazırlama hatası (yoksayıldı): %s", exc)
+
+            if not records:
+                return
+
+            # OPTIMIZATION: Using `executemany` inside a single connection and commit block
+            # drastically reduces SQLite transaction overhead and avoids file-level locking
+            # issues compared to multiple independent connections (e.g. O(1) commits instead of O(N)).
+            conn = self._connect()
+            try:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO semantic_memories "
+                    "(task_id, content_hash, content_text, embedding, metadata, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    records
+                )
+                conn.commit()
+            except Exception as exc:
+                logger.debug("HindsightMemory toplu indeksleme hatası (yoksayıldı): %s", exc)
+            finally:
+                conn.close()
 
         if evidence_chain:
             await asyncio.to_thread(_index_all_evidence)
-
-    def _index_evidence(self, task_id: str, evidence: Dict) -> None:
-        content_text = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
-        content_hash = self._hash(content_text)
-        embedding = self._embed(content_text)
-        embedding_str = json.dumps(embedding) if embedding is not None else None
-        metadata_str = json.dumps(evidence, ensure_ascii=False, default=str)
-
-        conn = self._connect()
-        try:
-            conn.execute(
-                "INSERT OR IGNORE INTO semantic_memories "
-                "(task_id, content_hash, content_text, embedding, metadata, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    task_id,
-                    content_hash,
-                    content_text,
-                    embedding_str,
-                    metadata_str,
-                    datetime.now(timezone.utc).timestamp(),
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------ Anlamsal arama
     def _fetch_rows(self, task_id: Optional[str]) -> List[Tuple]:
