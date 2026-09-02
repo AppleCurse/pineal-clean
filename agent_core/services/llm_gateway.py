@@ -167,6 +167,25 @@ class LLMGateway:
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"]],
         "autonomous_verifier": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["ling_3_flash"]],
     }
+    TASK_CAPABILITIES = {
+        "vision": frozenset({"chat", "vision"}),
+        "depth": frozenset({"chat"}),
+        "dialogue": frozenset({"chat"}),
+        "fast": frozenset({"chat"}),
+    }
+    AGENT_CAPABILITIES = {
+        "vision_analyzer": frozenset({"chat", "vision"}),
+        "cognitive_profiler": frozenset({"chat"}),
+        "friction_detector": frozenset({"chat"}),
+        "passion_mapper": frozenset({"chat"}),
+        "resonance_synthesizer": frozenset({"chat"}),
+        "autonomous_verifier": frozenset({"chat"}),
+        "authenticity_auditor": frozenset({"chat"}),
+        "depth_analyst": frozenset({"chat"}),
+    }
+    VISION_MODELS = frozenset({
+        MODEL_REGISTRY["gemini_3_7_flash"],
+    })
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
@@ -185,6 +204,48 @@ class LLMGateway:
             if agent_name in self.AGENT_CHAINS:
                 return self.AGENT_CHAINS[agent_name]
         return self.get_chain(task)
+
+    def required_capabilities(
+        self,
+        *,
+        task: str = "depth",
+        agent_name: Optional[str] = None,
+        images: Optional[List[str]] = None,
+    ) -> frozenset[str]:
+        capabilities: set[str] = {"chat"}
+        capabilities.update(self.TASK_CAPABILITIES.get(task.lower(), ()))
+        if agent_name:
+            capabilities.update(self.AGENT_CAPABILITIES.get(agent_name, ()))
+        if images:
+            capabilities.add("vision")
+        return frozenset(capabilities)
+
+    def model_satisfies(self, model: str, capabilities: frozenset[str]) -> bool:
+        if "vision" in capabilities:
+            return model in self.VISION_MODELS
+        return True
+
+    def capable_chain(
+        self,
+        *,
+        task: str,
+        agent_name: Optional[str] = None,
+        images: Optional[List[str]] = None,
+    ) -> List[str]:
+        required = self.required_capabilities(
+            task=task, agent_name=agent_name, images=images
+        )
+        chain = [
+            model
+            for model in self.get_agent_chain(agent_name, task)
+            if self.model_satisfies(model, required)
+        ]
+        if not chain:
+            raise RuntimeError(
+                f"NO_CAPABLE_MODEL: no model in {agent_name or task} chain "
+                f"satisfies {sorted(required)}"
+            )
+        return chain
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -586,6 +647,14 @@ class LLMGateway:
             (route.api_key or "").encode("utf-8")
         ).hexdigest()
         cache_key = (route.connection_id, route.base_url, credential_fingerprint)
+        if (
+            not route.local
+            and self.client is not None
+            and route.provider_id == "openrouter"
+            and route.base_url.rstrip("/") == self.openrouter_base_url.rstrip("/")
+            and (not route.api_key or route.api_key == self.api_key)
+        ):
+            return self.client
         client = self._routed_clients.get(cache_key)
         if client is None:
             http_client = None
@@ -1423,7 +1492,7 @@ class LLMGateway:
         AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
         """
         import logging
-        chain = self.get_chain(task)
+        chain = self.capable_chain(task=task, images=images)
         last_exception = None
 
         for model in chain:
@@ -1466,7 +1535,7 @@ class LLMGateway:
         AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
         """
         import logging
-        chain = self.get_agent_chain(agent_name, task)
+        chain = self.capable_chain(task=task, agent_name=agent_name, images=images)
         last_exception = None
 
         for model in chain:

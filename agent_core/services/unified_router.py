@@ -143,6 +143,7 @@ class RouterConfig:
 @dataclass(frozen=True)
 class RouteRequest:
     model: Optional[str] = None
+    candidate_models: tuple[str, ...] = ()
     strategy: RoutingStrategy = RoutingStrategy.AUTO
     required_capabilities: frozenset[str] = field(default_factory=frozenset)
     minimum_context: Optional[int] = None
@@ -160,6 +161,13 @@ class RouteRequest:
             object.__setattr__(self, "complexity", TaskComplexity(self.complexity))
         except ValueError as exc:
             raise RouterError("unknown routing strategy or task complexity") from exc
+        if any(
+            not isinstance(model_id, str) or not model_id.strip()
+            for model_id in self.candidate_models
+        ):
+            raise RouterError("candidate_models must be non-empty strings")
+        if len(self.candidate_models) > 32:
+            raise RouterError("candidate_models cannot exceed 32 entries")
         if self.minimum_context is not None and self.minimum_context <= 0:
             raise RouterError("minimum_context must be positive")
         if self.minimum_quality is not None and (
@@ -381,12 +389,7 @@ class UnifiedRouter:
 
     def plan(self, request: RouteRequest) -> RoutePlan:
         now = self._clock()
-        targets = self.provider_manager.targets_for(
-            request.model,
-            required_capabilities=request.required_capabilities,
-            minimum_context=request.minimum_context,
-            include_exhausted=True,
-        )
+        targets = self._targets_for_request(request)
         session_scope = self._session_scope(request.session_key, request.model)
         scope = self._strategy_scope(request, session_scope)
         route_id = str(uuid.uuid4())
@@ -646,7 +649,7 @@ class UnifiedRouter:
     ) -> tuple[list[RouteTarget], dict[str, float], dict[str, tuple[str, ...]]]:
         if not targets:
             return [], {}, {}
-        baseline = sorted(targets, key=_priority_key)
+        baseline = self._baseline_order(request, targets)
         strategy = request.strategy
         scores: dict[str, float] = {}
         reasons: dict[str, tuple[str, ...]] = {}
@@ -933,6 +936,40 @@ class UnifiedRouter:
         if active is None or active != lease:
             raise RouterError("attempt lease is unknown or already settled")
         return active
+
+    def _targets_for_request(self, request: RouteRequest) -> tuple[RouteTarget, ...]:
+        kwargs = {
+            "required_capabilities": request.required_capabilities,
+            "minimum_context": request.minimum_context,
+            "include_exhausted": True,
+        }
+        if not request.candidate_models:
+            return self.provider_manager.targets_for(request.model, **kwargs)
+        targets: list[RouteTarget] = []
+        seen: set[str] = set()
+        for canonical in request.candidate_models:
+            for target in self.provider_manager.targets_for(canonical, **kwargs):
+                if target.execution_key in seen:
+                    continue
+                seen.add(target.execution_key)
+                targets.append(target)
+        return tuple(targets)
+
+    @staticmethod
+    def _baseline_order(request: RouteRequest, targets: list[RouteTarget]) -> list[RouteTarget]:
+        if not request.candidate_models:
+            return sorted(targets, key=_priority_key)
+        rank = {
+            model_id: index
+            for index, model_id in enumerate(request.candidate_models)
+        }
+        return sorted(
+            targets,
+            key=lambda target: (
+                rank.get(target.model.canonical_id, len(rank)),
+                _priority_key(target),
+            ),
+        )
 
     def _session_scope(self, session_key: Optional[str], model: Optional[str]) -> Optional[str]:
         if not session_key:

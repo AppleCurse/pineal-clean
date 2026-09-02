@@ -232,7 +232,8 @@ yalnızca gözlem alanlarını doldur:
                 schema=VisualEvidence,
                 task="vision",
                 temperature=0.2,
-                images=image_uris
+                images=image_uris,
+                agent_name="vision_analyzer",
             )
             # [015] fix: provider'ın bildirdiği confidence/data_confidence
             # KANIT OLARAK KABUL EDİLMEZ; forensik güven yerel teminattan türetilir.

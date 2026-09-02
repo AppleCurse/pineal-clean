@@ -78,6 +78,19 @@ async def test_no_images_keeps_plain_text_content(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_query_chain_skips_text_only_models_when_images_are_present(monkeypatch):
+    monkeypatch.setenv("LIVE_LLM_E2E", "1")
+    gw = LLMGateway()
+    gw.set_key("sk-or-v1-test")
+    fake = _FakeCompletions("görsel")
+    gw.client = type("C", (), {"chat": type("CH", (), {"completions": fake})()})()
+
+    result = await gw.query_chain("Bu görselde ne var?", task="vision", images=["data:image/png;base64,AA"])
+    assert result == "görsel"
+    assert fake.captured["model"] == "google/gemini-3.7-flash"
+
+
+@pytest.mark.asyncio
 async def test_vision_guard_respects_live_llm_gate(monkeypatch):
     """Görselli istek de güvenlik kapısını aşamaz (LIVE_LLM_E2E=0 -> RED)."""
     monkeypatch.delenv("LIVE_LLM_E2E", raising=False)
