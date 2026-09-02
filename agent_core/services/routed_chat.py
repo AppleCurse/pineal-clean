@@ -34,6 +34,7 @@ from agent_core.services.provider_manager import (
     load_builtin_catalog,
 )
 from agent_core.services.unified_router import (
+    CandidateScore,
     FailureDecision,
     FailureSignal,
     RouteMode,

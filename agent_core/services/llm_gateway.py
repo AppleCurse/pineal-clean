@@ -168,6 +168,44 @@ class LLMGateway:
         "autonomous_verifier": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["ling_3_flash"]],
     }
 
+
+    def required_capabilities(self, task: str, agent_name: str | None = None) -> frozenset[str]:
+        if agent_name and agent_name in self.AGENT_CAPABILITIES:
+            return self.AGENT_CAPABILITIES[agent_name]
+        return self.TASK_CAPABILITIES.get((task or "").lower(), frozenset({"chat"}))
+
+    def attach_routed_executor(self, executor):
+        self._routed_executor = executor
+
+    def _routed_executor_from_env(self):
+        if getattr(self, '_routed_executor', None) is not None:
+            return self._routed_executor
+        import os
+        if os.getenv("PINEAL_LLM_BACKEND", "legacy").strip().lower() != "unified":
+            return None
+        from agent_core.services.routed_chat import routing_runtime_from_env
+        executor = routing_runtime_from_env()
+        if executor is None:
+            return None
+        self._routed_executor = executor
+        return executor
+
+    def _capability_filter_chain(self, chain, required):
+        try:
+            from agent_core.services.provider_manager import load_builtin_catalog
+            catalog = load_builtin_catalog()
+        except Exception:
+            return chain
+        filtered = []
+        for model in chain:
+            caps = catalog.get(model, {}).get("capabilities") if isinstance(catalog, dict) else None
+            if caps is None:
+                filtered.append(model)
+                continue
+            if required.issubset(set(caps)):
+                filtered.append(model)
+        return filtered or chain
+
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
     LOCAL_DEFAULT_MODEL = os.getenv("LOCAL_LLM_MODEL", "dolphin-llama3:latest")
 
@@ -448,6 +486,16 @@ class LLMGateway:
         value = projected if projected is not None else committed + reserved
         return (
             f"OPENROUTER_SPEND_CAP_EXCEEDED: committed=${committed:.6f}, "
+
+    TASK_CAPABILITIES = {
+        "depth": frozenset({"chat"}),
+        "dialogue": frozenset({"chat"}),
+        "fast": frozenset({"chat"}),
+        "vision": frozenset({"chat", "vision"}),
+    }
+    AGENT_CAPABILITIES = {
+        "vision_analyzer": frozenset({"chat", "vision"}),
+    }
             f"reserved=${reserved:.6f}, projected=${value:.6f}, "
             f"cap=${self.spend_cap_usd:.6f} (OPENROUTER_MAX_SPEND_USD)."
         )
