@@ -151,9 +151,9 @@ def test_from_file_rejects_oversized_config(tmp_path):
 
 # ---------------------------------------------------------------- env / rollout
 
-def test_backend_mode_defaults_to_legacy(monkeypatch):
+def test_backend_mode_defaults_to_unified(monkeypatch):
     monkeypatch.delenv("PINEAL_LLM_BACKEND", raising=False)
-    assert llm_backend_mode_from_env() == "legacy"
+    assert llm_backend_mode_from_env() == "unified"
 
 
 def test_backend_mode_rejects_unknown_value(monkeypatch):
@@ -162,9 +162,25 @@ def test_backend_mode_rejects_unknown_value(monkeypatch):
         llm_backend_mode_from_env()
 
 
-def test_routing_runtime_returns_none_without_config(monkeypatch):
+def test_routing_runtime_auto_builds_without_config(monkeypatch):
     monkeypatch.delenv("PINEAL_ROUTER_CONFIG", raising=False)
-    assert routing_runtime_from_env() is None
+    executor = routing_runtime_from_env()
+    assert executor is not None
+    assert executor.handles("fast") is True
+    assert executor.handles("solar_pro4") is True
+    assert executor.handles("upstage/solar-pro4") is True
+    assert executor.handles("vision") is True
+
+
+def test_routing_runtime_adds_official_combo_when_keys_present(monkeypatch):
+    monkeypatch.delenv("PINEAL_ROUTER_CONFIG", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    executor = routing_runtime_from_env()
+    assert executor is not None
+    assert any(
+        model.startswith("groq/")
+        for model in executor.model_groups["fast"]
+    )
 
 
 def test_routing_runtime_loads_configured_file(monkeypatch):
@@ -180,6 +196,24 @@ def test_unknown_model_group_is_rejected():
     executor = _executor()
     with pytest.raises(RoutingRuntimeError, match="unknown routed model group"):
         executor.plan("nope")
+
+
+def test_plan_accepts_registry_alias_and_openrouter_slug():
+    executor = routing_runtime_from_env()
+    assert executor is not None
+    alias_plan = executor.plan("solar_pro4")
+    slug_plan = executor.plan("upstage/solar-pro4")
+    assert alias_plan.attempt_order
+    assert slug_plan.attempt_order
+    assert alias_plan.candidates[0].target.model.id == "upstage/solar-pro4"
+
+
+def test_candidate_models_are_forwarded_to_the_router():
+    executor = _executor()
+    plan = executor.plan("fast", strategy=RoutingStrategy.PRIORITY)
+    assert plan.attempt_order
+    models = [candidate.target.model.canonical_id for candidate in plan.candidates if candidate.eligible]
+    assert models[0] == "openrouter/upstage/solar-pro4"
 
 
 @pytest.mark.parametrize(
