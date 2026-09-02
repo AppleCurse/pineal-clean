@@ -2,9 +2,22 @@
 
 ## Unreleased (post-rc.2) — 2026-09-02
 
+### Cross-audit fixes + consolidated verdict
+
+- **JSON repair exception scope** (`llm_gateway.query_json`): repair path now catches only parse/schema failures (`ValueError`, `ValidationError`, `TypeError`, `KeyError`, `JSONDecodeError`). Transport/auth/spend-cap/cancellation errors re-raise immediately — no second paid repair call on a dead upstream.
+- **Depth failure wiring** (`task_executor`): `depth_analyst` success/failure is recorded on `status.agent_runs` + `evidence_chain` (execution_failure) + explicit `depth_report.available=False` metadata. Silent WARNING-only gaps removed so DecisionEngine sees the miss.
+- **Prompt injection close-out**:
+  - `autonomous_verifier`: bio + search snippets fenced as `<UNTRUSTED_*>`; model told content is not instructions.
+  - `memory_injector`: operator rules no longer claim "KUTSAL OVERRIDE"; sanitised, fence-safe, injection-pattern rejected; host system prompt remains supreme.
+- **Authentic vector epistemic marker**: successful vectors stamped `_epistemic=model_estimate` + status metadata; unavailable path carries `epistemic=unavailable`.
+- **Slug drift fix**: docs/`.env.example`/`router.example.json`/`interpreter_agent` defaults aligned to the 2026-09-02 decision matrix (`claude-sonnet-5` / `deepseek-v4-flash` / `gemini-3.7-flash` / `grok-4.6`). Retired promo slugs (`solar-pro4`, `ling-3.0-flash`, `glm-5.2`) are not bare defaults.
+- **G7 release gates**: `.github/workflows/release-gates.yml` (kaynak kopya: `release/release-gates.yml` — GitHub App `workflows` izni olmadığı için bu PR workflow dosyasını doğrudan yazamaz; yazma yetkili aktör `cp release/release-gates.yml .github/workflows/release-gates.yml` ile ekler) (workflow_dispatch only) wires Gate A live LLM E2E + Gate B docker/Chromium smoke. Docs already described Section 12; workflow file is now present.
+- Audit reports: `docs/reports/CROSS_AUDIT_FIXES_2026-09-02.md`, `docs/reports/SON_HUKUM_DENETIM.md`.
+- Verification: **645 passed, 2 skipped** · **%83.32** coverage · ruff clean.
+
 ### Release gates (G7)
 
-- Added `.github/workflows/release-gates.yml` — manual-only (`workflow_dispatch`) wiring for the two open rc.2 live gates; never triggers on push/PR (Gate A is a paid live LLM call); single-flight concurrency (no cancellation of a running paid gate).
+- Added `.github/workflows/release-gates.yml` (kaynak kopya: `release/release-gates.yml` — GitHub App `workflows` izni olmadığı için bu PR workflow dosyasını doğrudan yazamaz; yazma yetkili aktör `cp release/release-gates.yml .github/workflows/release-gates.yml` ile ekler) — manual-only (`workflow_dispatch`) wiring for the two open rc.2 live gates; never triggers on push/PR (Gate A is a paid live LLM call); single-flight concurrency (no cancellation of a running paid gate).
   - `live-llm-e2e` (`live_llm_openrouter_e2e`): runs `live_llm_gate.py` with `secrets.OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1`. Fail-closed: rejects the run up front when the secret is missing; bounded by `OPENROUTER_MAX_SPEND_USD=5`.
   - `docker-chromium-smoke` (`docker_chromium_smoke`): real `docker compose up --build`; health gate (`ready|degraded` → 200); real Svelte dist served (`id="app"`); production auth verified both ways (no token → 401, `X-API-Key` → 200); in-container Playwright/Chromium smoke via `scripts/smoke_test_browser.py`.
 - `RELEASE_EVIDENCE.md` — added post-seal **Section 12**: gate execution mechanism + honest scope note (the Instagram-initiate leg of Gate B stays operator-manual; GitHub runner IPs hit platform limits).

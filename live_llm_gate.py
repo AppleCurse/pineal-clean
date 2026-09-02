@@ -5,7 +5,7 @@ Calistirma (yerelde):
     OPENROUTER_API_KEY=sk-or-v1-... LIVE_LLM_E2E=1 python live_llm_gate.py
 
 GitHub Actions'ta manuel tetik:
-    .github/workflows/ci.yml  (secret: OPENROUTER_API_KEY)
+    .github/workflows/release-gates.yml  (workflow_dispatch; secret: OPENROUTER_API_KEY)
 
 Kapsanan yol:
     input -> mirror_truth -> passion_mapper -> ... -> resonance_synthesizer

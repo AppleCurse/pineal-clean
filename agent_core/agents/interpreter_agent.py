@@ -32,7 +32,9 @@ class InterpreterAgent:
             if key and not key.startswith("sk-or-v1-YOUR"):
                 interpreter.llm.api_key = key
                 interpreter.llm.api_base = "https://openrouter.ai/api/v1"
-                selected_model = model or "inclusionai/ling-3.0-flash"
+                # Default follows the 2026-09-02 matrix (retired ling-3.0-flash
+                # is no longer the bare fallback). Override via `model=` arg.
+                selected_model = model or "deepseek/deepseek-v4-flash"
                 if not selected_model.startswith("openrouter/") and not ("local" in selected_model.lower() or "ollama" in selected_model.lower()):
                     selected_model = f"openrouter/{selected_model}"
                 interpreter.llm.model = selected_model

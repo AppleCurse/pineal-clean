@@ -11,8 +11,11 @@
       "priority": 100,
       "weight": 1.0,
       "model_allowlist": [
-        "upstage/solar-pro4",
-        "inclusionai/ling-3.0-flash"
+        "anthropic/claude-sonnet-5",
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-pro",
+        "google/gemini-3.7-flash",
+        "x-ai/grok-4.6"
       ]
     },
     {
@@ -30,8 +33,17 @@
   ],
   "model_groups": {
     "fast": [
-      "openrouter/upstage/solar-pro4",
-      "openrouter/inclusionai/ling-3.0-flash"
+      "openrouter/deepseek/deepseek-v4-flash",
+      "openrouter/google/gemini-3.7-flash"
+    ],
+    "depth": [
+      "openrouter/anthropic/claude-sonnet-5",
+      "openrouter/deepseek/deepseek-v4-pro",
+      "openrouter/google/gemini-3.7-flash"
+    ],
+    "vision": [
+      "openrouter/google/gemini-3.7-flash",
+      "openrouter/x-ai/grok-4.6"
     ],
     "local": [
       "ollama-local/llama3.2"
