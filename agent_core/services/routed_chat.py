@@ -96,7 +96,8 @@ def _nous_executable_models() -> list[str]:
     return [
         spec.model
         for spec in ROUTES.values()
-        if spec.provider == "nous-research" and (spec.tier != "paid" or allow_paid)
+        if spec.provider == "nous-research"
+        and (spec.tier not in ("paid", "frontier") or allow_paid)
     ]
 
 
@@ -828,13 +829,19 @@ def default_routing_mapping(
     def _openrouter(model_id: str) -> str:
         return f"openrouter/{model_id}"
 
+    def _policy_key_to_canonical(route_key: str) -> str:
+        # FINAL policy speaks ``model@provider``; the routed executor speaks the
+        # catalog's ``provider/model`` canonical form.
+        model, provider = route_key.rsplit("@", 1)
+        return f"{provider}/{model}"
+
     # FINAL-KARAR-MATRIX task groups are the economic policy source of truth:
     # free routes first, paid routes only when escalation is explicitly
     # enabled. Legacy OpenRouter chains remain available as compatibility
     # aliases below, but the policy groups win for shared task names.
     groups: dict[str, list[str]] = {}
     for task, routes in executable_task_groups().items():
-        groups[task] = list(routes)
+        groups[task] = [_policy_key_to_canonical(route) for route in routes]
 
     # Preserve legacy aliases for callers that still ask for depth/dialogue/
     # registry slugs. Shared task names keep the FINAL policy's free-first

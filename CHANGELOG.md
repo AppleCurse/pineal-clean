@@ -29,6 +29,22 @@
   catalog contract gate (plus a live OpenRouter cross-check when a key is
   present). OpenRouter absence is never treated as Nous evidence.
 
+### FINAL policy hardening (review follow-up)
+
+- Canonical policy key is now `model@provider`; `routed_chat.default_routing_mapping`
+  translates to the catalog's `provider/model` form at the boundary.
+- Fail-closed by construction: `is_paid`/`is_free` treat unknown model/provider
+  as DENY (never free, never order-dependent); `verification_status` defaults to
+  `unverified` (opt-in); `quota_limit()` raises `UnknownQuotaDenied` for unknown
+  quota instead of allowing an `inf`/unlimited interpretation.
+- Import-time `_validate_catalog()`: every task-group candidate must resolve to a
+  verified spec (no silent catalog-drift swallowing), forbidden aliases and
+  vision/video capability cross-checks are enforced.
+- `assert_executable(explicit=True)` is audited (logs a warning) and a `frontier`
+  tier requires **both** `PINEAL_ALLOW_PAID_ESCALATION=1` and `explicit=True`.
+- Nous Step 3.7 Flash catalogued as vision-capable (matches the policy's
+  vision/video task groups).
+
 ### Cross-audit fixes + consolidated verdict
 
 - **JSON repair exception scope** (`llm_gateway.query_json`): repair path now catches only parse/schema failures (`ValueError`, `ValidationError`, `TypeError`, `KeyError`, `JSONDecodeError`). Transport/auth/spend-cap/cancellation errors re-raise immediately — no second paid repair call on a dead upstream.
