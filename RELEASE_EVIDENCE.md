@@ -221,7 +221,7 @@ Değişiklik yapılırsa `VERSION` dosyası ve bu belge birlikte güncellenmelid
 
 ### Mekanizma
 
-`.github/workflows/release-gates.yml` — yalnızca `workflow_dispatch` (manuel) tetiklenir;
+`.github/workflows/release-gates.yml` (kaynak kopya: `release/release-gates.yml` — GitHub App `workflows` izni olmadığı için bu PR workflow dosyasını doğrudan yazamaz; yazma yetkili aktör `cp release/release-gates.yml .github/workflows/release-gates.yml` ile ekler) — yalnızca `workflow_dispatch` (manuel) tetiklenir;
 push/PR'da **asla** koşmaz (Gate A paralı canlı LLM çağrısı içerir). Aynı anda tek koşu
 (concurrency; iptal etme yok — paralı koşu yarım kesilmez).
 

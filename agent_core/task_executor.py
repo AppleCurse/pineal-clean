@@ -843,13 +843,29 @@ class PinealExecutor:
             self._log("INFO", "[" + task_id + "] 360 İnsan Tanıma Profili Oluşturuldu")
 
             # --- P1 + P7 + P8 DERİNLİK VE GERÇEKLİK ANALİZİ (QuoteGuard Korumalı) ---
+            # depth_analyst ana döngü dışında çalışır; success/failure must be
+            # recorded on status.agent_runs so DecisionEngine sees the gap
+            # instead of silently treating depth as unused.
+            depth_start = datetime.now(timezone.utc)
             try:
                 depth_agent = self.agents.get("depth_analyst") or DepthAnalyst(self.llm_gateway)
                 with self._capture_llm_calls(task_id, "depth_analyst") as depth_scope:
                     depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
+                depth_end = datetime.now(timezone.utc)
                 status.depth_report = depth_rep.model_dump()
                 status.depth_report["_provenance"] = self._provenance_for(
                     "depth_analyst", depth_rep, depth_scope.records
+                )
+                _depth_summary = dict(status.depth_report)
+                status.agent_runs["depth_analyst"] = AgentRun(
+                    task_id=task_id, agent_name="depth_analyst", status="completed",
+                    started_at=depth_start, completed_at=depth_end,
+                    output_summary=_depth_summary, call_ids=list(depth_scope.call_ids),
+                    confidence=(
+                        getattr(depth_rep, "reality_index", None)
+                        if isinstance(getattr(depth_rep, "reality_index", None), (int, float))
+                        else None
+                    ),
                 )
                 q_stats = depth_rep.quote_guard or {}
                 kept = q_stats.get("kept", len(depth_rep.reality_findings))
@@ -857,6 +873,26 @@ class PinealExecutor:
                 self._log("INFO", f"[{task_id}] DERİNLİK TURU: gerçeklik endeksi %{int(depth_rep.reality_index * 100)}")
                 self._log("INFO", f"[{task_id}] KALKAN: {kept}/{checked} bulgu kanıtla ayakta")
             except Exception as e:
+                depth_end = datetime.now(timezone.utc)
+                error_code = type(e).__name__
+                status.agent_runs["depth_analyst"] = AgentRun(
+                    task_id=task_id, agent_name="depth_analyst", status="failed",
+                    started_at=depth_start, completed_at=depth_end,
+                    error_code=error_code,
+                    error_message=str(e)[:200],
+                )
+                status.evidence_chain.append({
+                    "agent": "depth_analyst",
+                    "evidence_type": "execution_failure",
+                    "result": {"error_code": error_code, "error_message": str(e)[:250]},
+                    "timestamp": depth_end.isoformat(),
+                })
+                status.depth_report = {
+                    "available": False,
+                    "reason": "DEPTH_ANALYSIS_UNAVAILABLE",
+                    "error_code": error_code,
+                    "error_message": str(e)[:250],
+                }
                 self._log("WARNING", f"[{task_id}] Derinlik analizi atlandı: {e}")
 
 
@@ -965,6 +1001,10 @@ class PinealExecutor:
         A missing vector is represented explicitly in metadata.  It must never be
         replaced with neutral-looking numeric values because downstream resonance
         calculations treat numeric vectors as decision-ready evidence.
+
+        Successful vectors carry an epistemic marker so consumers can distinguish
+        LLM-derived estimates from measured evidence without mistaking the
+        numbers for ground truth.
         """
         vector_key = f"{subject}_authentic_vector"
         status_key = f"{subject}_authentic_vector_status"
@@ -973,11 +1013,22 @@ class PinealExecutor:
             input_data[status_key] = {
                 "available": False,
                 "reason": "AUTHENTIC_VECTOR_UNAVAILABLE",
+                "epistemic": "unavailable",
             }
             return
 
-        input_data[vector_key] = vector
-        input_data[status_key] = {"available": True, "reason": None}
+        # Stamp the vector itself so any downstream consumer (resonance, UI,
+        # evidence export) can see the estimate is model-derived, not measured.
+        stamped = dict(vector)
+        stamped.setdefault("_epistemic", "model_estimate")
+        stamped.setdefault("_provenance", "authentic_vector_llm")
+        input_data[vector_key] = stamped
+        input_data[status_key] = {
+            "available": True,
+            "reason": None,
+            "epistemic": "model_estimate",
+            "provenance": "authentic_vector_llm",
+        }
 
     @staticmethod
     def _holistic_confidence(agent_runs: Dict[str, AgentRun]) -> float:

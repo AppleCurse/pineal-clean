@@ -37,6 +37,29 @@ async def test_unavailable_vector_is_explicit_metadata_not_numeric_evidence():
     assert input_data["user_authentic_vector_status"] == {
         "available": False,
         "reason": "AUTHENTIC_VECTOR_UNAVAILABLE",
+        "epistemic": "unavailable",
+    }
+
+
+def test_available_vector_carries_epistemic_marker():
+    """A successful vector must be stamped as model_estimate, not measured truth."""
+    input_data: dict = {}
+    PinealExecutor._store_authentic_vector(
+        PinealExecutor.__new__(PinealExecutor),
+        input_data,
+        "user",
+        {"depth": 0.7, "energy": 0.4, "achilles_heel": "x", "core_wound": "y", "dark_detail": "z"},
+    )
+
+    vec = input_data["user_authentic_vector"]
+    assert vec["depth"] == 0.7
+    assert vec["_epistemic"] == "model_estimate"
+    assert vec["_provenance"] == "authentic_vector_llm"
+    assert input_data["user_authentic_vector_status"] == {
+        "available": True,
+        "reason": None,
+        "epistemic": "model_estimate",
+        "provenance": "authentic_vector_llm",
     }
 
 

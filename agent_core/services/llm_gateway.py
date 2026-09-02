@@ -14,7 +14,7 @@ import httpcore
 import httpx
 from httpcore._backends.auto import AutoBackend
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agent_core.services.response_cache import build_cache_from_env
 
@@ -152,7 +152,9 @@ class LLMGateway:
         "openai/gpt-5.6-sol-pro": {"in": 2.0, "out": 10.0}
     }
     
-    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["gemini_3_7_flash"])
+    # Defaults follow the 2026-09-02 decision matrix (retired promo slugs are
+    # NOT the bare-env fallback). Operators may still override via env.
+    TIER_1_MODEL = os.getenv("OPENROUTER_TIER_1_MODEL", MODEL_REGISTRY["claude_sonnet_5"])
     TIER_2_MODEL = os.getenv("OPENROUTER_TIER_2_MODEL", MODEL_REGISTRY["deepseek_v4_flash"])
     DEFAULT_VISION_MODEL = os.getenv("OPENROUTER_VISION_MODEL", MODEL_REGISTRY["gemini_3_7_flash"])
 
@@ -1471,7 +1473,12 @@ class LLMGateway:
         return schema.model_validate(parsed_data)
 
     async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None, images: Optional[List[str]] = None) -> T:
-        """LLM'den sorgu atar, beklenen JSON formatını (Pydantic schema) tamir mekanizmasıyla garanti eder."""
+        """LLM'den sorgu atar, beklenen JSON formatını (Pydantic schema) tamir mekanizmasıyla garanti eder.
+
+        Repair is scoped to parse/schema failures only. Transport, auth, spend-cap,
+        cancellation, and other non-JSON errors are re-raised immediately so a
+        broken upstream call is never disguised as a second paid repair attempt.
+        """
         full_prompt = (
             f"{prompt}\n\n"
             f"Lütfen çıktını SADECE aşağıdaki JSON formatına uygun DOLDURULMUŞ JSON verisi olarak ver. Markdown etiketi kullanma, hiçbir ek açıklama yapma:\n"
@@ -1484,8 +1491,8 @@ class LLMGateway:
             response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model, images=images)
             parsed_data = self.extract_json(response_text)
             return self._coerce_to_schema(parsed_data, schema)
-        except Exception as err:
-            # 1 Kez Repair (Tamir) İsteği
+        except (ValueError, ValidationError, TypeError, KeyError, json.JSONDecodeError) as err:
+            # 1 Kez Repair (Tamir) İsteği — yalnız JSON/şema hatalarında.
             repair_prompt = (
                 f"Önceki çıktın geçerli bir doldurulmuş JSON verisi değildi veya şemaya uymadı ({err}). "
                 f"Lütfen SADECE şu şemaya uygun DOLDURULMUŞ veriyi JSON olarak döndür (şema etiketlerini değil, gerçek veriyi yaz):\n{json.dumps(schema.model_json_schema(), ensure_ascii=False)}\n"
