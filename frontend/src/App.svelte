@@ -147,12 +147,10 @@
       <button class="btn-dark" on:click={fetchTasks}>[ GET TASKS ]</button>
     </div>
     
-    {#if telemetryData}
-      <!-- Şeffaf Su Borusu (Neural Fluid Pipeline) -->
-      <div style="margin-bottom: 20px;">
-        <NeuralTelemetryBoard telemetry={telemetryData} />
-      </div>
-    {/if}
+    <!-- Şeffaf Su Borusu (Neural Fluid Pipeline) HER ZAMAN GÖRÜNÜR -->
+    <div style="margin-bottom: 20px;">
+      <NeuralTelemetryBoard telemetry={telemetryData} />
+    </div>
 
     {#if tasksData}
       <div style="background: #111; padding:10px; border-radius: 4px; border: 1px solid #333; font-size: 11px; margin-top: 10px;">

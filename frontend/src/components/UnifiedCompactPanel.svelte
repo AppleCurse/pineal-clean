@@ -120,7 +120,7 @@
   // ASPASIA CHAT & DIALOGUE
   // ==========================================
   let messages: {sender: string, text: string}[] = [
-    { sender: 'ASPASIA', text: 'Sistem çevrimiçi. Hedef verilerini ve telemetriyi incelemeye hazırım şefim.' }
+    { sender: 'ASPASIA', text: 'Sistem çevrimiçi. Hedef verilerini ve telemetriyi incelemeye hazırım.' }
   ];
   let inputMessage = "";
   let chatContainer: HTMLElement;
