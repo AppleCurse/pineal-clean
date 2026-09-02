@@ -8,6 +8,12 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+# PINEAL_TOKEN korumalı üretimde UI'ın kimlik taşıması gerekir; token derleme
+# zamanında VITE_PINEAL_TOKEN ile gömülür. Çalışma zamanı (docker compose) .env'inde
+# PINEAL_TOKEN tanımlıysa, imaj build edilirken AYNI değer VITE_PINEAL_TOKEN olarak
+# verilmeli — aksi hâlde UI 401 alır (bkz. RUNBOOK "401 tüm API çağrıları").
+ARG VITE_PINEAL_TOKEN=""
+ENV VITE_PINEAL_TOKEN=${VITE_PINEAL_TOKEN}
 RUN npm run build
 
 # ---------- Stage 2: runtime ----------

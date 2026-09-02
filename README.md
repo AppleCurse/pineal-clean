@@ -122,7 +122,7 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan `google/gemini-3.7-flash`; VisionAnalyzer ve görselli Aspasia istekleri). |
 | `PINEAL_ENV` | `development` (varsayılan) veya `production`. Production, `PINEAL_TOKEN` olmadan startup'ta fail-closed durur. Docker varsayılanı production'dır. |
 | `PINEAL_REQUIRE_AUTH` | Development'ta da token zorunluluğunu açar. |
-| `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister; UI için `VITE_PINEAL_TOKEN`. WebSocket anahtarı URL yerine ilk auth mesajında taşınır. |
+| `PINEAL_TOKEN` | Tanımlanırsa tüm API `X-API-Key` ister. UI bunu iki yoldan taşır: (1) çalışma zamanı — arayüzde Kasa panelindeki "API ERİŞİM ANAHTARI" alanı (yeniden derleme gerekmez, önerilen); (2) derleme zamanı — `VITE_PINEAL_TOKEN` (Docker build arg). WebSocket anahtarı URL yerine ilk auth mesajında taşınır. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS (boşsa localhost kümesi). |
 | `ENABLE_MAIGRET`, `ENABLE_HOLEHE`, `ENABLE_CRAWL4AI` | Deneysel OSINT kapıları — **hepsi default KAPALI**; kapalıyken pipeline davranışı değişmez. Limit/timeout alt değişkenleri `.env.example`'da. |
 | `STEALTH_PROVIDER` | `playwright_stealth` (default) \| `invisible` \| `cloak` \| `none`. invisible/cloak yalnız binary yolu gösterilirse kullanılabilir (indirme yapmaz): `INVISIBLE_BROWSER_BINARY`, `CLOAK_BROWSER_EXECUTABLE`. |
