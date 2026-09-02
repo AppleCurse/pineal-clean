@@ -22,6 +22,7 @@
   deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`).
 - Token kipi: `PINEAL_TOKEN=x` (HTTP `X-API-Key`; WS ilk auth mesajı) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`. `PINEAL_ENV=production` tokensız başlatılamaz; Docker varsayılanı production'dır.
 - Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı; env tanımsızsa da 0). Aşılırsa `SpendCapExceeded`.
+- Native yönlendirici: `PINEAL_LLM_BACKEND=legacy|unified` + `PINEAL_ROUTER_CONFIG` (şablon: `config/router.example.json`). `unified` seçilip config verilmezse startup **çökmez**: legacy'ye düşer, `/health` `UNIFIED_ROUTER_CONFIG_MISSING` ile DEGRADED döner (fail-safe; fail-closed değil).
 
 ## Sık sorunlar
 | Belirti | Neden → Çözüm |

@@ -118,6 +118,7 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | `OPENROUTER_MAX_SPEND_USD` | Oturum harcama tavanı (0=kapalı). Aşılırsa `SpendCapExceeded` ve canlı çağrı durur. |
 | `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
+| `PINEAL_LLM_BACKEND`, `PINEAL_ROUTER_CONFIG` | Native yönlendirici: `legacy` (varsayılan) veya `unified`. `unified` seçilirse `PINEAL_ROUTER_CONFIG` (örnek: `config/router.example.json`) şarttır; config yoksa startup çökmez, **fail-safe** olarak legacy'ye düşer ve `/health` DEGRADED döner. |
 | `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` | AutonomousVerifier web araması (Tavily/SerpAPI/Exa; yoksa DuckDuckGo yedeği). |
 | `OPENROUTER_VISION_MODEL` | Görselli isteklerde vision modeli (varsayılan `google/gemini-3.7-flash`; VisionAnalyzer ve görselli Aspasia istekleri). |
 | `PINEAL_ENV` | `development` (varsayılan) veya `production`. Production, `PINEAL_TOKEN` olmadan startup'ta fail-closed durur. Docker varsayılanı production'dır. |
