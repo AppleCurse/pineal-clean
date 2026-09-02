@@ -183,3 +183,30 @@ Varsayım veya iddialara dayanmamaktadır.
 
 **Bu belge bir sonraki versiyon çıkana kadar geçerlidir.**  
 Değişiklik yapılırsa `VERSION` dosyası ve bu belge birlikte güncellenmelidir.
+
+---
+
+## 11. Post-seal Yeniden Doğrulama (2026-09-02)
+
+> Bu bölüm, mühür **sonrasında** eklenmiştir. Orijinal kayıt (Bölüm 1–10) değiştirilmemiştir.
+
+| Alan | Değer |
+|---|---|
+| Orijinal mühür | 2026-09-01 · branch `8e3b2918` · main tip `c4437def` |
+| Main'e giriş | 2026-09-02 · main tip `b14a8e16` |
+| Mühür sonrası main'e giren işler | #50 websocket/token + router gap · #52 UnifiedRouter → `/v1` + capability routing · #53 2026-09-02 karar matrisi |
+
+**Yeniden doğrulama (`b14a8e16` / PR #53 head `d8162c9`):**
+
+| Kontrol | Sonuç | Kanıt |
+|---|---|---|
+| `ruff check .` | ✅ PASS | `All checks passed!` |
+| Backend tam suite | ✅ PASS | `634 passed, 2 skipped, 0 failed` |
+| Coverage gate | ✅ PASS | `83.31% ≥ 80%` |
+| Main CI matrisi | ✅ PASS | run `33590408702`: backend · frontend · rust-core · android · smoke |
+
+**Değişmeyen açık gate'ler (GO LIVE için hâlâ zorunlu):**
+- `live_llm_openrouter_e2e` — `python live_llm_gate.py` (Bölüm 8'deki kriterler)
+- `docker_chromium_smoke` — Docker + Chromium smoke (Bölüm 9'daki kriterler)
+
+> Bu iki canlı gate kapanmadan yayın kararı verilmemelidir (scoped skor: 81/100; gate kapanınca 100/100 hedefi).
