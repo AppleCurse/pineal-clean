@@ -2,6 +2,33 @@
 
 ## Unreleased (post-rc.2) — 2026-09-02
 
+### FINAL-KARAR-MATRIX production routing
+
+- **`final_routing_policy.py`** — the FINAL decision matrix becomes the runtime
+  economic source of truth: verified free routes (Groq/Cerebras GPT-OSS + Nous
+  `:free` routes), paid routes (Nous Step/Solar/LongCat/Luna/Sonnet + OpenRouter
+  Gemini 3.7 Flash / GPT-5.6 Sol Pro) with the fixed Nous discounts (Luna 80%,
+  Sonnet 20%). Free-first task ordering; paid escalation `DENY` by default,
+  gated by `PINEAL_ALLOW_PAID_ESCALATION=1`.
+- **`quota_governor.py`** — header-aware RPM/TPM/RPD/TPD accounting seeded from
+  the account-verified Groq (30 RPM / 14,400 RPD) and Cerebras (5 RPM / 30K TPM
+  / 1M TPD) quotas. Unknown quota is reported `unknown`, never unlimited.
+- **`routed_chat.py`** — `default_routing_mapping` is now policy-driven (free
+  first); Nous connections are policy-gated so catalog presence alone never
+  turns a paid route into an executable fallback; the executor enforces the
+  FINAL policy before leasing, records quota state, and annotates
+  `fallback_reason`/`quota_status` on every call.
+- **`llm_gateway.py`** — telemetry contract extended (`requested_model`,
+  `actual_model`, `fallback_reason`, `quota_status`); provider default-model
+  substitution is denied; `query_chain`/`query_json_chain` now fall back only
+  on transient errors (and genuine JSON parse/schema failures) — never on auth,
+  spend-cap, unknown-pricing, paid-escalation, or model-unavailable.
+- **`config/provider_catalog.json`** — added `nous-research` provider with
+  verified free + paid models and effective Nous prices.
+- **`scripts/verify_openrouter_catalog.py`** + CI step — deterministic local
+  catalog contract gate (plus a live OpenRouter cross-check when a key is
+  present). OpenRouter absence is never treated as Nous evidence.
+
 ### Cross-audit fixes + consolidated verdict
 
 - **JSON repair exception scope** (`llm_gateway.query_json`): repair path now catches only parse/schema failures (`ValueError`, `ValidationError`, `TypeError`, `KeyError`, `JSONDecodeError`). Transport/auth/spend-cap/cancellation errors re-raise immediately — no second paid repair call on a dead upstream.

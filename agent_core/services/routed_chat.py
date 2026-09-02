@@ -18,12 +18,19 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Optional
 
+from agent_core.services.final_routing_policy import (
+    assert_executable,
+    executable_task_groups,
+    is_known_route,
+    paid_escalation_enabled,
+)
 from agent_core.services.llm_gateway import (
     GatewayRoute,
     LLMChatResult,
     LLMChatStream,
     LLMGateway,
 )
+from agent_core.services.quota_governor import QuotaGovernor
 from agent_core.services.provider_manager import (
     AccessMethod,
     CatalogError,
@@ -37,6 +44,7 @@ from agent_core.services.provider_manager import (
 )
 from agent_core.services.unified_router import (
     FailureDecision,
+    FailureKind,
     FailureSignal,
     RouteMode,
     RoutePlan,
@@ -57,7 +65,39 @@ _OPTIONAL_OPENAI_CHAT_CONNECTIONS: tuple[tuple[str, str, int], ...] = (
     ("alibaba-dashscope", "DASHSCOPE_API_KEY", 150),
     ("together", "TOGETHER_API_KEY", 160),
     ("fireworks", "FIREWORKS_API_KEY", 170),
+    # Nous Research is policy-gated: the catalog is present, but only the
+    # FINAL-KARAR-MATRIX routes become executable (free always, paid only
+    # behind PINEAL_ALLOW_PAID_ESCALATION=1).
+    ("nous-research", "NOUS_API_KEY", 105),
 )
+
+
+def _fallback_reason_for_kind(kind: FailureKind) -> str:
+    """Translate a router failure classification into the telemetry contract."""
+    return {
+        FailureKind.RATE_LIMIT: "429_RATE_LIMITED",
+        FailureKind.QUOTA_EXHAUSTED: "429_QUOTA_EXHAUSTED",
+        FailureKind.MODEL_UNAVAILABLE: "MODEL_UNAVAILABLE",
+        FailureKind.TIMEOUT: "TIMEOUT",
+        FailureKind.NETWORK: "NETWORK_FAILURE",
+        FailureKind.SERVER: "SERVER_ERROR",
+        FailureKind.AUTHENTICATION: "AUTH_FAILED",
+        FailureKind.PERMISSION: "PERMISSION_DENIED",
+        FailureKind.INVALID_REQUEST: "INVALID_REQUEST",
+        FailureKind.CANCELLED: "CANCELLED",
+    }.get(kind, "UNKNOWN_FAILURE")
+
+
+def _nous_executable_models() -> list[str]:
+    """Nous model ids allowed to execute under the FINAL routing policy."""
+    from agent_core.services.final_routing_policy import ROUTES
+
+    allow_paid = paid_escalation_enabled()
+    return [
+        spec.model
+        for spec in ROUTES.values()
+        if spec.provider == "nous-research" and (spec.tier != "paid" or allow_paid)
+    ]
 
 
 class RoutingRuntimeError(ValueError):
@@ -95,6 +135,7 @@ class RoutedChatExecutor:
         model_pricing: Optional[Mapping[str, Mapping[str, float]]] = None,
         router: Optional[UnifiedRouter] = None,
         resolver: Callable[..., Iterable] = socket.getaddrinfo,
+        quota_governor: Optional[QuotaGovernor] = None,
     ):
         groups: dict[str, tuple[str, ...]] = {}
         for alias, raw_models in model_groups.items():
@@ -140,6 +181,7 @@ class RoutedChatExecutor:
         self.model_pricing = MappingProxyType(pricing_overrides)
         self.router = router or UnifiedRouter(provider_manager)
         self._resolver = resolver
+        self.quota_governor = quota_governor or QuotaGovernor.from_policy()
 
         for alias, models in groups.items():
             if not any(
@@ -353,6 +395,8 @@ class RoutedChatExecutor:
 
         last_error: Optional[BaseException] = None
         for execution_key in plan.attempt_order:
+            # FINAL policy gate runs before any lease (same as non-streaming).
+            self._assert_policy_executable(plan.candidate(execution_key).target)
             lease = self.router.begin_attempt(plan, execution_key)
             try:
                 route = self._gateway_route(lease.target, gateway)
@@ -373,7 +417,14 @@ class RoutedChatExecutor:
                 self.router.cancel_attempt(lease)
                 raise
             except Exception as exc:
-                decision = self.router.finish_failure(lease, _failure_signal(exc))
+                signal = _failure_signal(exc)
+                decision = self.router.finish_failure(lease, signal)
+                self._record_quota_failure(lease.target, signal)
+                gateway._annotate_most_recent(
+                    lease.target.model.id,
+                    fallback_reason=_fallback_reason_for_kind(decision.kind),
+                    quota_status=self._quota_status_value(lease.target),
+                )
                 last_error = exc
                 if decision.failover_allowed:
                     continue
@@ -397,6 +448,11 @@ class RoutedChatExecutor:
                     raise
                 else:
                     self.router.finish_success(active_lease)
+                    self._record_quota_success(gateway, active_lease.target, None)
+                    gateway.annotate_call(
+                        active_stream.call_id,
+                        quota_status=self._quota_status_value(active_lease.target),
+                    )
                     lease_closed = True
                 finally:
                     if not lease_closed:
@@ -421,14 +477,23 @@ class RoutedChatExecutor:
         kwargs: dict[str, Any],
     ) -> RoutedChatResult:
         last_error: Optional[BaseException] = None
+        fallback_reason: Optional[str] = None
         for execution_key in plan.attempt_order:
-            outcome = await self._attempt(gateway, plan, execution_key, messages, kwargs)
+            outcome = await self._attempt(
+                gateway,
+                plan,
+                execution_key,
+                messages,
+                kwargs,
+                fallback_reason=fallback_reason,
+            )
             if outcome.result is not None:
                 return RoutedChatResult(outcome.result, plan, (outcome.result.call_id,))
             assert outcome.error is not None
             last_error = outcome.error
             if outcome.decision is None or not outcome.decision.failover_allowed:
                 raise outcome.error
+            fallback_reason = _fallback_reason_for_kind(outcome.decision.kind)
         assert last_error is not None
         raise last_error
 
@@ -532,7 +597,12 @@ class RoutedChatExecutor:
         execution_key: str,
         messages: list[dict[str, Any]],
         kwargs: dict[str, Any],
+        *,
+        fallback_reason: Optional[str] = None,
     ) -> _AttemptOutcome:
+        # FINAL policy gate runs before any lease so a denied route can never
+        # be mistaken for a transient failure and silently fall back.
+        self._assert_policy_executable(plan.candidate(execution_key).target)
         lease = self.router.begin_attempt(plan, execution_key)
         try:
             route = self._gateway_route(lease.target, gateway)
@@ -548,9 +618,77 @@ class RoutedChatExecutor:
         except Exception as exc:
             signal = _failure_signal(exc)
             decision = self.router.finish_failure(lease, signal)
+            self._record_quota_failure(lease.target, signal)
+            gateway._annotate_most_recent(
+                lease.target.model.id,
+                fallback_reason=_fallback_reason_for_kind(decision.kind),
+                quota_status=self._quota_status_value(lease.target),
+            )
             return _AttemptOutcome(error=exc, decision=decision)
         self.router.finish_success(lease)
+        self._record_quota_success(gateway, lease.target, result)
+        gateway.annotate_call(
+            result.call_id,
+            fallback_reason=fallback_reason,
+            quota_status=self._quota_status_value(lease.target),
+        )
         return _AttemptOutcome(result=result)
+
+    @staticmethod
+    def _assert_policy_executable(target) -> None:
+        """Deny FINAL-KARAR-MATRIX routes that may not execute right now.
+
+        Routes unknown to the FINAL matrix keep their existing gateway-level
+        guards (pricing guard + spend cap). Matrix routes are gated here so a
+        paid route can never run without ``PINEAL_ALLOW_PAID_ESCALATION=1`` and
+        a route with unknown pricing/capability can never leave the process.
+        """
+        if is_known_route(target.model.id, target.provider.id):
+            assert_executable(target.model.id, target.provider.id)
+
+    def _record_quota_success(
+        self,
+        gateway: LLMGateway,
+        target,
+        result: Optional[LLMChatResult],
+    ) -> None:
+        prompt_tokens: Optional[int] = None
+        completion_tokens: Optional[int] = None
+        if result is not None:
+            tokens = gateway._usage_tokens(getattr(result.response, "usage", None))
+            if tokens is not None:
+                prompt_tokens, completion_tokens = tokens
+        self.quota_governor.record_success(
+            target.provider.id,
+            target.model.id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        self._push_quota(target)
+
+    def _record_quota_failure(self, target, signal: FailureSignal) -> None:
+        self.quota_governor.record_failure(
+            target.provider.id,
+            target.model.id,
+            headers=signal.headers,
+            status_code=signal.status_code,
+        )
+        self._push_quota(target)
+
+    def _push_quota(self, target) -> None:
+        snapshot = self.quota_governor.snapshot(target.provider.id, target.model.id)
+        try:
+            self.provider_manager.update_quota(
+                target.connection.id,
+                snapshot,
+                model_id=target.model.id,
+            )
+        except (CatalogError, ModelNotFound, KeyError):
+            # Quota bookkeeping must never fail the request itself.
+            pass
+
+    def _quota_status_value(self, target) -> str:
+        return self.quota_governor.status(target.provider.id, target.model.id).value
 
     def _gateway_route(self, target, gateway: LLMGateway) -> GatewayRoute:
         if target.provider.protocol is not ProviderProtocol.OPENAI_CHAT:
@@ -690,17 +828,32 @@ def default_routing_mapping(
     def _openrouter(model_id: str) -> str:
         return f"openrouter/{model_id}"
 
-    groups: dict[str, list[str]] = {
-        task: [_openrouter(model_id) for model_id in chain]
-        for task, chain in LLMGateway.CHAINS.items()
-    }
+    # FINAL-KARAR-MATRIX task groups are the economic policy source of truth:
+    # free routes first, paid routes only when escalation is explicitly
+    # enabled. Legacy OpenRouter chains remain available as compatibility
+    # aliases below, but the policy groups win for shared task names.
+    groups: dict[str, list[str]] = {}
+    for task, routes in executable_task_groups().items():
+        groups[task] = list(routes)
+
+    # Preserve legacy aliases for callers that still ask for depth/dialogue/
+    # registry slugs. Shared task names keep the FINAL policy's free-first
+    # candidate order with the legacy OpenRouter chain appended as fallback.
+    for task, chain in LLMGateway.CHAINS.items():
+        if task in groups:
+            for model_id in chain:
+                canonical = _openrouter(model_id)
+                if canonical not in groups[task]:
+                    groups[task].append(canonical)
+        else:
+            groups[task] = [_openrouter(model_id) for model_id in chain]
     for agent_name, chain in LLMGateway.AGENT_CHAINS.items():
-        groups[agent_name] = [_openrouter(model_id) for model_id in chain]
+        groups.setdefault(agent_name, [_openrouter(model_id) for model_id in chain])
     for alias, model_id in LLMGateway.MODEL_REGISTRY.items():
-        groups[alias] = [_openrouter(model_id)]
+        groups.setdefault(alias, [_openrouter(model_id)])
     for model_id in openrouter_models:
-        groups[model_id] = [_openrouter(model_id)]
-        groups[_openrouter(model_id)] = [_openrouter(model_id)]
+        groups.setdefault(model_id, [_openrouter(model_id)])
+        groups.setdefault(_openrouter(model_id), [_openrouter(model_id)])
 
     for provider_id, credential_env, priority in _OPTIONAL_OPENAI_CHAT_CONNECTIONS:
         if not environment.get(credential_env):
@@ -708,7 +861,14 @@ def default_routing_mapping(
         provider = catalog.get_provider(provider_id)
         if provider.protocol is not ProviderProtocol.OPENAI_CHAT:
             continue
-        allowlist = [model.id for model in provider.models]
+        if provider_id == "nous-research":
+            # Policy-gated: catalog presence alone never turns a paid route
+            # into an executable fallback.
+            allowlist = _nous_executable_models()
+        else:
+            allowlist = [model.id for model in provider.models]
+        if not allowlist:
+            continue
         connections.append({
             "id": f"{provider_id}-default",
             "provider_id": provider_id,
@@ -719,7 +879,7 @@ def default_routing_mapping(
             "weight": 1.0,
             "model_allowlist": allowlist,
         })
-        extras = [f"{provider_id}/{model.id}" for model in provider.models]
+        extras = [f"{provider_id}/{model_id}" for model_id in allowlist]
         if extras:
             groups.setdefault("fast", [])
             for extra in extras:
@@ -729,7 +889,7 @@ def default_routing_mapping(
             if any("vision" in model.capabilities for model in provider.models):
                 groups.setdefault("vision", [])
                 for model in provider.models:
-                    if "vision" in model.capabilities:
+                    if "vision" in model.capabilities and model.id in allowlist:
                         canonical = f"{provider_id}/{model.id}"
                         if canonical not in groups["vision"]:
                             groups["vision"].append(canonical)
@@ -749,10 +909,20 @@ def default_routing_mapping(
         })
         groups["local"] = [f"ollama-local/{local_model}"]
 
+    # Only groups with at least one configured runtime connection are
+    # executable. Policy groups that reference providers without a configured
+    # key (e.g. groq/cerebras/nous) are dropped here rather than failing the
+    # whole auto-config and forcing a legacy fallback.
+    connectable: set[str] = set()
+    for connection in connections:
+        provider_id = connection["provider_id"]
+        for model_id in connection.get("model_allowlist", []):
+            connectable.add(f"{provider_id}/{model_id}")
+
     bounded_groups = {
         alias: models[:32]
         for alias, models in groups.items()
-        if models
+        if models and any(model in connectable for model in models)
     }
     return {
         "schema_version": 1,

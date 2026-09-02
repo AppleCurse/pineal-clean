@@ -258,6 +258,82 @@
       "documentation_url": "https://docs.fireworks.ai"
     },
     {
+      "id": "nous-research",
+      "display_name": "Nous Research",
+      "protocol": "openai_chat",
+      "access_method": "official_api",
+      "connection_types": ["api_key"],
+      "default_tier": "api_key",
+      "base_url": "https://inference-api.nousresearch.com/v1",
+      "passthrough_models": false,
+      "support": "catalog_only",
+      "documentation_url": "https://portal.nousresearch.com/",
+      "models": [
+        {
+          "id": "laguna-s-2.1:free",
+          "display_name": "Laguna S 2.1 Free",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 262144,
+          "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
+        },
+        {
+          "id": "xs-2.1:free",
+          "display_name": "XS 2.1 Free",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 262144,
+          "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
+        },
+        {
+          "id": "ling-3.0-flash-fin:free",
+          "display_name": "Ling 3.0 Flash Finance Free",
+          "capabilities": ["chat", "streaming", "tools"],
+          "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
+        },
+        {
+          "id": "dots-3-note-preview:free",
+          "display_name": "Dots 3 Note Preview Free",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 524288,
+          "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
+        },
+        {
+          "id": "stepfun/step-3.7-flash",
+          "display_name": "Step 3.7 Flash",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 262144,
+          "pricing": {"input_per_million_usd": 0.20, "output_per_million_usd": 1.15}
+        },
+        {
+          "id": "upstage/solar-pro4",
+          "display_name": "Solar Pro 4",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 524288,
+          "pricing": {"input_per_million_usd": 0.03, "output_per_million_usd": 0.12}
+        },
+        {
+          "id": "meituan/longcat-2.0",
+          "display_name": "LongCat 2.0",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 1048576,
+          "pricing": {"input_per_million_usd": 0.30, "output_per_million_usd": 1.20}
+        },
+        {
+          "id": "openai/gpt-5.6-luna",
+          "display_name": "GPT 5.6 Luna",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 400000,
+          "pricing": {"input_per_million_usd": 0.20, "output_per_million_usd": 1.20}
+        },
+        {
+          "id": "anthropic/claude-sonnet-5",
+          "display_name": "Claude Sonnet 5",
+          "capabilities": ["chat", "streaming", "vision", "tools"],
+          "context_window": 1048576,
+          "pricing": {"input_per_million_usd": 1.60, "output_per_million_usd": 8.00}
+        }
+      ]
+    },
+    {
       "id": "sambanova",
       "display_name": "SambaNova Cloud",
       "protocol": "openai_chat",

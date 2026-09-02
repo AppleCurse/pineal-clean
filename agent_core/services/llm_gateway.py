@@ -121,6 +121,62 @@ class SpendCapExceeded(RuntimeError):
     """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
 
 
+# Errors that must never trigger a chain fallback: they are configuration or
+# policy rejections, not transient upstream conditions.
+_FALLBACK_GUARD_MARKERS = (
+    "spend cap",
+    "spend_cap",
+    "unknown_pricing",
+    "paid_escalation",
+    "model unavailable",
+    "local_provider_unavailable",
+    "non_retryable",
+    "circuit",
+    "real_llm_call_not_executed",
+    "llm_key_missing",
+    "llm api key rejected",
+)
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """Map an upstream failure to the FINAL telemetry ``fallback_reason``."""
+    status = getattr(exc, "status_code", None)
+    err = str(exc).lower()
+    if status == 429 or "429" in err or "rate limit" in err:
+        if any(marker in err for marker in ("quota", "insufficient", "credit")):
+            return "429_QUOTA_EXHAUSTED"
+        return "429_RATE_LIMITED"
+    if status == 408 or "timeout" in err or "timed out" in err:
+        return "TIMEOUT"
+    if isinstance(status, int) and 500 <= status < 600:
+        return "SERVER_ERROR"
+    if status == 404 or "model_not_found" in err or "model unavailable" in err:
+        return "MODEL_UNAVAILABLE"
+    if any(marker in err for marker in ("connection", "connect", "refused", "reset")):
+        return "NETWORK_FAILURE"
+    return type(exc).__name__.upper()
+
+
+def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
+    """Decide whether a chain may move to the next model after ``exc``.
+
+    Fallback is allowed only for transient transport errors (timeout,
+    connection, 408/429/5xx) and — in JSON mode — for genuine parse/schema
+    failures. Auth, spend-cap, unknown-pricing, paid-escalation, and
+    model-unavailable rejections never become a second attempt.
+    """
+    err = str(exc).lower()
+    if isinstance(exc, SpendCapExceeded):
+        return False
+    if any(marker in err for marker in ("401", "unauthorized", "invalid_api_key")):
+        return False
+    if any(marker in err for marker in _FALLBACK_GUARD_MARKERS):
+        return False
+    if json_mode and isinstance(exc, (ValueError, TypeError, KeyError)):
+        return True
+    return LLMGateway._is_retryable_error(exc)
+
+
 class LLMGateway:
     MODEL_REGISTRY = {
         "solar_pro4": "upstage/solar-pro4",
@@ -332,9 +388,18 @@ class LLMGateway:
         completion_tokens: Optional[int] = None,
         cost_usd: float = 0.0,
         error: Optional[str] = None,
+        requested_model: Optional[str] = None,
+        fallback_reason: Optional[str] = None,
+        quota_status: Optional[str] = None,
         captured_scope: Optional[LLMCallScope] = None,
     ) -> dict[str, Any]:
-        """Append one JSON-serializable record for a logical gateway call."""
+        """Append one JSON-serializable record for a logical gateway call.
+
+        The FINAL telemetry contract requires the requested/actual model split
+        and the reason for any silent-looking model change. ``model`` remains
+        the executed (actual) model for backwards compatibility; consumers of
+        the new contract read ``requested_model``/``actual_model``.
+        """
         scope = captured_scope or _active_call_scope.get()
         finished_at = self._utc_now()
         record: dict[str, Any] = {
@@ -343,6 +408,8 @@ class LLMGateway:
             "agent_id": scope.agent_id if scope else None,
             "kind": kind,
             "model": model,
+            "requested_model": requested_model if requested_model is not None else model,
+            "actual_model": model,
             "provider": provider,
             "attempt": attempt,
             # Compatibility for existing telemetry consumers; ``attempt`` is
@@ -355,6 +422,8 @@ class LLMGateway:
             "started_at": started_at or finished_at,
             "finished_at": finished_at,
             "duration_ms": duration_ms,
+            "fallback_reason": fallback_reason,
+            "quota_status": quota_status,
             "error": error,
             # Compatibility alias retained while API/UI consumers migrate.
             "at": finished_at,
@@ -365,6 +434,21 @@ class LLMGateway:
         if scope is not None:
             scope.records.append(record.copy())
         return record
+
+    def annotate_call(self, call_id: str, **fields: Any) -> None:
+        """Merge bounded telemetry fields into every record of one logical call."""
+        allowed = {"requested_model", "actual_model", "fallback_reason", "quota_status"}
+        updates = {key: value for key, value in fields.items() if key in allowed and value is not None}
+        if not updates:
+            return
+        for record in self.call_log:
+            if record.get("call_id") == call_id:
+                record.update(updates)
+        scope = _active_call_scope.get()
+        if scope is not None:
+            for record in scope.records:
+                if record.get("call_id") == call_id:
+                    record.update(updates)
 
     @staticmethod
     def _env_float(name: str, default: float) -> float:
@@ -627,6 +711,23 @@ class LLMGateway:
         status = getattr(exc, "status_code", None)
         return isinstance(status, int) and (status in (408, 429) or 500 <= status < 600)
 
+    @staticmethod
+    def _model_substitution_allowed(requested: str, actual: str) -> bool:
+        from agent_core.services.final_routing_policy import model_substitution_allowed
+
+        return model_substitution_allowed(requested, actual)
+
+    def _annotate_most_recent(self, model: str, **fields: Any) -> None:
+        """Annotate the latest failed record for ``model`` (best-effort)."""
+        allowed = {"fallback_reason", "quota_status"}
+        updates = {key: value for key, value in fields.items() if key in allowed and value is not None}
+        if not updates:
+            return
+        for record in reversed(self.call_log):
+            if record.get("model") == model and record.get("error"):
+                record.update(updates)
+                return
+
     def set_key(self, key: str, unlock_live: bool = False):
         self.api_key = key
         if unlock_live:
@@ -737,6 +838,9 @@ class LLMGateway:
                 else model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
             )
             provider = "openrouter"
+        # Capture the model the caller actually asked for before any fallback
+        # reassignment, so telemetry can always explain requested != actual.
+        requested_model = selected_model
         logical_cost_usd = 0.0
 
         def log_call(
@@ -762,6 +866,7 @@ class LLMGateway:
                 completion_tokens=completion_tokens,
                 cost_usd=logical_cost_usd if cost_usd is None else cost_usd,
                 error=error,
+                requested_model=requested_model,
             )
 
         if self.circuit_open:
@@ -1057,6 +1162,7 @@ class LLMGateway:
         started_at = self._utc_now()
         started_monotonic = time.monotonic()
         logical_cost_usd = 0.0
+        requested_model = model
 
         def log_call(
             *,
@@ -1065,6 +1171,8 @@ class LLMGateway:
             prompt_tokens: Optional[int] = None,
             completion_tokens: Optional[int] = None,
             cost_usd: Optional[float] = None,
+            fallback_reason: Optional[str] = None,
+            quota_status: Optional[str] = None,
         ) -> dict[str, Any]:
             return self._log_call(
                 "chat.completions",
@@ -1078,6 +1186,9 @@ class LLMGateway:
                 completion_tokens=completion_tokens,
                 cost_usd=logical_cost_usd if cost_usd is None else cost_usd,
                 error=error,
+                requested_model=requested_model,
+                fallback_reason=fallback_reason,
+                quota_status=quota_status,
             )
 
         # Routed calls use provider-scoped circuits in UnifiedRouter. The legacy
@@ -1152,6 +1263,23 @@ class LLMGateway:
                     **request_payload,
                     timeout=self.request_timeout_seconds,
                 )
+                # Provider default-model override firewall: the provider must
+                # never silently substitute a different model than requested.
+                if route is not None:
+                    actual_model = getattr(response, "model", None)
+                    if actual_model and not self._model_substitution_allowed(
+                        selected_model, str(actual_model)
+                    ):
+                        if budget_reserved:
+                            self._release_budget(call_id)
+                            budget_reserved = False
+                        error = (
+                            f"MODEL_SUBSTITUTION_DENIED: requested "
+                            f"'{selected_model}' but provider returned "
+                            f"'{actual_model}'"
+                        )
+                        log_call(error=error, attempt=attempt)
+                        raise RuntimeError(error)
                 if route is None:
                     self.failure_count = 0
                 usage = getattr(response, "usage", None)
@@ -1295,6 +1423,7 @@ class LLMGateway:
                 completion_tokens=usage_tokens[1] if usage_tokens else None,
                 cost_usd=cost_usd,
                 error=error,
+                requested_model=model,
                 captured_scope=captured_scope,
             )
 
@@ -1513,8 +1642,9 @@ class LLMGateway:
     ) -> str:
         """Görev bazlı model zincirini çalıştırır.
 
-        429/5xx/timeout/hata durumunda zincirdeki sıradaki modele düşer.
-        AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
+        Yalnızca GEÇİCİ hatalarda (timeout/connection/408/429/5xx) zincirdeki
+        sıradaki modele düşer. AUTH, spend cap, unknown pricing, paid
+        escalation, model unavailable ve policy-deny hataları düşmez.
         """
         import logging
         chain = self.capable_chain(task=task, images=images)
@@ -1530,14 +1660,14 @@ class LLMGateway:
                     images=images
                 )
             except Exception as e:
-                err_str = str(e).lower()
-                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
-                if is_auth_error:
+                if not _is_fallback_allowed(e, json_mode=False):
+                    self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
                     raise
-
                 last_exception = e
+                self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
                 logging.warning(
-                    f"Model zincirinde hata [{task} -> {model}]: {e}. Sıradaki modele geçiliyor..."
+                    f"Model zincirinde geçici hata [{task} -> {model}]: {e}. "
+                    f"Sıradaki modele geçiliyor..."
                 )
                 continue
 
@@ -1556,8 +1686,10 @@ class LLMGateway:
     ) -> T:
         """Görev bazlı model zinciri ile şemalı JSON sorgusu yapar.
 
-        429/5xx/timeout/şema hatalarında zincirdeki sıradaki modele düşer.
-        AUTH (401/unauthorized) hatası düşmez, anında yükseltilir.
+        Yalnızca GEÇİCİ hatalarda (timeout/connection/408/429/5xx) veya gerçek
+        JSON parse/schema başarısızlığında zincirdeki sıradaki modele düşer.
+        AUTH, spend cap, unknown pricing, paid escalation, model unavailable ve
+        policy-deny hataları "JSON tamiri" bahanesiyle ikinci çağrıya dönüşmez.
         """
         import logging
         chain = self.capable_chain(task=task, agent_name=agent_name, images=images)
@@ -1573,14 +1705,14 @@ class LLMGateway:
                     images=images
                 )
             except Exception as e:
-                err_str = str(e).lower()
-                is_auth_error = "401" in err_str or "unauthorized" in err_str or "invalid_api_key" in err_str
-                if is_auth_error:
+                if not _is_fallback_allowed(e, json_mode=True):
+                    self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
                     raise
-
                 last_exception = e
+                self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
                 logging.warning(
-                    f"JSON Model zincirinde hata [{task} -> {model}]: {e}. Sıradaki modele geçiliyor..."
+                    f"JSON Model zincirinde hata [{task} -> {model}]: {e}. "
+                    f"Sıradaki modele geçiliyor..."
                 )
                 continue
 
