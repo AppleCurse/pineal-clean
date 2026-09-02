@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Dict, List, Optional
 
+from agent_core.schemas.epistemic import EpistemicResult, EpistemicStatus
+
 class Claim(BaseModel):
     claim_text: str
     category: str = "genel"
@@ -11,7 +13,13 @@ class VerificationResult(BaseModel):
     evidence_url: str = ""
     contradiction_detail: str = ""
 
-class VerifierReport(BaseModel):
+# LLM'in sınıflandırmasında kabul edilen TEK statü kümesi (prompt ile aynı).
+_ALLOWED_TRUTH_STATUSES = {"DOĞRULANDI", "ÇELİŞKİLİ", "YALAN", "BİLİNMİYOR"}
+# Kesin statüler: bunlar deterministik kaynak kapısından (gerçek, getirilmiş
+# URL) geçmeden rapora giremez. BİLİNMİYOR her zaman serbesttir (fail-closed).
+_CONCLUSIVE_STATUSES = {"DOĞRULANDI", "YALAN", "ÇELİŞKİLİ"}
+
+class VerifierReport(EpistemicResult):
     verifications: List[VerificationResult] = []
     overall_authenticity_score: float = 0.0
     status: str = "UNVERIFIED"
@@ -20,6 +28,11 @@ class VerifierReport(BaseModel):
     # ve fallback_reason doldurulur; yüksek güvenli "UNVERIFIED" üretilmez.
     data_confidence: bool = True
     fallback_reason: Optional[str] = None
+
+    # EpistemicResult mirası: bu raporun içeriği arama snippet'i ÜZERİNDE
+    # model sınıflandırmasıdır — epistemic damgası hiçbir yolda VERIFIED'a
+    # çıkmaz (en yüksek INTERPRETED). `status` alanındaki "VERIFIED" bir
+    # SÜREÇ kararıdır, epistemik damga değil; tüketici ikisini karıştırmaz.
 
     model_config = ConfigDict(extra="forbid")
 
@@ -41,6 +54,7 @@ class AutonomousVerifier:
                 confidence=0.0,
                 data_confidence=False,
                 fallback_reason="no_bio",
+                epistemic=EpistemicStatus.UNAVAILABLE,
             )
 
         # [028] Doğrulama sözleşmesi provider-backed aramadır. DuckDuckGo
@@ -60,6 +74,7 @@ class AutonomousVerifier:
                 confidence=0.0,
                 data_confidence=False,
                 fallback_reason="no_search_provider",
+                epistemic=EpistemicStatus.UNAVAILABLE,
             )
 
         # Untrusted profile text is fenced so the model cannot treat bio content
@@ -94,6 +109,7 @@ class AutonomousVerifier:
                 confidence=0.0,
                 data_confidence=False,
                 fallback_reason="no_claims",
+                epistemic=EpistemicStatus.UNAVAILABLE,
             )
 
         verifications = []
@@ -118,6 +134,7 @@ class AutonomousVerifier:
                     confidence=0.0,
                     data_confidence=False,
                     fallback_reason="search_unavailable",
+                    epistemic=EpistemicStatus.UNAVAILABLE,
                 )
             results = outcome.results
             if not results:
@@ -144,6 +161,27 @@ class AutonomousVerifier:
             single_verification = await llm_gateway.query_json_chain(
                 verify_prompt, VerificationResult, task="depth", agent_name="autonomous_verifier"
             )
+
+            # [B-3] Deterministik kaynak kapısı: modelin sınıflandırması
+            # ancak döndürdüğü evidence_url GERÇEKTEN bu istemde getirilen
+            # arama sonuçlarından biriyse kesin statü taşıyabilir. Modelin
+            # var olmayan kaynağa dayanarak DOĞRULANDI/YALAN basması bu
+            # kapıda BİLİNMİYOR'a indirgenir.
+            fetched_urls = {getattr(r, "source_url", None) for r in results} - {None, ""}
+            status_norm = (single_verification.truth_status or "").strip().upper()
+            if status_norm in _CONCLUSIVE_STATUSES:
+                if single_verification.evidence_url not in fetched_urls:
+                    single_verification.truth_status = "BİLİNMİYOR"
+                    single_verification.contradiction_detail = (
+                        "Model kesin statü bildirdi ama getirilmiş bir kaynak URL'i "
+                        "gösteremedi; statü deterministik kaynak kapısında reddedildi."
+                    )
+                    single_verification.evidence_url = ""
+                else:
+                    single_verification.truth_status = status_norm
+            else:
+                # Tanınmayan statü güvenli tarafa indirgenir.
+                single_verification.truth_status = "BİLİNMİYOR"
             verifications.append(single_verification)
 
         total = len(verifications)
@@ -154,6 +192,7 @@ class AutonomousVerifier:
                 status="UNVERIFIED",
                 data_confidence=False,
                 fallback_reason="no_verifications",
+                epistemic=EpistemicStatus.UNAVAILABLE,
             )
 
         confirmed = sum(1 for v in verifications if v.truth_status == "DOĞRULANDI")
@@ -176,4 +215,9 @@ class AutonomousVerifier:
             overall_authenticity_score=score,
             status=verdict_status,
             confidence=conclusive / total,
+            # Sözleşme kuralı 1: damgayı kod basar. İçerik snippet üstünde model
+            # sınıflandırmasıdır -> en yüksek INTERPRETED. evidence_refs yalnızca
+            # gerçekten getirilmiş ve kapıdan geçmiş URL'leri taşır.
+            epistemic=EpistemicStatus.INTERPRETED,
+            evidence_refs=[v.evidence_url for v in verifications if v.evidence_url],
         )

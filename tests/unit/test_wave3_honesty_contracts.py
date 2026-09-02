@@ -142,12 +142,18 @@ def test_generated_message_fail_closed_defaults():
 
 @pytest.mark.asyncio
 async def test_llm_path_marks_message_verified():
+    """[022]+[B-2]: gerçek LLM yanıtı (dolu mesaj, model veto etmemiş) işaretlenir.
+
+    Eskiden 'parse başarılı' tek başına data_confidence=True yazardı; B-2'den
+    sonra bayrağı KOD türetir: mesaj dolu + model 'kanıt yetersiz' vetosu
+    bildirmemiş -> True. Aşağıdaki mock veto etmeyen modeli simüler (LLM JSON'u
+    data_confidence=true doldurur)."""
     class _Gateway:
         async def query_json(self, prompt, schema, **kwargs):
             return GeneratedMessage(
                 message="gözleme dayalı", strategy="observation",
                 confidence=0.8, compliance_score=100.0, dialogue_tree=[],
-                data_confidence=False, fallback_reason="not_verified",
+                data_confidence=True, fallback_reason=None,
             )
 
     result = await PatternInterrupt().execute({
@@ -158,7 +164,7 @@ async def test_llm_path_marks_message_verified():
         "user_mirror": {}, "sacred_rules": "",
     }, None, _Gateway())
 
-    assert result.data_confidence is True, "[022] gerçek LLM sonucu işaretlenmeli"
+    assert result.data_confidence is True, "[022]+[B-2] dolu+veto'süz LLM sonucu işaretlenmeli"
     assert result.fallback_reason is None
 
 

@@ -1,12 +1,14 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Dict, List
 
+from agent_core.schemas.epistemic import EpistemicResult, EpistemicStatus
+
 class ScenarioResponse(BaseModel):
     scenario_type: str  # "agresif", "savunmaci", "ilgili"
     expected_target_reaction: str
     our_counter_move: str  # saygılı devam ifadesi (karşı-hamle manipülasyonu DEĞİL)
 
-class GeneratedMessage(BaseModel):
+class GeneratedMessage(EpistemicResult):
     message: str
     strategy: str
     confidence: float
@@ -15,8 +17,15 @@ class GeneratedMessage(BaseModel):
     # [022] fix: fail-closed default'lar. Model doğrudan kurulursa (LLM sonucu
     # ayrıştırılmadan) "doğrulanmış" sayılmaz; LLM yanıtından üretildiğini
     # execute() açıkça işaretler.
+    # [B-2] fix: bu bayrak artık LLM BEYANI değil — execute() içinde KOD türetir
+    # (boş mesaj / model vetosu -> False). Model JSON'una bu alanı koyması
+    # bayrağı açmaya yetmez.
     data_confidence: bool = False
     fallback_reason: str | None = "not_verified"
+
+    # EpistemicResult mirası: epistemic (default INTERPRETED) + evidence_refs.
+    # Damgayı kod basar; LLM'in JSON'da gönderebileceği epistemic/evidence_refs
+    # execute() sonrası ezilir (model kendini VERIFIED ilan edemez).
 
     
     model_config = ConfigDict(extra="forbid")
@@ -54,6 +63,7 @@ class PatternInterrupt:
                 dialogue_tree=[],
                 data_confidence=False,
                 fallback_reason="insufficient_grounded_evidence",
+                epistemic=EpistemicStatus.UNAVAILABLE,
             )
         top_signal = self._extract_micro_signal(t_dict)
         detail = top_signal if (top_signal and top_signal != 'unavailable') else evidence[0]
@@ -81,10 +91,25 @@ class PatternInterrupt:
         )
         
         result = await llm_gateway.query_json(prompt, GeneratedMessage)
-        # [022] fix: gerçek LLM yanıtı ayrıştırıldı -> doğrulandı olarak işaretle.
-        # Model default'u fail-closed; burası üretim yolunun TE doğrulama noktası.
-        result.data_confidence = True
-        result.fallback_reason = None
+        # [022]+[B-2] fix: doğrulama bayrağını KOD yazar, model ÖNEREMEZ.
+        # Bu noktada `evidence` boş-değil garantidir (yukarıda erken çıkış).
+        # Bayrak ancak (a) mesaj gerçekten doluysa VE (b) model kendisi
+        # "kanıt yetersiz" vetosu bildirmediyse açılır — modelin "true"
+        # beyanı tek başına bayrağı AÇMAZ (prompt'ta istesek de okumayız).
+        model_self_veto = result.data_confidence is False
+        message_text = (result.message or "").strip()
+        result.data_confidence = bool(message_text) and not model_self_veto
+        if result.data_confidence:
+            result.fallback_reason = None
+        else:
+            # Kanıtsız/boş mesaj dışarı sızmasın: UNAVAILABLE sözleşmesiyle aynı kapı.
+            result.message = ""
+            result.fallback_reason = result.fallback_reason or "llm_returned_ungrounded_message"
+        # Epistemik damga: içerik kanıt ÜZERİNDE model yorumudur; damgayı kod basar.
+        result.epistemic = (
+            EpistemicStatus.INTERPRETED if result.data_confidence else EpistemicStatus.UNAVAILABLE
+        )
+        result.evidence_refs = list(evidence)
         return result
     
     @staticmethod

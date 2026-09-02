@@ -93,8 +93,11 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
         from agent_core.agents.autonomous_verifier import Claim
         return model(claims=[Claim(claim_text="Sadece pozitif enerji", category="bio")])
     elif name == "VerificationResult":
+        # B-3 deterministik kaynak kapısı: kesin statü ancak evidence_url
+        # GERÇEKTEN getirilmiş arama sonucuysa korunur. Aşağıdaki mock search
+        # sonucu "http://mock.com" döndürüyor — URL birebir eşleşmeli.
         return VerificationResult(
-            claim_text="test", truth_status="DOĞRULANDI", evidence_url="http", contradiction_detail="none"
+            claim_text="test", truth_status="DOĞRULANDI", evidence_url="http://mock.com", contradiction_detail="none"
         )
     elif name == "AuthenticVectorResult":
         return model(

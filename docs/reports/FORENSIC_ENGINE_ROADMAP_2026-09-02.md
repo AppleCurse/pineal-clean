@@ -148,3 +148,29 @@ canlı sağlayıcı sürprizleri dahil değildir.
 - `_DETERMINISTIC_AGENTS` içindeki `resonance_calc` sınıflandırması, vektörleri LLM'den geldiği
   sürece epistemik olarak yanıltıcıdır — Faz 2'de bu sınıf "hesaplama deterministik, girdi
   değil" diye ikiye ayrılmalı.
+
+### 2026-09-02 (devam) — B-2 + B-3 kapandı
+
+**B-2 (PatternInterrupt `data_confidence`):** Eski kod ayrıştırma başarılı olur olmaz
+`data_confidence=True` basıyordu — prompt'ta "kanıt yetersizse false döndür" yazmasına
+rağmen modelin kendi vetosu EZİLİYORDU. Yeni kural: bayrağı KOD türetir (boş mesaj veya
+model vetosu → False; "true" beyanı tek başına açamaz). Veto/boş-mesaj durumunda içerik
+`""`'a kırpılır (kanıtsız mesaj sızması), `epistemic=UNAVAILABLE`; aksi halde
+`epistemic=INTERPRETED` + `evidence_refs` = yalnızca gerçek grounded kanıt kümesi.
+`GeneratedMessage` artık `EpistemicResult` miraslı; LLM'in JSON'da `epistemic="verified"`
+göndermesi parse sonrası kod tarafından ezilir (test mühürlü).
+
+**B-3 (Verifier deterministik kaynak kapısı):** LLM'in claim sınıflandırması
+(DOĞRULANDI/YALAN/ÇELİŞKİLİ) artık ancak döndürdüğü `evidence_url` o istemde GERÇEKTEN
+getirilmiş arama sonuçlarından biriyse korunur; hallusine/eksik URL → BİLİNMİYOR'a demote
+(simetrik: yalanlama yönünde de kanıt uydurulamaz). İzinli dört statü dışındaki model
+çıktısı güvenli tarafa düşer. `VerifierReport` `EpistemicResult` miraslı: raporun damgası
+hiçbir yolda VERIFIED'a çıkmaz (en yüksek INTERPRETED); `status="VERIFIED"` artık açıkça
+"süreç kararı" olarak damgalı `epistemic=INTERPRETED` ile birlikte taşınır. Tüm fail-closed
+erken çıkışlar (no_bio / no_search_provider / no_claims / search_unavailable /
+no_verifications) `epistemic=UNAVAILABLE` damgalı.
+
+**Testler:** +4 PatternInterrupt (kod-damgası, boş-mesaj klempi, model vetosu, self-stamp
+reddi), +5 Verifier (gerçek URL korunur, hallusine URL reddedilir, simetrik kapı, bilinmeyen
+statü demote, fail-closed damgalar). E2E mock'unun `evidence_url="http"` değeri kapıya
+takıldı (tasarlandığı gibi) — gerçek URL ile düzeltildi. Tam suite: **685 passed, 2 skipped.**
