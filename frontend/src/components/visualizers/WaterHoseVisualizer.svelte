@@ -2,20 +2,25 @@
   import { onMount } from 'svelte';
   
   // Suyun akış hızını, rengini ve içindeki "parçacıkları" (veriyi) temsil eden reaktif veriler
-  export let dataFlow = []; // Gelen veri paketleri
   export let isActive = false;
   export let currentAgent = "Idle";
   export let pressure = 0; // İşlem yoğunluğu / token hızı
-  
-  let hosePath;
-  let particles = [];
-  let flowInterval;
+
+  interface Particle {
+    id: string;
+    type: string; // 'osint', 'llm', 'scrape'
+    progress: number;
+    speed: number;
+  }
+
+  let particles: Particle[] = [];
+  let flowInterval: ReturnType<typeof setInterval> | null = null;
 
   // Parçacık (Veri) animasyonu
-  function spawnParticle(type) {
-    const p = {
+  function spawnParticle(type: string) {
+    const p: Particle = {
       id: Math.random().toString(36).substr(2, 9),
-      type: type, // 'osint', 'llm', 'scrape'
+      type: type,
       progress: 0,
       speed: 0.5 + (Math.random() * 0.5) // basınca göre değişebilir
     };
@@ -34,7 +39,9 @@
       }
     }, 300);
     
-    return () => clearInterval(flowInterval);
+    return () => {
+      if (flowInterval) clearInterval(flowInterval);
+    };
   });
 </script>
 
