@@ -129,7 +129,7 @@ Kapatılıp merge edilmeyen 14 PR'ın sınıflandırması:
 | **G4** | **Yerel oturum dalı main'in 1 commit gerisinde** | `arena/01a06052` = `4f286cb`; main = `b14a8e16` | 🟢 Düşük | `git merge origin/main` → eşitle |
 | **G5** | **14 bayat uzak dal hâlâ GitHub'da** | `gh api branches` listesi (3. bölüm tablosu) | 🟢 Hijyen | Toplu silme (`gh api -X DELETE …/git/refs/heads/…`); önce G1/G2 kararları verilsin |
 | **G6** | **Testte sürüm disiplini kırılması** | rc.2 commit'i "yeni özellik yapma" diyor; ardından yine routing özellikleri (#52/#53) geldi | 🟡 Süreç | Sürüm kabini yol haritası (rc.3 / 3.0.0 stable) belirle |
-| **G7** | **Açık PR = 0 ama canlı boru hattı yolu kapalı** | rc.2 gate'leri açık: canlı LLM E2E + Docker/Chromium smoke | 🟡 Karar | GO LIVE için 2 gate'i kapatacak adım planı gerekiyor |
+| **G7** | **Açık PR = 0 ama canlı boru hattı yolu kapalı** | rc.2 gate'leri açık: canlı LLM E2E + Docker/Chromium smoke | 🔧 Mekanizma kuruldu | `release-gates.yml` (workflow_dispatch) Gate A + Gate B'yi manuel koşuya bağladı (bkz. RELEASE_EVIDENCE Bölüm 12); kapanış = yeşil manuel koşu + Gate B'nin Instagram bacağı (operatör) |
 
 ## 6. Doğrulama kanıtları
 
@@ -161,7 +161,7 @@ Kapatılıp merge edilmeyen 14 PR'ın sınıflandırması:
 | **G4** yerel dal 1 geride | ✅ **ÇÖZÜLDÜ** | `git merge origin/main` → `b14a8e16` |
 | **G5** 14 bayat uzak dal | ⏳ **İŞLENİYOR** | merge edilmiş 14 dal GitHub'dan silinecek (bu PR merge sonrası); `arena/01a05c99`, `bolt-optimize-hindsight…`, `jules/osint…` silinmeyecek (kaynak refs) |
 | **G6** sürüm disiplini | 📝 BELGELENDİ | CHANGELOG'da rc.2 bölümü net kronolojiyle (mühür öncesi/sonrası) |
-| **G7** açık canlı gate'ler | ⏳ KARAR | `live_llm_openrouter_e2e` + `docker_chromium_smoke` — GO LIVE kararı bu ikisi kapanmadan verilmemeli (RELEASE_EVIDENCE Bölüm 8–9) |
+| **G7** açık canlı gate'ler | 🔧 **MEKANİZMA KURULDU** | `.github/workflows/release-gates.yml` (yalnız `workflow_dispatch`; push/PR'da koşmaz): Gate A `secrets.OPENROUTER_API_KEY` ile `live_llm_gate.py` (secret yoksa fail-closed reddi + 5 USD tavan), Gate B gerçek `docker compose up --build` + health + prod-auth 401/200 + konteyner içi Chromium. **Gate'ler hâlâ AÇIK** — kapanış yeşil manuel koşu (Gate A) + Instagram bacağının operatörde manuel doğrulanması (Gate B) gerektirir (RELEASE_EVIDENCE Bölüm 12) |
 
 **Yerel doğrulama (bu şube, push öncesi):**
 

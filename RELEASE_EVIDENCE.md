@@ -210,3 +210,45 @@ Değişiklik yapılırsa `VERSION` dosyası ve bu belge birlikte güncellenmelid
 - `docker_chromium_smoke` — Docker + Chromium smoke (Bölüm 9'daki kriterler)
 
 > Bu iki canlı gate kapanmadan yayın kararı verilmemelidir (scoped skor: 81/100; gate kapanınca 100/100 hedefi).
+
+---
+
+## 12. Gate Çalıştırma Mekanizması — `release-gates.yml` (2026-09-02, post-seal)
+
+> Bu bölüm mühür **sonrasında** eklenmiştir (Bölüm 11 gibi); orijinal kayıt (Bölüm 1–10) değiştirilmemiştir.
+> Bu bölüm bir gate'in **koşulduğunu** değil, **koşulabileceğini** belgeler: açık kapılar ancak
+> yeşil bir workflow koşusuyla kapanır (aşağıdaki kapsam notuna bakınız).
+
+### Mekanizma
+
+`.github/workflows/release-gates.yml` (kaynak kopya: `release/release-gates.yml` — GitHub App `workflows` izni olmadığı için bu PR workflow dosyasını doğrudan yazamaz; yazma yetkili aktör `cp release/release-gates.yml .github/workflows/release-gates.yml` ile ekler) — yalnızca `workflow_dispatch` (manuel) tetiklenir;
+push/PR'da **asla** koşmaz (Gate A paralı canlı LLM çağrısı içerir). Aynı anda tek koşu
+(concurrency; iptal etme yok — paralı koşu yarım kesilmez).
+
+| Job | Gate | Ne yapar | Fail-closed garantisi |
+|---|---|---|---|
+| `live-llm-e2e` | `live_llm_openrouter_e2e` | `secrets.OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1` ile `python live_llm_gate.py` → Bölüm 8 / Gate A kriterlerinin tamamı script içinde kodludur (durum, mock'suz kanıt, sıfır UNAVAILABLE, HolisticProfile, hakem onayı) | Secret tanımlı değilse job başında `::error::` ile **reddedilir**; `OPENROUTER_MAX_SPEND_USD=5` harcama tavanı |
+| `docker-chromium-smoke` | `docker_chromium_smoke` | Gerçek imaj: `docker compose up --build` → `/health` (ready\|degraded → 200) → UI servis (`id="app"`) → production auth (token'sız 401, `X-API-Key` ile 200) → **konteyner içinde** `scripts/smoke_test_browser.py` (Chromium launch + `page.goto`) | İmaj `PINEAL_ENV=production` ile mühürlü: token'sız **başlamaz** (`PRODUCTION_AUTH_REQUIRED`); job kendi token'ını `.env`'e yazar; health 200 gelmezse düşer |
+
+### Kapsam notu (dürüstlük kaydı)
+
+- **Gate B'nin 3. alt kriteri bilinçli olarak otomatize edilmedi:** `POST /api/initiate` →
+  Instagram `task_id` + WS scrape logu. GitHub runner IP'leri Instagram nezdinde platform
+  limitine takılır (RUNBOOK: 429/403) ve bu bacağın koşulabilirliği çerez/platform durumuna
+  bağlıdır. Workflow yalnız **deterministik** kısımları kanıtlar (build, health, auth,
+  konteyner içi Chromium). Instagram bacağı operatörün kendi ortamında manuel koşulmalıdır:
+  `docker compose up --build` → `POST /api/initiate url=https://www.instagram.com/<public_profile>/`
+  → WS'te scrape logları.
+- **Gate A koşusu yeşil dönerse** `live_llm_openrouter_e2e` gate'i kapanmış sayılır (tüm
+  kriterler script içinde denetlenir; run URL'si kanıt olarak bu belgeye/reference'e işlenir).
+- Gate B için workflow yeşili **tek başına yeterli değildir** (3. alt kriter manuel kalır);
+  kapanış kararı Bölüm 8–9'daki tüm kriterler yerine getirilmeden verilmez.
+- Bu iki gate kapanmadan GO LIVE kararı verilmez (Bölüm 11 uyarısı aynen geçerli).
+
+### Koşu talimatı (operatör)
+
+1. Repo **Settings → Secrets and variables → Actions** → `OPENROUTER_API_KEY` tanımlı olmalı
+   (yoksa Gate A bilinçli olarak reddedilir; Gate B anahtarsız da koşar).
+2. **Actions → Release Gates → Run workflow** (main üzerinde).
+3. İki job'un yeşil dönmesi beklenir; run URL'si release kanıtı olarak kaydedilir.
+4. Kalan Instagram bacağı (Gate B madde 3) operatör ortamında manuel doğrulanır.

@@ -14,12 +14,15 @@
   Not: API sunucusunda Kasa'daki "yerel model" seçimi (`use_local`) bu env'i ezer; env varsayılanı yalnız Kasa seçimi yapılmamışsa geçerlidir.
 - `TAVILY_API_KEY`, `SERPAPI_API_KEY`, `EXA_API_KEY` → AutonomousVerifier web doğrulaması (yoksa DuckDuckGo yedeği).
 - Vision: `OPENROUTER_VISION_MODEL` — varsayılan `google/gemini-3.7-flash`; VisionAnalyzer (profil fotoğrafları) ve görselli Aspasia isteklerinde kullanılır.
-- Model varsayılanları (P2 ekonomik set; fiyatlar OpenRouter promosyonlarına tabi):
-  Tier-1 `upstage/solar-pro4` (`OPENROUTER_TIER_1_MODEL`, promo 2026-09-10'a kadar),
-  Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`).
-  Koddaki gerçek zincirler: depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
-  dialogue `solar-pro4 → deepseek-v4-flash` · fast `ling-3.0-flash →
-  deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`).
+- Model varsayılanları (2026-09-02 karar matrisi):
+  Tier-1 `anthropic/claude-sonnet-5` (`OPENROUTER_TIER_1_MODEL`),
+  Tier-2 `deepseek/deepseek-v4-flash` (`OPENROUTER_TIER_2_MODEL`),
+  Vision `google/gemini-3.7-flash` (+ yedek `x-ai/grok-4.6`).
+  Koddaki gerçek zincirler: depth `claude-sonnet-5 → deepseek-v4-pro → gemini-3.7-flash` ·
+  dialogue `claude-sonnet-5 → gemini-3.7-flash` · fast `deepseek-v4-flash →
+  gemini-3.7-flash` · vision `gemini-3.7-flash → grok-4.6`
+  (env: `OPENROUTER_CHAIN_<TASK>`; ajan: `OPENROUTER_AGENT_CHAIN_<AJAN>`).
+  Emekli promo slug'lar (`solar-pro4`, `ling-3.0-flash`, `glm-5.2`) varsayılan zincirde yok.
 - Token kipi: `PINEAL_TOKEN=x` (HTTP `X-API-Key`; WS ilk auth mesajı) + `frontend/.env` → `VITE_PINEAL_TOKEN=x`. `PINEAL_ENV=production` tokensız başlatılamaz; Docker varsayılanı production'dır.
 - Harcama tavanı: `OPENROUTER_MAX_SPEND_USD` (0=kapalı; env tanımsızsa da 0). Aşılırsa `SpendCapExceeded`.
 - Native yönlendirici: `PINEAL_LLM_BACKEND=legacy|unified` + `PINEAL_ROUTER_CONFIG` (şablon: `config/router.example.json`). `unified` seçilip config verilmezse startup **çökmez**: legacy'ye düşer, `/health` `UNIFIED_ROUTER_CONFIG_MISSING` ile DEGRADED döner (fail-safe; fail-closed değil).

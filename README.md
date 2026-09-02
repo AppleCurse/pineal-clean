@@ -27,17 +27,19 @@ sistem durumunu ve telemetriyi açıklayan gözlemci/personadır.
    (kitaplar, analog kameralar, mekânlar, estetik dil) taranıp kanıt zincirine girer.
 4. **Hibrit akıl:** hızlı durum/telemetri yerel modelle (Ollama) veya OpenRouter
    ile yürür — anahtar sizdedir. Varsayılan modeller (env ile ezilebilir;
-   P2 ekonomik model seti, slug'lar OpenRouter kataloğundan doğrulandı):
-   Tier-1 `upstage/solar-pro4` (`OPENROUTER_TIER_1_MODEL`, promo fiyat
-   2026-09-10'a kadar),
-   Tier-2 `inclusionai/ling-3.0-flash` (`OPENROUTER_TIER_2_MODEL`),
-   Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL` — listedeki
-   metin modelleri vision desteklemediği için korundu).
-   Koddaki gerçek zincirler (`agent_core/services/llm_gateway.py` → `CHAINS`):
-   depth `solar-pro4 → glm-5.2 → deepseek-v4-pro` ·
-   dialogue `solar-pro4 → deepseek-v4-flash` ·
-   fast `ling-3.0-flash → deepseek-v4-flash` (env: `OPENROUTER_CHAIN_<TASK>`;
-   ajan bazlı: `OPENROUTER_AGENT_CHAIN_<AJAN>`).
+   2026-09-02 karar matrisi, bkz. `docs/reports/CAPABILITY_ROUTING_DECISION_2026-09-02.md`):
+   Tier-1 `anthropic/claude-sonnet-5` (`OPENROUTER_TIER_1_MODEL`),
+   Tier-2 `deepseek/deepseek-v4-flash` (`OPENROUTER_TIER_2_MODEL`),
+   Vision `google/gemini-3.7-flash` (`OPENROUTER_VISION_MODEL`; yedek `x-ai/grok-4.6`).
+   Koddaki gerçek zincirler (`agent_core/services/llm_gateway.py` → `CHAINS` /
+   `AGENT_CHAINS`):
+   depth `claude-sonnet-5 → deepseek-v4-pro → gemini-3.7-flash` ·
+   dialogue `claude-sonnet-5 → gemini-3.7-flash` ·
+   fast `deepseek-v4-flash → gemini-3.7-flash` ·
+   vision `gemini-3.7-flash → grok-4.6`
+   (env: `OPENROUTER_CHAIN_<TASK>`; ajan bazlı: `OPENROUTER_AGENT_CHAIN_<AJAN>`).
+   Emekli promo slug'lar (`solar-pro4`, `ling-3.0-flash`, `glm-5.2`) hiçbir
+   varsayılan zincirde yok — yalnız bilinçli override /v1 uyumu için registry'de.
 
 ## 2. Sistem Mimarisi (koddan doğrulanmış)
 
@@ -113,8 +115,8 @@ Canlı profil çözümleme demosu: `python scripts/analyze_target_instagram.py` 
 | Değişken | Anlamı |
 |---|---|
 | `OPENROUTER_API_KEY` | LLM anahtarı. Yoksa pipeline ilk LLM'li ajanda durur (halüsinasyon önleme, tasarımdır). |
-| `OPENROUTER_TIER_1_MODEL` | Birincil LLM modeli (varsayılan `upstage/solar-pro4`). |
-| `OPENROUTER_TIER_2_MODEL` | Hızlı ikincil model (varsayılan `inclusionai/ling-3.0-flash`). |
+| `OPENROUTER_TIER_1_MODEL` | Birincil LLM modeli (varsayılan `anthropic/claude-sonnet-5`). |
+| `OPENROUTER_TIER_2_MODEL` | Hızlı ikincil model (varsayılan `deepseek/deepseek-v4-flash`). |
 | `OPENROUTER_MAX_SPEND_USD` | Oturum harcama tavanı (0=kapalı). Aşılırsa `SpendCapExceeded` ve canlı çağrı durur. |
 | `LIVE_LLM_E2E` | `1` değilken dış LLM çağrıları kod tarafından reddedilir. |
 | `USE_LOCAL_LLM`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` | Ollama/LM Studio (anahtar gerekmez). |
