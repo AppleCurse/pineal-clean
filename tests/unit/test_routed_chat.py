@@ -231,3 +231,4 @@ def test_streaming_with_multi_provider_modes_rejected(strategy):
 
     with pytest.raises(RoutingRuntimeError, match="streaming"):
         asyncio.run(_run())
+        asyncio.run(_run())

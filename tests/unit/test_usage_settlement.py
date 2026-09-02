@@ -114,3 +114,4 @@ async def test_paid_call_without_usage_keeps_reserved_cost(monkeypatch):
     assert gateway._reserved_spend_usd == pytest.approx(0.0)
     assert gateway._budget_reservations == {}
     assert gateway.call_log[-1]["cost_usd"] > 0.0
+    assert gateway.call_log[-1]["cost_usd"] > 0.0
