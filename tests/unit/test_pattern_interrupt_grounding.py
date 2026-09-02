@@ -1,6 +1,6 @@
 import pytest
 
-from agent_core.agents.pattern_interrupt import GeneratedMessage, PatternInterrupt
+from agent_core.agents.pattern_interrupt import PatternInterrupt
 from agent_core.schemas.epistemic import EpistemicStatus
 
 
