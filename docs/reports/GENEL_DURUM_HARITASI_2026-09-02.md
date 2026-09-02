@@ -171,3 +171,6 @@ Kapatılıp merge edilmeyen 14 PR'ın sınıflandırması:
 | Backend: `pytest --cov-fail-under=80` | ✅ **634 passed, 2 skipped** · %83.29 coverage |
 | Frontend: `npm run check` | ✅ 0 errors, 0 warnings |
 | Frontend: `npm run build` | ✅ 123.27 kB JS |
+
+> **Güncelleme (16:xx):** G5 ✅ çözüldü — merge edilmiş 14 bayat uzak dal GitHub'dan silindi; geriye kalan dallar: `main`, `arena/01a06052` (PR #54 head), `arena/01a05c99` (rc.2 kaynağı), `bolt-optimize-hindsight…` (#49 kaynağı), `jules/osint…` (superseded kaynağı).
+> **PR #54 açıldı** (rc.2 seal + hindsight + re-validation): CI matrisi yeşil — backend ✅ / frontend ✅ / rust-core ✅ / android ✅ / smoke ✅ (Vercel preview + Railway deploy adımları repo dışı servis bağlantıları, kod hatası değil).
