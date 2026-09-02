@@ -65,8 +65,11 @@ def _executor(**overrides) -> RoutedChatExecutor:
 
 def test_shipped_example_config_loads():
     executor = RoutedChatExecutor.from_file(EXAMPLE_CONFIG)
-    assert set(executor.model_groups) == {"fast", "local"}
+    # 2026-09-02 matrix: fast/depth/vision groups + local offline group.
+    assert set(executor.model_groups) == {"fast", "depth", "vision", "local"}
     assert executor.handles("fast") is True
+    assert executor.handles("depth") is True
+    assert executor.handles("vision") is True
     assert executor.handles("local") is True
     assert executor.handles("unknown") is False
 

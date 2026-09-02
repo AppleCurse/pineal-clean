@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from pydantic import BaseModel
+from agent_core.agents.depth_analyst import DepthReport
 from agent_core.task_executor import PinealExecutor
 from agent_core.domain.memory_models import TaskSnapshot
 
@@ -11,6 +12,16 @@ class DummyCheck(BaseModel):
     confidence: float
     is_suspicious: bool
     reason: str = ""
+
+
+def _ok_depth_report() -> DepthReport:
+    return DepthReport(
+        reality_index=0.9,
+        reality_rationale="test",
+        essence_one_liner="test",
+        reality_findings=[],
+        quote_guard={"kept": 0, "checked": 0, "dropped_fake_quote": 0},
+    )
 
 @pytest.fixture
 def mock_router():
@@ -58,7 +69,11 @@ def executor(mock_router, mock_uncertainty, mock_memory, mock_llm_gateway, mock_
     for name in e.agents:
         e.agents[name] = MagicMock()
         e.agents[name].execute = AsyncMock(return_value=DummyResult())
-        
+    # depth_analyst is invoked via .analyze() (not execute) after the main loop;
+    # without a real DepthReport the new failure-wiring records a failed run and
+    # DecisionEngine correctly marks the pipeline partially_completed.
+    e.agents["depth_analyst"].analyze = AsyncMock(return_value=_ok_depth_report())
+
     return e
 
 @pytest.mark.asyncio

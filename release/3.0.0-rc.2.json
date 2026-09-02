@@ -1,0 +1,84 @@
+{
+  "version": "3.0.0-rc.2",
+  "release_type": "prerelease",
+  "date": "2026-09-01",
+  "branch": "arena/01a05c99-pineal-clean",
+  "main_tip_at_release": "c4437def",
+  "arena_tip_at_release": "8e3b2918",
+  "decision": "RELEASE_CANDIDATE_91_OF_100",
+  "required_gates_passed": [
+    "backend_ruff_clean",
+    "pytest_591_passed_2_skipped_0_failed",
+    "coverage_81_13_pct_gate_80_pct",
+    "frontend_svelte_check_0_errors",
+    "frontend_build_113kb_bundle",
+    "security_ssrf_blocked",
+    "security_path_traversal_blocked",
+    "security_secret_redacted",
+    "security_production_fail_closed",
+    "security_livegateclosed_without_key",
+    "memory_atomic_write_fsync",
+    "disaster_recovery_63_to_0_to_63",
+    "backup_sha256_verified",
+    "docker_volume_memory_cache_declared",
+    "docker_healthcheck_degraded_aware",
+    "railway_replicas_1_enforced",
+    "android_query_param_to_header",
+    "scratch_files_removed",
+    "vercel_json_removed"
+  ],
+  "open_gates": [
+    {
+      "id": "live_llm_openrouter_e2e",
+      "command": "OPENROUTER_API_KEY=sk-or-v1-... LIVE_LLM_E2E=1 python live_llm_gate.py",
+      "pass_criteria": [
+        "pipeline status: completed or partially_completed",
+        "evidence_chain non-empty, no mock",
+        "zero UNAVAILABLE fallback in critical agents",
+        "HolisticProfile passions/frictions/cognitive/bridge populated",
+        "judge model returns APPROVED"
+      ],
+      "status": "NOT_EXECUTED_REQUIRES_LIVE_KEY"
+    },
+    {
+      "id": "docker_chromium_smoke",
+      "command": "docker compose up --build && python scripts/smoke_test_browser.py",
+      "pass_criteria": [
+        "Playwright launches Chromium headless in container",
+        "page.goto succeeds",
+        "Instagram initiate returns task_id with scrape logs on WS"
+      ],
+      "status": "NOT_EXECUTED_REQUIRES_DOCKER_DAEMON"
+    }
+  ],
+  "known_limits": [
+    "multi_replica_not_supported_process_local_state",
+    "dark_triad_turkish_markers_only",
+    "ci_smoke_frontend_artifact_not_linked",
+    "no_pip_compile_lock"
+  ],
+  "test_evidence": {
+    "pytest": {
+      "passed": 591,
+      "skipped": 2,
+      "failed": 0,
+      "coverage_total_pct": 81.13,
+      "coverage_gate_pct": 80
+    },
+    "ruff": "all_checks_passed",
+    "disaster_recovery": {
+      "tasks_before": 63,
+      "tasks_after_wipe": 0,
+      "tasks_after_restore": 63,
+      "sha256_verified": true
+    },
+    "negative_tests": {
+      "ssrf_169_254": "NON_PUBLIC_ADDRESS",
+      "path_traversal": "PATH_TRAVERSAL_BLOCKED",
+      "secret_redaction": "REDACTED",
+      "llm_gate_no_key": "REAL_LLM_CALL_NOT_EXECUTED",
+      "production_auth_no_token": "PRODUCTION_AUTH_REQUIRED",
+      "pillar_empty_input": "INSUFFICIENT_DATA"
+    }
+  }
+}
