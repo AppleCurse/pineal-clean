@@ -237,8 +237,18 @@ class CanonicalMemory:
         return inspection["data"] or {}
 
     def _calculate_overall_confidence(self, evidence: List[Dict]) -> float:
-        """Calculate confidence only from actual agent outputs."""
-        values: List[float] = []
+        """Calculate confidence only from actual agent outputs.
+
+        Epistemik sözleşme (roadmap A-2): sonuç `_epistemic`/`epistemic` damgası
+        taşıyorsa confidence o statünün ağırlığıyla girer
+        (VERIFIED/OBSERVED=1.0, INTERPRETED/model_estimate=0.6, HYPOTHESIS=0.35,
+        UNAVAILABLE=0.0). Damgasız (legacy) satırlar 1.0 sayılır — geçmiş
+        davranış bozulmaz; damga yayıldıkça düz ortalama daralır.
+        """
+        from agent_core.schemas.epistemic import status_weight
+
+        weighted_sum = 0.0
+        weight_total = 0.0
         for item in evidence:
             if not isinstance(item, dict):
                 continue
@@ -249,7 +259,11 @@ class CanonicalMemory:
                 continue
             confidence = result.get("confidence")
             if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
-                values.append(float(confidence))
-        if not values:
+                weight = status_weight(result)
+                if weight <= 0.0:
+                    continue  # UNAVAILABLE güven toplamına hiç giremez
+                weighted_sum += float(confidence) * weight
+                weight_total += weight
+        if weight_total <= 0.0:
             return 0.0
-        return round(sum(values) / len(values), 3)
+        return round(weighted_sum / weight_total, 3)

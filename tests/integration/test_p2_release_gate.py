@@ -141,6 +141,13 @@ async def test_p2_release_gate_e2e_integration():
     async def _query_json_chain(prompt, schema=None, **kwargs):
         return await mock_query_json(prompt, schema=schema, **kwargs)
 
+    # Epistemik sözleşme (roadmap B-1): bu e2e'de vektörler mock'lanmış LLM'den
+    # geldiği için executor onları `model_estimate` damgalar; rezonans varsayılanı
+    # bu damgayı skora sokmaz. Bu test bir WIRING testidir — taviz bilinçli ve
+    # açık verilir; skorun evidence zincirine "model_estimate" damgasıyla
+    # aktığı ayrıca doğrulanır.
+    executor.agents["resonance_calc"].allow_estimated = True
+
     with patch("agent_core.services.llm_gateway.LLMGateway.query_json", new=AsyncMock(side_effect=mock_query_json)), \
          patch("agent_core.services.llm_gateway.LLMGateway.query_json_chain", new=AsyncMock(side_effect=_query_json_chain)):
         # Run execution
@@ -157,6 +164,12 @@ async def test_p2_release_gate_e2e_integration():
         assert "human_behavior" in agent_names_in_chain
         assert "resonance_calc" in agent_names_in_chain
         assert "pattern_interrupt" in agent_names_in_chain
+
+        # Epistemik damga pipeline'dan evidence zincirine taşınmalı:
+        # bu e2e açık tavizle (allow_estimated) skor üretti; skor 'ölçüm'
+        # gibi taşınmamalı.
+        resonance_step = next(step for step in result.evidence_chain if step["agent"] == "resonance_calc")
+        assert resonance_step["result"].get("epistemic") == "model_estimate"
         
         # Final result check
         pattern_step = next(step for step in result.evidence_chain if step['agent'] == 'pattern_interrupt')
