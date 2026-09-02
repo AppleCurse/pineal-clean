@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
-  import { clientId, apiFetch, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
+  import { clientId, apiFetch, apiToken, setApiToken, currentApiToken, isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
   import { currentLang, t } from '../i18n';
   import PillarFeed from './PillarFeed.svelte';
   
@@ -24,7 +24,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: $clientId, use_local: localModelActive, local_model: selectedLocalModel })
       });
-      if (!res.ok) throw new Error("Ağ hatası");
+      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN) — Kasa'dan token girin" : "Ağ hatası");
       logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `LOKAL MODEL: ${localModelActive ? 'AKTİF ('+selectedLocalModel+')' : 'PASİF'}`}]);
     } catch(err: any) {
       localModelActive = !localModelActive;
@@ -64,7 +64,7 @@
 
         })
       });
-      if (!res.ok) throw new Error("API hatası: " + res.statusText);
+      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN)" : "API hatası: " + res.statusText);
       const started = await res.json();
       if (started.task_id) taskStatus.update(s => ({ ...s, task_id: started.task_id, status: 'processing' }));
       logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ANALİZ EMRİ GÖNDERİLDİ: ${targetUrl}`}]);
@@ -93,6 +93,24 @@
   let isSealing = false;
   let vaultStatusKey = "vaultReady";
 
+  // PINEAL_TOKEN (API erişim anahtarı) — çalışma zamanı girişi.
+  // Backend'de PINEAL_TOKEN tanımlıysa tüm /api/* ve WS kimlik ister; UI bu anahtarı
+  // derleme zamanında (VITE_PINEAL_TOKEN) bilmiyorsa 401/1008 alır. Bu alan, kullanıcının
+  // anahtarı yeniden derleme olmadan girmesini sağlar.
+  let pinealTokenInput = "";
+  $: pinealTokenSaved = ($apiToken || '').trim().length > 0;
+
+  function savePinealToken() {
+    setApiToken(pinealTokenInput);
+    const saved = currentApiToken();
+    if (saved) {
+      pinealTokenInput = "";
+      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "TOKEN KAYDEDİLDİ — bağlantı yeniden kuruluyor"}]);
+    } else {
+      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "TOKEN TEMİZLENDİ"}]);
+    }
+  }
+
   async function sealCredentials() {
     isSealing = true;
     vaultStatusKey = "vaultSaving";
@@ -105,12 +123,13 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error("Connection error");
+      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN)" : "Connection error");
       vaultStatusKey = "vaultActive";
       apiKey = "";
       cookie = "";
     } catch(err: any) {
       vaultStatusKey = "vaultError";
+      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `KASA HATASI: ${err.message}`}]);
     } finally {
       isSealing = false;
     }
@@ -161,7 +180,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error("Ağ geçidi yanıt vermedi");
+      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN) — Kasa'dan token girin" : "Ağ geçidi yanıt vermedi");
       const data = await res.json();
       messages = [...messages, { sender: activeAgentId, text: data.message || data.error?.message || "Yanıt alındı." }];
     } catch (error: any) {
@@ -337,6 +356,25 @@
       <p style="font-size: 10px; color: var(--text-muted); margin-bottom: 10px;">
         {t[$currentLang].vaultDesc}
       </p>
+
+      <!-- PINEAL_TOKEN (API erişim anahtarı) — çalışma zamanı girişi -->
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
+        <label for="pinealTokenInput" style="font-size: 10px; color: var(--text-muted); font-weight: 600;">
+          {t[$currentLang].pinealTokenLabel}
+        </label>
+        <input 
+          id="pinealTokenInput"
+          type="password" 
+          bind:value={pinealTokenInput} 
+          placeholder={t[$currentLang].pinealTokenPlaceholder} 
+        />
+        <button class="btn-dark" style="width: 100%; font-size: 11px; padding: 6px;" on:click={savePinealToken}>
+          {t[$currentLang].saveTokenBtn}
+        </button>
+        <span style="font-size: 9px; color: {pinealTokenSaved ? 'var(--accent-green)' : '#fbbf24'};">
+          {pinealTokenSaved ? t[$currentLang].tokenActiveBadge : t[$currentLang].tokenInactiveBadge}
+        </span>
+      </div>
 
       <div style="display: flex; flex-direction: column; gap: 8px;">
         <input 

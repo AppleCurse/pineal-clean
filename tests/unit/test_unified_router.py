@@ -130,6 +130,22 @@ def _router(
     )
 
 
+def test_candidate_models_preserve_declared_fallback_order():
+    router, _, _ = _router()
+    plan = router.plan(
+        RouteRequest(
+            strategy=RoutingStrategy.PRIORITY,
+            candidate_models=("cheap/chat", "api-key/chat", "subscription/chat"),
+        )
+    )
+    assert [candidate.target.provider.id for candidate in plan.candidates if candidate.eligible][:3] == [
+        "cheap",
+        "api-key",
+        "subscription",
+    ]
+    assert plan.selected_execution_key.startswith("cheap-connection:")
+
+
 def test_priority_plan_uses_four_tiers_and_never_resolves_credentials():
     router, _, _ = _router()
     plan = router.plan(RouteRequest(strategy=RoutingStrategy.PRIORITY))

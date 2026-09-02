@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "catalog_updated_at": "2026-09-01",
+  "catalog_updated_at": "2026-09-02",
   "scope": "Authorized official APIs, operator-owned compatible endpoints, and local inference only. Catalog entries are not claims of live verification.",
   "providers": [
     {
@@ -19,44 +19,57 @@
         {
           "id": "upstage/solar-pro4",
           "display_name": "Solar Pro 4",
-          "capabilities": ["chat", "streaming"],
+          "capabilities": ["chat", "streaming", "tools"],
           "pricing": {"input_per_million_usd": 0.03, "output_per_million_usd": 0.12}
         },
         {
           "id": "inclusionai/ling-3.0-flash",
           "display_name": "Ling 3.0 Flash",
-          "capabilities": ["chat", "streaming"],
+          "capabilities": ["chat", "streaming", "tools"],
           "pricing": {"input_per_million_usd": 0.021, "output_per_million_usd": 0.063}
         },
         {
           "id": "deepseek/deepseek-v4-flash",
           "display_name": "DeepSeek V4 Flash",
-          "capabilities": ["chat", "streaming"],
+          "capabilities": ["chat", "streaming", "tools"],
           "pricing": {"input_per_million_usd": 0.0679, "output_per_million_usd": 0.168}
         },
         {
           "id": "z-ai/glm-5.2",
           "display_name": "GLM 5.2",
-          "capabilities": ["chat", "streaming"],
+          "capabilities": ["chat", "streaming", "tools"],
           "pricing": {"input_per_million_usd": 0.3276, "output_per_million_usd": 1.03}
         },
         {
           "id": "deepseek/deepseek-v4-pro",
           "display_name": "DeepSeek V4 Pro",
-          "capabilities": ["chat", "streaming"],
+          "capabilities": ["chat", "streaming", "tools"],
           "pricing": {"input_per_million_usd": 0.4679, "output_per_million_usd": 0.9358}
         },
         {
           "id": "google/gemini-3.7-flash",
           "display_name": "Gemini 3.7 Flash",
-          "capabilities": ["chat", "streaming", "vision"],
+          "capabilities": ["chat", "streaming", "vision", "tools"],
+          "context_window": 1048576,
           "pricing": {"input_per_million_usd": 0.75, "output_per_million_usd": 3.75}
         },
         {
           "id": "openai/gpt-5.6-sol-pro",
           "display_name": "GPT 5.6 Sol Pro",
-          "capabilities": ["chat", "streaming"],
+          "capabilities": ["chat", "streaming", "tools"],
           "pricing": {"input_per_million_usd": 2.0, "output_per_million_usd": 10.0}
+        },
+        {
+          "id": "anthropic/claude-sonnet-5",
+          "display_name": "Claude Sonnet 5",
+          "capabilities": ["chat", "streaming", "vision", "tools"],
+          "pricing": {"input_per_million_usd": 2.0, "output_per_million_usd": 10.0}
+        },
+        {
+          "id": "x-ai/grok-4.6",
+          "display_name": "Grok 4.6",
+          "capabilities": ["chat", "streaming", "vision", "tools"],
+          "pricing": {"input_per_million_usd": 2.0, "output_per_million_usd": 6.0}
         }
       ]
     },
@@ -131,7 +144,27 @@
       "base_url": "https://api.deepseek.com/v1",
       "passthrough_models": true,
       "support": "catalog_only",
-      "documentation_url": "https://api-docs.deepseek.com"
+      "documentation_url": "https://api-docs.deepseek.com",
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 1000000
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "capabilities": ["chat", "streaming", "tools"],
+          "context_window": 1000000
+        },
+        {
+          "id": "deepseek-v4-flash-vision-exp",
+          "display_name": "DeepSeek V4 Flash Vision Exp",
+          "capabilities": ["chat", "streaming", "tools", "vision"],
+          "context_window": 1000000
+        }
+      ]
     },
     {
       "id": "groq",
@@ -143,7 +176,19 @@
       "base_url": "https://api.groq.com/openai/v1",
       "passthrough_models": true,
       "support": "catalog_only",
-      "documentation_url": "https://console.groq.com/docs"
+      "documentation_url": "https://console.groq.com/docs",
+      "models": [
+        {
+          "id": "openai/gpt-oss-20b",
+          "display_name": "GPT-OSS 20B",
+          "capabilities": ["chat", "streaming", "tools"]
+        },
+        {
+          "id": "openai/gpt-oss-120b",
+          "display_name": "GPT-OSS 120B",
+          "capabilities": ["chat", "streaming", "tools"]
+        }
+      ]
     },
     {
       "id": "mistral",
@@ -179,7 +224,14 @@
       "base_url": "https://api.cerebras.ai/v1",
       "passthrough_models": true,
       "support": "catalog_only",
-      "documentation_url": "https://inference-docs.cerebras.ai"
+      "documentation_url": "https://inference-docs.cerebras.ai",
+      "models": [
+        {
+          "id": "gpt-oss-120b",
+          "display_name": "GPT-OSS 120B",
+          "capabilities": ["chat", "streaming"]
+        }
+      ]
     },
     {
       "id": "together",

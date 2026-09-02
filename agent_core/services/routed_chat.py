@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import socket
@@ -27,6 +28,7 @@ from agent_core.services.provider_manager import (
     AccessMethod,
     CatalogError,
     ConnectionType,
+    ModelNotFound,
     ProviderConnection,
     ProviderManager,
     ProviderProtocol,
@@ -39,9 +41,22 @@ from agent_core.services.unified_router import (
     RouteMode,
     RoutePlan,
     RouteRequest,
+    RouterError,
     RoutingStrategy,
     TaskComplexity,
     UnifiedRouter,
+)
+
+logger = logging.getLogger(__name__)
+
+_OPTIONAL_OPENAI_CHAT_CONNECTIONS: tuple[tuple[str, str, int], ...] = (
+    ("groq", "GROQ_API_KEY", 110),
+    ("deepseek", "DEEPSEEK_API_KEY", 120),
+    ("cerebras", "CEREBRAS_API_KEY", 130),
+    ("mistral", "MISTRAL_API_KEY", 140),
+    ("alibaba-dashscope", "DASHSCOPE_API_KEY", 150),
+    ("together", "TOGETHER_API_KEY", 160),
+    ("fireworks", "FIREWORKS_API_KEY", 170),
 )
 
 
@@ -136,7 +151,43 @@ class RoutedChatExecutor:
                 )
 
     def handles(self, model: str) -> bool:
-        return model in self.model_groups
+        try:
+            self._candidates_for(model)
+        except RoutingRuntimeError:
+            return False
+        return True
+
+    def _is_catalogued_model(self, canonical: str) -> bool:
+        try:
+            descriptor = self.provider_manager.catalog.resolve_model(canonical)
+        except (ModelNotFound, CatalogError):
+            return False
+        provider = self.provider_manager.catalog.get_provider(descriptor.provider_id)
+        return any(item.id == descriptor.id for item in provider.models)
+
+    def _resolve_model_id(self, model: str) -> str:
+        registry = LLMGateway.MODEL_REGISTRY
+        if model in registry:
+            return f"openrouter/{registry[model]}"
+        if model in registry.values():
+            return f"openrouter/{model}"
+        if self._is_catalogued_model(model):
+            return model
+        prefixed = f"openrouter/{model}"
+        if self._is_catalogued_model(prefixed):
+            return prefixed
+        raise RoutingRuntimeError(f"unknown routed model group: {model}")
+
+    def _candidates_for(self, model: str) -> tuple[str, ...]:
+        if model in self.model_groups:
+            return self.model_groups[model]
+        resolved = self._resolve_model_id(model)
+        for group in self.model_groups.values():
+            if resolved in group or model in group:
+                return group
+        if not any(self.provider_manager.targets_for(resolved)):
+            raise RoutingRuntimeError(f"unknown routed model group: {model}")
+        return (resolved,)
 
     def executable_models(self, gateway: LLMGateway) -> tuple[str, ...]:
         """Return groups with a live-unlocked target and available credential."""
@@ -157,10 +208,13 @@ class RoutedChatExecutor:
                             target.connection.id
                         )
                     except CatalogError:
-                        continue
+                        credentials = {}
                     if (
                         target.connection.connection_type is ConnectionType.API_KEY
                         and not credentials.get("api_key")
+                        and not (
+                            target.provider.id == "openrouter" and gateway.api_key
+                        )
                     ):
                         continue
                     available = True
@@ -185,23 +239,22 @@ class RoutedChatExecutor:
         session_key: Optional[str] = None,
         seed: Optional[int] = None,
     ) -> RoutePlan:
+        candidates = self._candidates_for(model)
         try:
-            candidates = self.model_groups[model]
-        except KeyError as exc:
+            return self.router.plan(RouteRequest(
+                model=candidates[0] if candidates else model,
+                candidate_models=candidates,
+                strategy=strategy,
+                required_capabilities=frozenset(required_capabilities),
+                minimum_context=minimum_context,
+                complexity=complexity,
+                estimated_input_tokens=estimated_input_tokens,
+                max_output_tokens=max_output_tokens,
+                session_key=session_key,
+                seed=seed,
+            ))
+        except (RouterError, ModelNotFound, CatalogError) as exc:
             raise RoutingRuntimeError(f"unknown routed model group: {model}") from exc
-        return self.router.plan(RouteRequest(
-            model=model,
-            candidate_models=candidates,
-            strategy=strategy,
-            required_capabilities=frozenset(required_capabilities),
-            minimum_context=minimum_context,
-            allow_unknown_context=allow_unknown_context,
-            complexity=complexity,
-            estimated_input_tokens=estimated_input_tokens,
-            max_output_tokens=max_output_tokens,
-            session_key=session_key,
-            seed=seed,
-        ))
 
     async def chat_completion(
         self,
@@ -302,7 +355,7 @@ class RoutedChatExecutor:
         for execution_key in plan.attempt_order:
             lease = self.router.begin_attempt(plan, execution_key)
             try:
-                route = self._gateway_route(lease.target)
+                route = self._gateway_route(lease.target, gateway)
                 gateway_stream = await gateway.start_chat_stream(
                     messages=messages,
                     model=lease.target.model.id,
@@ -482,7 +535,7 @@ class RoutedChatExecutor:
     ) -> _AttemptOutcome:
         lease = self.router.begin_attempt(plan, execution_key)
         try:
-            route = self._gateway_route(lease.target)
+            route = self._gateway_route(lease.target, gateway)
             result = await gateway.chat_completion(
                 messages=messages,
                 model=lease.target.model.id,
@@ -499,7 +552,7 @@ class RoutedChatExecutor:
         self.router.finish_success(lease)
         return _AttemptOutcome(result=result)
 
-    def _gateway_route(self, target) -> GatewayRoute:
+    def _gateway_route(self, target, gateway: LLMGateway) -> GatewayRoute:
         if target.provider.protocol is not ProviderProtocol.OPENAI_CHAT:
             raise RoutingRuntimeError("provider protocol is not executable by chat routing")
         if target.connection.endpoint_override and target.provider.access_method is not AccessMethod.LOCAL:
@@ -508,10 +561,16 @@ class RoutedChatExecutor:
             target.connection.id,
             resolver=self._resolver,
         )
-        credentials = self.provider_manager.resolve_credentials(target.connection.id)
+        try:
+            credentials = self.provider_manager.resolve_credentials(target.connection.id)
+        except CatalogError:
+            credentials = {}
         api_key = credentials.get("api_key")
         if target.connection.connection_type is ConnectionType.API_KEY and not api_key:
-            raise RoutingRuntimeError("credential resolver did not return api_key")
+            if target.provider.id == "openrouter" and gateway.api_key:
+                api_key = gateway.api_key
+            else:
+                raise RoutingRuntimeError("credential resolver did not return api_key")
         pricing = target.model.pricing
         override = self.model_pricing.get(target.model.canonical_id)
         return GatewayRoute(
@@ -600,17 +659,125 @@ class RoutedChatExecutor:
 
 
 def llm_backend_mode_from_env() -> str:
-    mode = os.getenv("PINEAL_LLM_BACKEND", "legacy").strip().lower()
+    mode = os.getenv("PINEAL_LLM_BACKEND", "unified").strip().lower()
     if mode not in {"legacy", "unified"}:
         raise RoutingRuntimeError("PINEAL_LLM_BACKEND must be legacy or unified")
     return mode
 
 
-def routing_runtime_from_env() -> Optional[RoutedChatExecutor]:
-    path = os.getenv("PINEAL_ROUTER_CONFIG")
-    if not path:
+def default_routing_mapping(
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+) -> dict[str, Any]:
+    """Build an executable catalog-backed routing config from env keys."""
+    environment = os.environ if environ is None else environ
+    catalog = load_builtin_catalog()
+    openrouter = catalog.get_provider("openrouter")
+    openrouter_models = [model.id for model in openrouter.models]
+    connections: list[dict[str, Any]] = [
+        {
+            "id": "openrouter-default",
+            "provider_id": "openrouter",
+            "connection_type": "api_key",
+            "credential_env": "OPENROUTER_API_KEY",
+            "enabled": True,
+            "priority": 100,
+            "weight": 1.0,
+            "model_allowlist": openrouter_models,
+        }
+    ]
+
+    def _openrouter(model_id: str) -> str:
+        return f"openrouter/{model_id}"
+
+    groups: dict[str, list[str]] = {
+        task: [_openrouter(model_id) for model_id in chain]
+        for task, chain in LLMGateway.CHAINS.items()
+    }
+    for agent_name, chain in LLMGateway.AGENT_CHAINS.items():
+        groups[agent_name] = [_openrouter(model_id) for model_id in chain]
+    for alias, model_id in LLMGateway.MODEL_REGISTRY.items():
+        groups[alias] = [_openrouter(model_id)]
+    for model_id in openrouter_models:
+        groups[model_id] = [_openrouter(model_id)]
+        groups[_openrouter(model_id)] = [_openrouter(model_id)]
+
+    for provider_id, credential_env, priority in _OPTIONAL_OPENAI_CHAT_CONNECTIONS:
+        if not environment.get(credential_env):
+            continue
+        provider = catalog.get_provider(provider_id)
+        if provider.protocol is not ProviderProtocol.OPENAI_CHAT:
+            continue
+        allowlist = [model.id for model in provider.models]
+        connections.append({
+            "id": f"{provider_id}-default",
+            "provider_id": provider_id,
+            "connection_type": "api_key",
+            "credential_env": credential_env,
+            "enabled": True,
+            "priority": priority,
+            "weight": 1.0,
+            "model_allowlist": allowlist,
+        })
+        extras = [f"{provider_id}/{model.id}" for model in provider.models]
+        if extras:
+            groups.setdefault("fast", [])
+            for extra in extras:
+                if extra not in groups["fast"]:
+                    groups["fast"].append(extra)
+                groups.setdefault(extra, [extra])
+            if any("vision" in model.capabilities for model in provider.models):
+                groups.setdefault("vision", [])
+                for model in provider.models:
+                    if "vision" in model.capabilities:
+                        canonical = f"{provider_id}/{model.id}"
+                        if canonical not in groups["vision"]:
+                            groups["vision"].append(canonical)
+
+    use_local = str(environment.get("USE_LOCAL_LLM", "false")).strip().lower() == "true"
+    if use_local:
+        local_model = (environment.get("LOCAL_LLM_MODEL") or "llama3.2").strip() or "llama3.2"
+        connections.append({
+            "id": "ollama-local",
+            "provider_id": "ollama-local",
+            "connection_type": "local",
+            "enabled": True,
+            "priority": 200,
+            "weight": 1.0,
+            "tier_override": "free",
+            "model_allowlist": [local_model],
+        })
+        groups["local"] = [f"ollama-local/{local_model}"]
+
+    bounded_groups = {
+        alias: models[:32]
+        for alias, models in groups.items()
+        if models
+    }
+    return {
+        "schema_version": 1,
+        "tenant_id": "openai-compatible",
+        "connections": connections,
+        "model_groups": bounded_groups,
+    }
+
+
+def routing_runtime_from_env(
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[RoutedChatExecutor]:
+    environment = os.environ if environ is None else environ
+    path = environment.get("PINEAL_ROUTER_CONFIG") if hasattr(environment, "get") else os.getenv("PINEAL_ROUTER_CONFIG")
+    if path:
+        return RoutedChatExecutor.from_file(path, environ=environment)
+    try:
+        return RoutedChatExecutor.from_mapping(
+            default_routing_mapping(environ=environment),
+            environ=environment,
+        )
+    except RoutingRuntimeError as exc:
+        logger.warning("auto routing config is not executable: %s", exc)
         return None
-    return RoutedChatExecutor.from_file(path)
 
 
 def _connection_from_mapping(

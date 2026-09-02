@@ -1,11 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { API_TOKEN, apiFetch, clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents } from './store';
+  import { apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents } from './store';
   import { currentLang, t, type Language } from './i18n';
   import UnifiedCompactPanel from './components/UnifiedCompactPanel.svelte';
   import NeuralTelemetryBoard from './components/visualizers/NeuralTelemetryBoard.svelte';
 
-  let ws: WebSocket;
+  let ws: WebSocket | null = null;
+  let reconnectAttempts = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  let lastToken = currentApiToken();
 
   type TelemetryPayload = Record<string, unknown>;
   type TasksPayload = { tasks: Array<{ task_id: string; evidence_count?: number }>; active_tasks?: string[] };
@@ -47,12 +51,28 @@
     currentLang.set(lang);
   }
 
-  onMount(() => {
-    ws = new WebSocket(wsUrl($clientId));
+  function logLine(level: string, msg: string) {
+    logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level, msg }]);
+  }
+
+  // UPLINK (WebSocket) — otomatik yeniden bağlantı + gerçek kapanma nedenini loglama.
+  // Eskiden: tek bağlantı, kopunca bir daha bağlanmaz ve 1008 (yetki) kapanması bile
+  // "UPLINK KOPTU" diye gösterilirdi; 401/http hataları da "ağ hatası" sanılırdı.
+  function connect() {
+    if (disposed) return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    try {
+      ws = new WebSocket(wsUrl($clientId));
+    } catch (_e) {
+      scheduleReconnect();
+      return;
+    }
 
     ws.onopen = () => {
-      if (API_TOKEN) ws.send(JSON.stringify({ type: 'auth', token: API_TOKEN }));
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "UPLINK KURULDU (FastAPI WebSocket)"}]);
+      reconnectAttempts = 0;
+      const token = currentApiToken();
+      if (token && ws) ws.send(JSON.stringify({ type: 'auth', token }));
+      logLine("INFO", "UPLINK KURULDU (FastAPI WebSocket)");
     };
 
     ws.onmessage = (event) => {
@@ -86,12 +106,53 @@
       }
     };
 
-    ws.onclose = () => {
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: "UPLINK KOPTU (WebSocket Kapandı)"}]);
+    ws.onclose = (event) => {
+      if (disposed) return;
+      // 1008 (policy/auth) ve 1013: sunucu token bekleyip alamadı/doğrulayamadı.
+      if (event.code === 1008 || event.code === 1013) {
+        logLine("ERROR", "UPLINK YETKİ HATASI: PINEAL_TOKEN eksik/uyuşmuyor — Kasa'dan token girin veya eşleştirin (kod " + event.code + ")");
+      } else {
+        logLine("ERROR", "UPLINK KOPTU (WebSocket Kapandı) — yeniden bağlanılacak");
+      }
+      scheduleReconnect();
     };
 
+    ws.onerror = () => {
+      /* onclose arkasından gelecek; ayrı log gerekmiyor */
+    };
+  }
+
+  function scheduleReconnect() {
+    if (disposed) return;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 15000);
+    reconnectAttempts += 1;
+    reconnectTimer = setTimeout(connect, delay);
+  }
+
+  onMount(() => {
+    connect();
+
+    // Token değişince (Kasa'dan girildi/temizlendi) soketi yeni kimlikle yeniden bağla.
+    const unsub = apiToken.subscribe((value) => {
+      if (value === lastToken) return;
+      lastToken = value;
+      reconnectAttempts = 0;
+      if (ws) {
+        try { ws.close(); } catch (_e) { /* ignore */ }
+        ws = null;
+      }
+      connect();
+    });
+
     return () => {
-      if (ws) ws.close();
+      disposed = true;
+      unsub();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        try { ws.close(); } catch (_e) { /* ignore */ }
+        ws = null;
+      }
     };
   });
 </script>

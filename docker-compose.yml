@@ -4,8 +4,12 @@ services:
       context: .
       # Playwright indirme aynası (build-time). .env'e örn:
       #   PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+      # PINEAL_TOKEN korumalı üretimde UI'ın aynı token'ı gömülü taşıması gerekir:
+      # .env içinde PINEAL_TOKEN tanımlıysa VITE_PINEAL_TOKEN da aynı değere set
+      # edilmelidir; aksi hâlde arayüz her /api çağrısında 401, WebSocket'te 1008 alır.
       args:
         PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
+        VITE_PINEAL_TOKEN: ${VITE_PINEAL_TOKEN:-}
     ports:
       - "8000:8000"
     env_file:

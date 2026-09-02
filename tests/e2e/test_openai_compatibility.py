@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -288,7 +289,7 @@ def test_v1_bearer_auth_is_separate_from_provider_credentials(monkeypatch):
     assert inbound_token not in repr(gateway.call_log)
 
 
-def test_streaming_is_rejected_honestly_before_provider_execution(monkeypatch):
+def test_streaming_is_rejected_honestly_on_legacy_backend(monkeypatch):
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -299,6 +300,7 @@ def test_streaming_is_rejected_honestly_before_provider_execution(monkeypatch):
     gateway = _gateway(handler)
     monkeypatch.setattr(api_module, "_openai_gateway", lambda: gateway)
     monkeypatch.delenv("PINEAL_TOKEN", raising=False)
+    monkeypatch.setenv("PINEAL_LLM_BACKEND", "legacy")
 
     with TestClient(app) as client:
         response = client.post(
@@ -314,6 +316,51 @@ def test_streaming_is_rejected_honestly_before_provider_execution(monkeypatch):
     assert response.json()["error"]["code"] == "streaming_requires_unified_backend"
     assert calls == 0
     assert gateway.call_log == []
+
+
+def test_streaming_is_accepted_on_unified_backend(monkeypatch):
+    from agent_core.services.llm_gateway import LLMChatStream
+    from agent_core.services.routed_chat import RoutedChatStream
+
+    gateway = _gateway(lambda request: _completion_response())
+    monkeypatch.setattr(api_module, "_openai_gateway", lambda: gateway)
+    monkeypatch.delenv("PINEAL_TOKEN", raising=False)
+    monkeypatch.delenv("PINEAL_LLM_BACKEND", raising=False)
+
+    async def chunks():
+        yield SimpleNamespace(
+            model_dump=lambda mode="json", exclude_none=True: {
+                "id": "chatcmpl-stream-1",
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": None}],
+            }
+        )
+
+    fake_stream = RoutedChatStream(
+        stream=LLMChatStream("call-stream-1", chunks()),
+        plan=SimpleNamespace(
+            route_id="route-1",
+            mode=SimpleNamespace(value="fallback"),
+            strategy=SimpleNamespace(value="auto"),
+        ),
+    )
+
+    with TestClient(app) as client:
+        assert client.app.state.llm_backend_mode == "unified"
+        client.app.state.openai_router.start_chat_stream = AsyncMock(return_value=fake_stream)
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "solar_pro4",
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    assert "data: " in response.text
+    assert response.headers["x-pineal-call-id"] == "call-stream-1"
 
 
 def test_models_lists_only_currently_executable_gateway_models(monkeypatch):

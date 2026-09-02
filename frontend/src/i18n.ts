@@ -27,6 +27,11 @@ export const t = {
     apiKeyPlaceholder: "OPENROUTER API ANAHTARI (sk-or-v1-...)",
     cookiePlaceholder: "X/INSTAGRAM COOKIE (Opsiyonel)",
     sealBtn: "KASAYI MÜHÜRLE",
+    pinealTokenLabel: "API ERİŞİM ANAHTARI (PINEAL_TOKEN)",
+    pinealTokenPlaceholder: "Backend'de tanımlıysa buraya girin...",
+    saveTokenBtn: "TOKEN'I KAYDET",
+    tokenActiveBadge: "TOKEN: KAYITLI ✓",
+    tokenInactiveBadge: "TOKEN: YOK — backend kimlik istiyorsa 401/1008 alırsınız",
 
     // Center Panel: Target Input & Controls
     targetHeader: "HEDEF PROFİL VE BAĞLAM GİRİŞİ",
@@ -131,6 +136,11 @@ export const t = {
     apiKeyPlaceholder: "OPENROUTER API KEY (sk-or-v1-...)",
     cookiePlaceholder: "X/INSTAGRAM COOKIE (Optional)",
     sealBtn: "SEAL CREDENTIALS",
+    pinealTokenLabel: "API ACCESS TOKEN (PINEAL_TOKEN)",
+    pinealTokenPlaceholder: "Enter it if defined on the backend...",
+    saveTokenBtn: "SAVE TOKEN",
+    tokenActiveBadge: "TOKEN: SAVED ✓",
+    tokenInactiveBadge: "TOKEN: NONE — if backend requires auth you'll get 401/1008",
 
     // Center Panel: Target Input & Controls
     targetHeader: "TARGET PROFILE & CONTEXT INPUT",

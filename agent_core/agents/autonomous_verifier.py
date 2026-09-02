@@ -73,7 +73,9 @@ class AutonomousVerifier:
             claims: List[Claim] = []
 
         try:
-            claim_data = await llm_gateway.query_json_chain(claim_prompt, ClaimList, task="fast")
+            claim_data = await llm_gateway.query_json_chain(
+                claim_prompt, ClaimList, task="fast", agent_name="autonomous_verifier_extract"
+            )
             claims_list = claim_data.claims if hasattr(claim_data, "claims") else []
         except Exception:
             claims_list = []
@@ -128,7 +130,9 @@ class AutonomousVerifier:
                 "Görevin: İnternet sonuçlarına bakarak bu iddianın doğru mu, abartılı mı, yoksa tamamen yalan mı olduğunu bulmak.\n"
                 "Statü olarak SADECE şu kelimeleri kullanabilirsin: 'DOĞRULANDI', 'ÇELİŞKİLİ', 'YALAN', 'BİLİNMİYOR'.\n"
             )
-            single_verification = await llm_gateway.query_json(verify_prompt, VerificationResult, tier=2)
+            single_verification = await llm_gateway.query_json_chain(
+                verify_prompt, VerificationResult, task="depth", agent_name="autonomous_verifier"
+            )
             verifications.append(single_verification)
 
         total = len(verifications)
