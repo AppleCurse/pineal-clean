@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (post-rc.2) — 2026-09-02
+
+### Release gates (G7)
+
+- Added `.github/workflows/release-gates.yml` — manual-only (`workflow_dispatch`) wiring for the two open rc.2 live gates; never triggers on push/PR (Gate A is a paid live LLM call); single-flight concurrency (no cancellation of a running paid gate).
+  - `live-llm-e2e` (`live_llm_openrouter_e2e`): runs `live_llm_gate.py` with `secrets.OPENROUTER_API_KEY` + `LIVE_LLM_E2E=1`. Fail-closed: rejects the run up front when the secret is missing; bounded by `OPENROUTER_MAX_SPEND_USD=5`.
+  - `docker-chromium-smoke` (`docker_chromium_smoke`): real `docker compose up --build`; health gate (`ready|degraded` → 200); real Svelte dist served (`id="app"`); production auth verified both ways (no token → 401, `X-API-Key` → 200); in-container Playwright/Chromium smoke via `scripts/smoke_test_browser.py`.
+- `RELEASE_EVIDENCE.md` — added post-seal **Section 12**: gate execution mechanism + honest scope note (the Instagram-initiate leg of Gate B stays operator-manual; GitHub runner IPs hit platform limits).
+- `docs/reports/GENEL_DURUM_HARITASI_2026-09-02.md` — G7 rows updated: mechanism established; closure now requires a green manual run (Gate A) plus the manual Instagram leg (Gate B).
+- Gates remain **open** until a green workflow run is recorded — this change wires the button, it does not claim the gates passed.
+
 ## 3.0.0-rc.2 — 2026-09-02
 
 ### Release evidence
