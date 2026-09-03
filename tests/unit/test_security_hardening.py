@@ -184,6 +184,13 @@ def test_safe_child_path_rejects_traversal_and_outside_symlink(tmp_path):
         memory.get_task_memory("linked")
 
 
+@pytest.fixture(autouse=True)
+def clear_env_secrets_cache():
+    from agent_core.utils.security import _environment_secret_values
+    _environment_secret_values.cache_clear()
+    yield
+    _environment_secret_values.cache_clear()
+
 def test_secret_redaction_covers_environment_bearer_keys_and_cookies(monkeypatch):
     arbitrary_token = "totally-arbitrary-production-token"
     monkeypatch.setenv("PINEAL_TOKEN", arbitrary_token)
