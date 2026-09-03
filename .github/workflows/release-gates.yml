@@ -1,0 +1,107 @@
+name: Release Gates
+
+# G7 — rc.2'de açık kalan 2 canlı release gate'i MANUEL koşuya bağlar.
+# Bu workflow push/PR'da ASLA tetiklenmez (paralı canlı LLM çağrısı içerir);
+# yalnızca Actions → "Release Gates" → Run workflow ile çalışır.
+#
+#   Gate A  live_llm_openrouter_e2e  →  secrets.OPENROUTER_API_KEY ile
+#                                     LIVE_LLM_E2E=1 python live_llm_gate.py
+#   Gate B  docker_chromium_smoke    →  gerçek imaj build (docker compose) +
+#                                     konteyner İÇİNDE Playwright/Chromium
+#
+# Geçiş kriterleri: RELEASE_EVIDENCE.md Bölüm 8 (Gate A) ve Bölüm 12 (kapsam).
+# Fail-closed: secret yoksa Gate A reddedilir; health 200 gelmezse Gate B düşer.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Aynı anda tek koşu: paralı koşu yarım kesilmesin, ikinci dispatch kuyruğa girer.
+concurrency:
+  group: release-gates-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-llm-e2e:
+    name: "Gate A — live_llm_openrouter_e2e (live_llm_gate.py)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies (Dockerfile ile aynı iki adım)
+        run: |
+          pip install --default-timeout=300 -r requirements.txt
+          pip install --default-timeout=300 -r requirements-osint.txt
+      - name: Fail-closed secret kontrolu
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::error::OPENROUTER_API_KEY secret tanimli degil — canli gate reddedildi (fail-closed)."
+            echo "Settings → Secrets and variables → Actions → OPENROUTER_API_KEY tanimlanmali."
+            exit 1
+          fi
+      - name: Canli LLM E2E gate (RELEASE_EVIDENCE Bölüm 8 kriterleri)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LIVE_LLM_E2E: "1"
+          # Manuel gate dugmesi sinirsiz para yakamasin: 5 USD tavani.
+          OPENROUTER_MAX_SPEND_USD: "5"
+        run: python live_llm_gate.py
+
+  docker-chromium-smoke:
+    name: "Gate B — docker_chromium_smoke (imaj + konteyner ici Chromium)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Imaj PINEAL_ENV=production ile mühürlüdür; token'sız başlamaz
+      # (PRODUCTION_AUTH_REQUIRED). Smoke kendi token'ını .env'e yazar.
+      SMOKE_TOKEN: pineal-ci-smoke-token
+    steps:
+      - uses: actions/checkout@v7
+      - name: .env hazirla (production fail-closed auth icin)
+        run: printf 'PINEAL_TOKEN=%s\n' "$SMOKE_TOKEN" > .env
+      - name: Imaji build et ve kaldir (gerçek compose paketi)
+        run: docker compose up --build -d
+      - name: Health bekle (ready|degraded → HTTP 200)
+        run: |
+          set -eu
+          for i in $(seq 1 60); do
+            if curl -sf -o /tmp/health.json http://127.0.0.1:8000/health; then
+              echo "health yanit veriyor (deneme $i)"; break
+            fi
+            sleep 5
+          done
+          curl -sf -o /tmp/health.json http://127.0.0.1:8000/health
+          cat /tmp/health.json; echo
+          python3 -c "import json,sys; d=json.load(open('/tmp/health.json')); print('health status:', d.get('status')); sys.exit(0 if d.get('status') in ('ready','degraded') else 1)"
+      - name: UI servis kontrolu (gerçek Svelte dist imajda)
+        run: curl -sf http://127.0.0.1:8000/ | grep -q 'id="app"'
+      - name: Production auth kontrolu (401 → 200)
+        run: |
+          set -eu
+          code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000/api/telemetry?client_id=ci-smoke")
+          echo "token'siz /api/telemetry → HTTP $code (401 beklenir)"
+          [ "$code" = "401" ]
+          code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $SMOKE_TOKEN" "http://127.0.0.1:8000/api/telemetry?client_id=ci-smoke")
+          echo "X-API-Key ile /api/telemetry → HTTP $code (200 beklenir)"
+          [ "$code" = "200" ]
+      - name: Konteyner ici Chromium smoke (Playwright launch + page.goto)
+        run: |
+          set -eu
+          docker compose cp scripts/smoke_test_browser.py pineal:/tmp/smoke_test_browser.py
+          docker compose exec -T pineal python /tmp/smoke_test_browser.py
+      - name: Tani (kopus durumunda loglar)
+        if: failure()
+        run: |
+          docker compose ps -a || true
+          docker compose logs --tail 100 || true
+      - name: Temizle (volume'lar dahil)
+        if: always()
+        run: docker compose down -v --remove-orphans

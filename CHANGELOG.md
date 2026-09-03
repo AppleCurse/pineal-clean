@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased (post-rc.2) — 2026-09-03
+
+### G7 release gate'leri koşulabilir hale getirildi (mekanizma onarımı)
+
+- **`.github/workflows/release-gates.yml` eklendi** — gövde kanonik kaynakla
+  (`release/release-gates.yml`) birebir. Önceki durumda dosya yalnız `release/` altındaydı;
+  GitHub `on:` anahtarını default branch'in `.github/workflows/` dizininden okuduğu için
+  `Actions → Release Gates` hiç görünmüyor, dolayısıyla **Gate A (`live_llm_openrouter_e2e`) ve
+  Gate B (`docker_chromium_smoke`) koşulamıyordu** ("yeşil koşu kaydı yok" kırmızısının kök nedeni).
+  "Operatör `cp`'lesin" adımı böylece kaldırıldı.
+- **`tests/unit/test_release_gates_workflow.py`** (7 test) — dosya konumu, kaynak↔kopya bayt
+  eşitliği (gövde kayması yasağı), **yalnızca** `workflow_dispatch` (push/PR/`schedule` yasağı —
+  Gate A paralı çağrı içerir), Gate A fail-closed secret kontrolü + `LIVE_LLM_E2E=1` +
+  `OPENROUTER_MAX_SPEND_USD`, Gate B'nin gerçek imaj/health/production-auth/Chromium/teardown
+  adımları ve `concurrency.cancel-in-progress: false`.
+- **Belge hizalama** — `RELEASE_EVIDENCE.md` §12'ye 2026-09-03 güncelleme tablosu (mekanizma
+  kapandı ≠ gate kapandı; run URL'si işlenmeden gate'ler açık sayılır),
+  `docs/reports/SON_HUKUM_DENETIM.md`'ye eski "kırmızı" hükümlerinin `f1e4602` üzerindeki yeniden
+  ölçümü (`723 passed, 2 skipped` · coverage `%84.13` · ruff clean · main CI `success`).
+- **Kapanmayan (bilinçli, operatörde):** `OPENROUTER_API_KEY` secret'ı + manuel dispatch (Gate A);
+  docker'lı runner + Instagram initiate (Gate B). Bu ikisi yeşil olmadan stable ilan edilmez.
+
 ## Unreleased (post-rc.2) — 2026-09-02
 
 ### FINAL-KARAR-MATRIX production routing
