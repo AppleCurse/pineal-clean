@@ -221,9 +221,26 @@ Değişiklik yapılırsa `VERSION` dosyası ve bu belge birlikte güncellenmelid
 
 ### Mekanizma
 
-`.github/workflows/release-gates.yml` (kaynak kopya: `release/release-gates.yml` — GitHub App `workflows` izni olmadığı için bu PR workflow dosyasını doğrudan yazamaz; yazma yetkili aktör `cp release/release-gates.yml .github/workflows/release-gates.yml` ile ekler) — yalnızca `workflow_dispatch` (manuel) tetiklenir;
+`.github/workflows/release-gates.yml` (kanonik kaynak gövde: `release/release-gates.yml`; ikisi birebir aynıdır ve bu eşitlik `tests/unit/test_release_gates_workflow.py` ile kilitlendi) — yalnızca `workflow_dispatch` (manuel) tetiklenir;
 push/PR'da **asla** koşmaz (Gate A paralı canlı LLM çağrısı içerir). Aynı anda tek koşu
 (concurrency; iptal etme yok — paralı koşu yarım kesilmez).
+
+#### Güncelleme — 2026-09-03: G7-A'nın "mekanizma" yarısı kapandı
+
+2026-09-02 kaydında workflow dosyası yalnızca `release/` altında duruyordu ve "operatör `cp`'lemeli"
+notu düşülmüştü. **Bu adım artık kod tarafında tamamlandı**: `.github/workflows/release-gates.yml`
+repoya işlendi (bu PR) ve govde-kaynak eşitliği + dispatch-güvenliği birim teste bağlandı.
+
+| Madde | 2026-09-02 | 2026-09-03 |
+|---|---|---|
+| Workflow `.github/workflows/`'da | ❌ (yalnız `release/`) | ✅ commit'li, test korumalı |
+| Dispatch edilebilirlik | ❌ (dispatch listesinde görünmezdi) | ✅ **PR main'e merge edildikten sonra** (GitHub `on:`'ı default branch'ten okur) |
+| Gate A **yeşil koşu kaydı** | ❌ | 🔴 **hâlâ açık** — `OPENROUTER_API_KEY` secret'ı + manuel dispatch gerekli |
+| Gate B **yeşil koşu kaydı** | ❌ | 🔴 **hâlâ açık** — runner'da docker gerekir; IG bacağı operatörde |
+
+> Dürüstlük kaydı: bu satırlar bir gate'in **kapandığını** değil, gate'in **koşulabilir hale geldiğini** belgeler.
+> Dispatch sonrası `Actions → Release Gates` run URL'si buraya işlenmeden `live_llm_openrouter_e2e` ve
+> `docker_chromium_smoke` KAPATILMIŞ sayılmaz.
 
 | Job | Gate | Ne yapar | Fail-closed garantisi |
 |---|---|---|---|
