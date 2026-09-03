@@ -30,6 +30,9 @@
 | 5 | **G7-A: `Release Gates` workflow'u dispatch listesinde yok** | `.github/workflows/release-gates.yml` işlendi (gövde `release/` ile birebir) + `tests/unit/test_release_gates_workflow.py` (7 test); **PR #60 squash-merge `68fa552`** → `gh workflow list` artık `Release Gates active` (id 349137796) gösteriyor | ✅ **KAPANDI** — kök neden yerleşimdi, dispatch listesi doğrulandı |
 | 6 | G7-A: yeşil koşu kaydı | dispatch denendi: `gh workflow run release-gates.yml --ref main` → **403** (agent token'ında Actions-write yok). `gh secret list` → 403 (secret varlığı doğrulanamıyor); sandbox dış ağ kapalı (`openrouter.ai` → `000`) → yeşil koşu **üretilmedi ve uydurulmadı** | 🔴 **AÇIK · NOT_EXECUTED — OPERATÖR** |
 | 7 | G7-B: Docker + Chromium smoke | sandbox'ta docker daemon yok; IG initiate ağ/çerez bağımlı; workflow'un kendisi artık koşulabilir durumda | 🔴 **AÇIK · NOT_EXECUTED — OPERATÖR** |
+| 5 | **G7-A: `Release Gates` workflow'u dispatch listesinde yok** | `.github/workflows/release-gates.yml` işlendi (gövde `release/` ile birebir) + `tests/unit/test_release_gates_workflow.py` (7 test) | ✅ **mekanizma kapandı** — merge sonrası dispatch edilebilir |
+| 6 | G7-A: yeşil koşu kaydı | `gh run list --workflow "Release Gates"` → 0 kayıt; `gh secret list` → 403 (secret varlığı doğrulanamıyor); sandbox dış ağ kapalı (`openrouter.ai` → `000`) | 🔴 **AÇIK — OPERATÖR** |
+| 7 | G7-B: Docker + Chromium smoke | sandbox'ta docker daemon yok; IG initiate ağ/çerez bağımlı | 🔴 **AÇIK — OPERATÖR** |
 
 **Bilinçli yapılmayanlar:** `release/release-gates.yml` silinmedi (kanonik kaynak olarak durur; test eşitliği zorunlu kılar). Gate A/B için "koşuldu" iddiası üretilmedi — dispatch yetkisi/secret/docker bu ortamda yok ve raporda sahte yeşil bırakmak, denetimin kendi dürüstlük sözleşmesini ihlal ederdi.
 

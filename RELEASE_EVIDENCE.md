@@ -244,6 +244,14 @@ sahte-yeşil veya "muhtemelen geçer" hükmü bırakmamak, bu belgenin Bölüm 8
 Gate A'nın dispatch'ini takiben düşmesi **beklenen ve doğru** davranıştır eğer secret tanımlı değilse
 (fail-closed `::error::`) — bu bir başarısızlık değil, kapının çalıştığının kanıtıdır; kapanış için
 yeşil job gerekir.
+repoya işlendi (bu PR) ve govde-kaynak eşitliği + dispatch-güvenliği birim teste bağlandı.
+
+| Madde | 2026-09-02 | 2026-09-03 |
+|---|---|---|
+| Workflow `.github/workflows/`'da | ❌ (yalnız `release/`) | ✅ commit'li, test korumalı |
+| Dispatch edilebilirlik | ❌ (dispatch listesinde görünmezdi) | ✅ **PR main'e merge edildikten sonra** (GitHub `on:`'ı default branch'ten okur) |
+| Gate A **yeşil koşu kaydı** | ❌ | 🔴 **hâlâ açık** — `OPENROUTER_API_KEY` secret'ı + manuel dispatch gerekli |
+| Gate B **yeşil koşu kaydı** | ❌ | 🔴 **hâlâ açık** — runner'da docker gerekir; IG bacağı operatörde |
 
 > Dürüstlük kaydı: bu satırlar bir gate'in **kapandığını** değil, gate'in **koşulabilir hale geldiğini** belgeler.
 > Dispatch sonrası `Actions → Release Gates` run URL'si buraya işlenmeden `live_llm_openrouter_e2e` ve
