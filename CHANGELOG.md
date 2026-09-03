@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased (post-rc.2) — 2026-09-05
+
+### MP-ROUTING: ajan hattı gerçek çok-sağlayıcılı yürütmeye geçti
+
+- **OpenRouter artık santral değil, havuzun bir üyesi:** `LLMGateway.query()` ve
+  `query_chain`/`query_json_chain` zincirleri, her model için önce o modelin
+  `MODEL@PROVIDER` taşıma merdivenini yürür (Groq/Cerebras/Nous/DeepSeek doğrudan
+  API'leri; kendi base_url, anahtar, fiyat ve kotasıyla). Kaynak:
+  `agent_core/services/llm_gateway.py::agent_route_variants`.
+- **Maliyet merdiveni free → indirimli → OpenRouter:** fiyat sıralaması
+  `final_routing_policy.ROUTES` + provider kataloğundan; fiyatı bilinmeyen rota
+  en sonda teklif edilir, spend-cap aktifse hiç teklif edilmez.
+- **Kapılar aynı, bypass yok:** doğrudan rota ancak (1) credential env tanımlıysa,
+  (2) katalog o modeli gerçekten sunuyorsa, (3) politika `is_paid` fail-closed
+  kontrolünden (ücretli rota yalnız `PINEAL_ALLOW_PAID_ESCALATION=1`) ve kota
+  sayacı EXHAUSTED değilse geçerse merdivene girer. Geçici hatada sıradaki taşıma,
+  o da biterse zincirdeki sıradaki MODEL denenir; SpendCap/paid-escalation/
+  unknown-pricing reddi tüm merdiveni DURDURUR (mevcut `_is_fallback_allowed`
+  doktrini korunur).
+- **Sessiz model ikamesi firewall'u `query()` routed yoluna da bağlandı**
+  (`MODEL_SUBSTITUTION_DENIED`), telemetri `requested_model`/`actual_model`
+  ayrımı sağlayıcı-gerçek kimliğiyle yazılır.
+- **Anahtarsız varsayılan = birebiren eski davranış:** `agent_route_variants()`
+  credential yoksa `[None]` döner; üretim yolunda sıfır değişiklik riski.
+- Yeni env: `DEEPSEEK_API_KEY` (`.env.example`); test:
+  `tests/unit/test_provider_aware_agent_chains.py` (12 test).
+
 ## Unreleased (post-rc.2) — 2026-09-03
 
 ### G7 release gate'leri koşulabilir hale getirildi (mekanizma onarımı)
