@@ -33,6 +33,9 @@ class FailingGateway:
 
 
 class FakeResultGateway:
+    async def query_json_chain(self, *a, **k):  # F-3: ajan artik zincir kullaniyor
+        return await self.query_json(*a, **k)
+
     async def query_json(self, *a, **k):
         return DigitalColdReading(
             observations=["Test gözlemi"],

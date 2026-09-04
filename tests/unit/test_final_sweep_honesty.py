@@ -93,6 +93,10 @@ class _PromptCapturingGateway:
     def __init__(self):
         self.prompt = None
 
+    # F-3 seam: PatternInterrupt artik query_json_chain kullaniyor.
+    async def query_json_chain(self, prompt, schema, **kwargs):
+        return await self.query_json(prompt, schema, **kwargs)
+
     async def query_json(self, prompt, schema, **kwargs):
         self.prompt = prompt
         from agent_core.agents.pattern_interrupt import GeneratedMessage

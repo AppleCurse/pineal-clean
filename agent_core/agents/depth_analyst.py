@@ -60,7 +60,11 @@ class DepthAnalyst:
         )
 
         try:
-            report: DepthReport = await self.llm_gateway.query_json_chain(prompt, DepthReport, task="depth")
+            # F-2: derin analist artık KENDİ agent kimliğiyle matrise bağlı
+            # (AGENT_CHAINS["depth_analyst"]); task fallback'ine düşmüyor.
+            report: DepthReport = await self.llm_gateway.query_json_chain(
+                prompt, DepthReport, task="depth", agent_name="depth_analyst"
+            )
             # QuoteGuard ile alıntı kontrolü ve sahte tespit temizliği
             from agent_core.services.quote_guard import guard_report
             rep_dict = report.model_dump()

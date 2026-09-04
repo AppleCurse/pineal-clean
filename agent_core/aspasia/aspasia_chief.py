@@ -23,6 +23,11 @@ KANIT SÖZLEŞMESİ:
 KARAR: Teknik seçimi kendin yapar, tek yol önerirsin; seçenek menüsü sunmazsın. Kullanıcının planına itirazın varsa gerekçeni bir-iki cümleyle söylersin, kararı ona bırakırsın. Kendinle çelişmezsin; yanıldıysan savunmaz, düzeltir ve devam edersin.
 
 SINIR: Sisteme doğrudan müdahale yetkin yok; gereken işlem kullanıcıya gerekçesiyle iletilir. Kusursuz Türkçe konuşursun.
+
+ROL GENİŞLETMESİ — MERKEZİ ARAYÜZ VE DENETİM:
+- Sen Pineal'in merkezi doğal-dil arayüzüsün: sistem, ajan, routing, kota ve maliyet durumunu elindeki DENETİM KATMANI özetinden kullanıcıya şeffafça açıklarsın (rota neden seçildi, kota ne durumda, indirimli fiyat listeye göre ne, fallback neden işledi, ikame neden reddedildi).
+- Kullanıcı isteğini yapılandırılmış komuta çevirebilirsin; komut yalnız CommandGateway üzerinden geçer: doğrulama, rate limit, yaşam döngüsü ve gerçek planlayıcı (CognitiveRouter) katmanlarından geçtikten sonra yürür. Bu, "doğrudan müdahale" değil, yetkili kanaldan iletilen taleptir.
+- Politika atlatma öneremezsin; model/provider/ajan adı uyduramazsın; ajan listesi senin işin değil planlayıcının işidir. Özetlerde kanıt yoksa "veri yok" dersin — ham log dökmezsin.
 """
 
 class AspasiaResponse(BaseModel):
@@ -31,11 +36,47 @@ class AspasiaResponse(BaseModel):
     signature_quote: Optional[str] = None
 
 class AspasiaChief:
-    def __init__(self, llm_gateway: Optional[LLMGateway] = None):
+    def __init__(
+        self,
+        llm_gateway: Optional[LLMGateway] = None,
+        command_gateway: Optional[Any] = None,
+        executor: Optional[Any] = None,
+    ):
         self.llm = llm_gateway or LLMGateway()
         # None → gateway tier-1 default. (Legacy hard-coded non-existent
         # "muse-spark-1.2-xhigh" slug removed; chat() now reads this field.)
         self.preferred_model: Optional[str] = None
+        # ASPASIA PROMOTION: tek yazma kanalı CommandGateway'dir (api.py
+        # örner). None = bu chief yalnız okuma/diyalog yetkili (geriye dönük
+        # uyum: eski kurucular aynen calisir).
+        self.commands = command_gateway
+        self._executor = executor
+
+    def _oversight_digest(self, room_state: Any) -> str:
+        """Source-backed state block; any read failure degrades to silent empty.
+
+        Denetim verisi uydurulmaz: okuma hatasinda diyest bosalir ve chat()
+        bloğu hic eklemez — Yanit kotulugunun (fallback mesajinin) onune gecer.
+        """
+        try:
+            from agent_core.aspasia.interface import build_oversight_digest
+
+            last_agent = None
+            if isinstance(room_state, dict):
+                active = room_state.get("active_tasks") or {}
+                if active:
+                    snap = list(active.values())[-1]
+                    last_agent = (snap.get("current_agent") if isinstance(snap, dict)
+                                  else getattr(snap, "current_agent", None)) or None
+            digest = build_oversight_digest(
+                self.llm, room_state, self._executor, self.commands, last_agent=last_agent
+            )
+            if digest:
+                return digest
+        except Exception:
+            pass
+        return ""
+
 
     def set_preferred_model(self, model_name: Optional[str]) -> None:
         self.preferred_model = model_name
@@ -145,10 +186,18 @@ class AspasiaChief:
         from agent_core.domain.memory_models import AspasiaSession
         
         telemetry_summary = self.build_telemetry_summary(room_state)
-        
+        oversight = self._oversight_digest(room_state)
+        oversight_block = (
+            "\nDENETİM KATMANI (routing/kota/maliyet/komut — kaynaklı özet):\n"
+            f"{oversight}\n"
+            "Bu özet tek doğruluk kaynağındaki gerçek kararlardır: kullanıcı routing, "
+            "kota, masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
+        ) if oversight else ""
+
         context_prompt = f"""
 SİSTEM CANLI TELEMETRİ ÖZETİ (Event Bus):
 {telemetry_summary}
+{oversight_block}
 
 KULLANICI MESAJI VEYA SORUSU: "{user_message}"
 {"(Not: Kullanıcı bir görsel yükledi; görsel de isteğe eklenmiştir — varsa içeriğini yorumla.)" if image_data else ""}
@@ -168,14 +217,29 @@ Cevabın kısa ve net olsun: sonuç, sonra gerekiyorsa neden ve tek bir sonraki 
         assessment = "high"
 
         try:
-            raw_response = await self.llm.query(
-                prompt=context_prompt,
-                system_prompt=ASPASIA_SYSTEM_PROMPT,
-                temperature=0.4,
-                tier=1,
-                model=selected_model,
-                images=[image_data] if image_data else None,
-            )
+            if selected_model:
+                # Kullanıcının/operatörün AÇIK model tercihi: pin bilinçlidir,
+                # chain devreye girmez (local veya explicit model override).
+                raw_response = await self.llm.query(
+                    prompt=context_prompt,
+                    system_prompt=ASPASIA_SYSTEM_PROMPT,
+                    temperature=0.4,
+                    tier=1,
+                    model=selected_model,
+                    images=[image_data] if image_data else None,
+                )
+            else:
+                # F-1: agent kimliği merkezi routing'e bağlandı —
+                # AGENT_CHAINS["aspasia"] + provider maliyet merdiveni +
+                # fallback/spend-cap/substitution gate'lerinin tamamı geçerli.
+                raw_response = await self.llm.query_chain(
+                    prompt=context_prompt,
+                    task="dialogue",
+                    temperature=0.4,
+                    system_prompt=ASPASIA_SYSTEM_PROMPT,
+                    agent_name="aspasia",
+                    images=[image_data] if image_data else None,
+                )
             final_msg = raw_response.strip()
             assessment = "high"
         except Exception as e:

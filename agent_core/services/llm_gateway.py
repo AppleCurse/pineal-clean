@@ -75,6 +75,10 @@ class GatewayRoute:
     host_header: Optional[str] = None
     input_per_million_usd: Optional[float] = None
     output_per_million_usd: Optional[float] = None
+    # FINAL-SPEC: liste fiyatı ayrı taşınır (ör. Nous indirimi listeden farklı);
+    # spend accounting daima effective (input/output_per_million) kullanır.
+    list_input_per_million_usd: Optional[float] = None
+    list_output_per_million_usd: Optional[float] = None
 
     @property
     def pricing(self) -> Optional[dict[str, float]]:
@@ -117,6 +121,12 @@ _active_call_scope: contextvars.ContextVar[Optional[LLMCallScope]] = contextvars
     "llm_call_scope", default=None
 )
 
+# FINAL-SPEC F-4: zincirin KAYNAĞI telemetriye yazılır — matrix mi, task
+# fallback mi, yoksa sessiz ENV emergency override'u mu. Default: matrix.
+_active_chain_source: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "llm_chain_source", default=None
+)
+
 class SpendCapExceeded(RuntimeError):
     """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
 
@@ -135,7 +145,34 @@ _FALLBACK_GUARD_MARKERS = (
     "real_llm_call_not_executed",
     "llm_key_missing",
     "llm api key rejected",
+    # FINAL-SPEC #27: provider'in sessiz model ikamesi reddi bir TRANSPORT
+    # hatası değil politika kararıdır — zincir/merdiven devam ettirilmez.
+    "model_substitution_denied",
 )
+
+# MP-ROUTING: Gerçek çok sağlayıcılı yürütme. Ajan zincirlerindeki çıplak
+# slug'lar artık salt "OpenRouter'a gitsin" varsayımıyla çevrilmez; aynı
+# model doğrudan sağlayıcı API'sinde (kendi base_url/anahtar/kota/fiyat)
+# mevcut ve politika kapılarından geçiyorsa maliyet merdiveni önce onu
+# önerir. OpenRouter havuzun SANTRALİ değil, bir üyesidir.
+_AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
+    ("groq", "GROQ_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+    ("cerebras", "CEREBRAS_API_KEY"),
+    ("nous-research", "NOUS_API_KEY"),
+)
+
+
+class ModelSubstitutionDeniedError(RuntimeError):
+    """ROUTING-HARDENING: reddin结构化 kimligi (requested/actual) exception ile
+    tasinir; boylece call_log kaydi provider'in dondurdugu modeli FIELD olarak
+    tutar (eskiden sadece error-string'deydi). RuntimeError subclass'idir —
+    mevcut `pytest.raises(RuntimeError, match=...)` sozlesmeleri bozulmaz."""
+
+    def __init__(self, message: str, *, requested: str, actual: str):
+        super().__init__(message)
+        self.requested = requested
+        self.actual = actual
 
 
 def _failure_reason(exc: BaseException) -> str:
@@ -240,6 +277,23 @@ class LLMGateway:
         # OSINT koleksiyon LLM'siz kalır; bu zincir yalnız sentez katmanı için.
         "osint_investigator": [MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "aspasia": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        # FINAL-SPEC F-2/F-3: kimliği olmayan çağrılar matrise bağlandı.
+        # authenticity_auditor + depth_analyst depth-task zincirini BİLİNÇLİ
+        # paylaşır (ayrı zincir tanımlamak matrix değişiminde otomatik yansır);
+        # mirror_truth/pattern_interrupt diyalog, human_behavior derin zincir.
+        "authenticity_auditor": [
+            MODEL_REGISTRY["claude_sonnet_5"],
+            MODEL_REGISTRY["deepseek_v4_pro"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
+        ],
+        "depth_analyst": [
+            MODEL_REGISTRY["claude_sonnet_5"],
+            MODEL_REGISTRY["deepseek_v4_pro"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
+        ],
+        "human_behavior": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "mirror_truth": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "pattern_interrupt": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
     }
     TASK_CAPABILITIES = {
         "vision": frozenset({"chat", "vision"}),
@@ -276,9 +330,14 @@ class LLMGateway:
         if agent_name:
             env_var = f"OPENROUTER_AGENT_CHAIN_{agent_name.upper()}"
             if os.getenv(env_var):
+                # FINAL-SPEC F-4: matrix DEFAULT SoT'tur; ENV yalnızca açık
+                # operasyon/acil override'ıdır ve telemetride işaretlenir.
+                _active_chain_source.set("env_override")
                 return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
             if agent_name in self.AGENT_CHAINS:
+                _active_chain_source.set("agent_matrix")
                 return self.AGENT_CHAINS[agent_name]
+        _active_chain_source.set("task_chain")
         return self.get_chain(task)
 
     def required_capabilities(
@@ -351,6 +410,14 @@ class LLMGateway:
         self._budget_lock = threading.Lock()
         self._reserved_spend_usd = 0.0
         self._budget_reservations: dict[str, float] = {}
+        # MP-ROUTING: agent-path provider quota pre-checks (lazy, policy-backed)
+        self._agent_governor = None
+        # ROUTING-HARDENING: kisa omurlu saglayici-saglik devresi. Tek kacak
+        # veri yapi DEGIL: yalniz GEICICI tasima hatalari sayilir (policy
+        # redleri sayilmaz), sure dolunca kendiliginden sifirlanir, cap'li
+        # anahtar sayisi = bilinen provider'lar. Env: PINEAL_PROVIDER_...
+        self._provider_fail_streak: dict[str, int] = {}
+        self._provider_block_until: dict[str, float] = {}
         # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
         self.unpriced_calls = 0
         # Bounded diagnostic history. Agent evidence is populated from a
@@ -391,6 +458,7 @@ class LLMGateway:
         requested_model: Optional[str] = None,
         fallback_reason: Optional[str] = None,
         quota_status: Optional[str] = None,
+        extras: Optional[Mapping[str, Any]] = None,
         captured_scope: Optional[LLMCallScope] = None,
     ) -> dict[str, Any]:
         """Append one JSON-serializable record for a logical gateway call.
@@ -428,6 +496,11 @@ class LLMGateway:
             # Compatibility alias retained while API/UI consumers migrate.
             "at": finished_at,
         }
+        chain_source = _active_chain_source.get()
+        if chain_source:
+            record["chain_source"] = chain_source
+        if extras:
+            record.update({k: v for k, v in extras.items() if v is not None})
         self.call_log.append(record)
         if len(self.call_log) > 500:
             del self.call_log[: len(self.call_log) - 500]
@@ -526,9 +599,10 @@ class LLMGateway:
         prompt: str,
         system_prompt: Optional[str],
         images: Optional[List[str]],
+        pricing: Optional[Mapping[str, float]] = None,
     ) -> float:
         """Conservative reservation based on bounded output and UTF-8 input bytes."""
-        rates = self.MODEL_PRICING[model]
+        rates = pricing or self.MODEL_PRICING[model]
         # A tokenizer cannot consume more tokens than the encoded input bytes;
         # reserve extra message framing and a configurable image allowance.
         prompt_bytes = len(prompt.encode("utf-8")) + len((system_prompt or "").encode("utf-8"))
@@ -762,6 +836,178 @@ class LLMGateway:
         except Exception:
             self.local_client = None
 
+    def _quota_governor(self):
+        if self._agent_governor is None:
+            from agent_core.services.quota_governor import QuotaGovernor
+
+            self._agent_governor = QuotaGovernor.from_policy()
+        return self._agent_governor
+
+    def _record_route_attempt(self, route: GatewayRoute, response: Any = None, *, success: bool) -> None:
+        """Keep the agent-path quota governor aware of routed transports."""
+        try:
+            governor = self._quota_governor()
+            usage = getattr(response, "usage", None) if response is not None else None
+            # Provider-agrega pencere ("*"): status(provider) ayni kabi okur;
+            # per-model pencere provider seviyesindeki merdiven skip'inde gorunmez.
+            if success:
+                governor.record_success(
+                    route.provider_id,
+                    "*",
+                    prompt_tokens=(
+                        int(getattr(usage, "prompt_tokens", 0) or 0) if usage is not None else None
+                    ),
+                    completion_tokens=(
+                        int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else None
+                    ),
+                )
+            else:
+                governor.record_failure(route.provider_id, "*")
+        except Exception:
+            pass
+
+    def _route_cooldown_remaining(self, provider_id: str) -> float:
+        return max(0.0, self._provider_block_until.get(provider_id, 0.0) - time.monotonic())
+
+    def _note_route_health(self, provider_id: str, *, ok: bool) -> None:
+        if ok:
+            self._provider_fail_streak.pop(provider_id, None)
+            self._provider_block_until.pop(provider_id, None)
+            return
+        try:
+            threshold = max(1, int(os.getenv("PINEAL_PROVIDER_FAILURE_THRESHOLD", "3")))
+            cooldown = max(1, int(os.getenv("PINEAL_PROVIDER_COOLDOWN_SECONDS", "60")))
+        except ValueError:
+            threshold, cooldown = 3, 60
+        streak = self._provider_fail_streak.get(provider_id, 0) + 1
+        if streak >= threshold:
+            self._provider_fail_streak[provider_id] = 0
+            self._provider_block_until[provider_id] = time.monotonic() + cooldown
+        else:
+            self._provider_fail_streak[provider_id] = streak
+
+    def provider_health(self) -> dict[str, float]:
+        """Read-only: kalan cooldown saniyeleri (Aspasia denetim satirlari icin)."""
+        return {p: round(r, 1) for p, r in
+                ((p, self._route_cooldown_remaining(p)) for p in list(self._provider_block_until))
+                if r > 0}
+
+    def agent_route_variants(self, model: str,
+                              required: frozenset[str] = frozenset()) -> "list[Optional[GatewayRoute]]":
+        """MP-ROUTING: cost ladder for ONE chain model across providers.
+
+        Returns ordered transports for ``model``: direct-provider routes whose
+        credentials exist, whose model the catalog actually serves, and which
+        pass the FINAL policy gates (MODEL@PROVIDER must not be unknown-paid
+        unless PINEAL_ALLOW_PAID_ESCALATION=1; exhausted quotas are skipped),
+        followed by the legacy OpenRouter transport (``None``). Sorted by
+        effective cost: free → cheap → priced → (OpenRouter at its own price).
+        With no direct credentials configured this returns ``[None]``, so the
+        default production behavior is byte-for-byte the legacy path.
+        """
+        import os
+
+        def _price_sum(pricing: "Optional[dict[str, float]]") -> float:
+            if not pricing:
+                return float("inf")
+            return float(pricing.get("in") or 0.0) + float(pricing.get("out") or 0.0)
+
+        variants: list = []
+        has_or_transport = self.client is not None or self.use_local
+        if has_or_transport:
+            variants.append((_price_sum(self.MODEL_PRICING.get(model)), 1, None))
+        try:
+            from agent_core.services import final_routing_policy as pol
+            from agent_core.services.provider_manager import (
+                ProviderProtocol,
+                QuotaStatus,
+                load_builtin_catalog,
+            )
+
+            catalog = load_builtin_catalog()
+        except Exception:
+            return [item[2] for item in variants] or [None]
+
+        for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
+            api_key = os.getenv(key_env, "").strip()
+            if not api_key:
+                continue
+            # ROUTING-HARDENING: gecici-tasima-hatasi devresi — ardisik transient
+            # hatali provider kisa sureligine merdivenden duser; sure kendiligin-
+            # den dolar. POLICY REDETLERI SAYILMAZ (yalniz transport hatasi).
+            if self._route_cooldown_remaining(provider_id) > 0:
+                continue
+            try:
+                provider = catalog.get_provider(provider_id)
+            except Exception:
+                continue
+            if provider.protocol is not ProviderProtocol.OPENAI_CHAT or not provider.base_url:
+                continue
+            matched = None
+            for candidate in provider.models:
+                if not getattr(candidate, "enabled", True):
+                    continue
+                if candidate.id == model or model.endswith(f"/{candidate.id}"):
+                    matched = candidate
+                    break
+            if matched is None:
+                continue
+            # MODEL@PROVIDER kimliği: policy kataloğu fiyatın gerçek kaynağı;
+            # katalogda listelenmemiş/ücretli rota fail-closed escalation ister.
+            if pol.is_paid(matched.id, provider_id) and not pol.paid_escalation_enabled():
+                continue
+            pricing: "Optional[dict[str, float]]" = None
+            list_pricing: "Optional[dict[str, float]]" = None
+            spec = pol.ROUTES.get(f"{matched.id}@{provider_id}")
+            if (spec is not None and required
+                    and not required.issubset(spec.capabilities)):
+                # ROUTING-HARDENING: gorev/ajan kapasite gereksinimi (orn. tools,
+                # vision) route'un ROUTES.capabilities beyaniyla DOGRULANIR;
+                # beyan yetersizse rota teklif edilmez (gorev sonradan kirilmasin).
+                continue
+            if spec is not None:
+                pricing = {
+                    "in": spec.input_per_million_usd,
+                    "out": spec.output_per_million_usd,
+                }
+                if spec.list_input_per_million_usd is not None:
+                    list_pricing = {
+                        "in": spec.list_input_per_million_usd,
+                        "out": spec.list_output_per_million_usd,
+                    }
+            elif getattr(matched, "pricing", None) is not None and matched.pricing.known:
+                pricing = {
+                    "in": matched.pricing.input_per_million_usd,
+                    "out": matched.pricing.output_per_million_usd,
+                }
+            if pricing is None and self.spend_cap_usd > 0:
+                continue  # capsiz cüzdan: fiyatı izlenemeyen rota teklif edilmez
+            try:
+                st = self._quota_governor().status(provider_id)
+                # governor.status() dogrudan enum donerir; .status attribute
+                # tasiyen snapshot turleriyle de uyumlu kalir.
+                if getattr(st, "status", st) is QuotaStatus.EXHAUSTED:
+                    continue
+            except Exception:
+                pass
+            variants.append((
+                _price_sum(pricing),
+                0,
+                GatewayRoute(
+                    connection_id=f"agent-{provider_id}",
+                    provider_id=provider_id,
+                    model=matched.id,
+                    base_url=str(provider.base_url).rstrip("/"),
+                    api_key=api_key,
+                    input_per_million_usd=None if pricing is None else pricing["in"],
+                    output_per_million_usd=None if pricing is None else pricing["out"],
+                    list_input_per_million_usd=None if list_pricing is None else list_pricing["in"],
+                    list_output_per_million_usd=None if list_pricing is None else list_pricing["out"],
+                ),
+            ))
+        variants.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in variants] or [None]
+
     def _client_for_route(self, route: GatewayRoute):
         """Build/cache transport clients without moving network I/O out of the gateway."""
         credential_fingerprint = hashlib.sha256(
@@ -810,6 +1056,7 @@ class LLMGateway:
         model: str = None,
         system_prompt: str = None,
         images: Optional[List[str]] = None,
+        route: Optional[GatewayRoute] = None,
     ) -> str:
         """Execute one logical LLM call and emit exactly one call-id record.
 
@@ -828,9 +1075,14 @@ class LLMGateway:
             (model and any(marker in model.lower() for marker in ("local", "ollama", "127.0.0.1")))
             or self.use_local
         )
+        pricing: Optional[dict[str, float]] = None
         if is_local_request:
             selected_model = self.local_model if (not model or model == "local") else model
             provider = "local"
+        elif route is not None:
+            selected_model = route.model
+            provider = route.provider_id
+            pricing = route.pricing
         else:
             selected_model = (
                 os.getenv("OPENROUTER_VISION_MODEL", self.DEFAULT_VISION_MODEL)
@@ -840,7 +1092,24 @@ class LLMGateway:
             provider = "openrouter"
         # Capture the model the caller actually asked for before any fallback
         # reassignment, so telemetry can always explain requested != actual.
-        requested_model = selected_model
+        requested_model = selected_model if route is None else (model or route.model)
+        # FINAL-SPEC: provider rotasının kimliği + effective/list fiyat ayrımı
+        # telemetriye backward-compatible ek alan olarak yazılır.
+        route_extras: Optional[dict[str, Any]] = None
+        if route is not None:
+            route_extras = {
+                "route_key": f"{route.model}@{route.provider_id}",
+                "pricing_in_per_million_usd": route.input_per_million_usd,
+                "pricing_out_per_million_usd": route.output_per_million_usd,
+            }
+            if route.list_input_per_million_usd:
+                route_extras["list_pricing_in_per_million_usd"] = route.list_input_per_million_usd
+                route_extras["list_pricing_out_per_million_usd"] = route.list_output_per_million_usd
+                if route.input_per_million_usd is not None:
+                    route_extras["discount_pct"] = round(
+                        (1.0 - route.input_per_million_usd / route.list_input_per_million_usd) * 100.0,
+                        1,
+                    )
         logical_cost_usd = 0.0
 
         def log_call(
@@ -852,6 +1121,7 @@ class LLMGateway:
             completion_tokens: Optional[int] = None,
             cost_usd: Optional[float] = None,
             record_provider: Optional[str] = None,
+            extras: Optional[dict[str, Any]] = None,
         ) -> dict[str, Any]:
             return self._log_call(
                 "query",
@@ -867,9 +1137,14 @@ class LLMGateway:
                 cost_usd=logical_cost_usd if cost_usd is None else cost_usd,
                 error=error,
                 requested_model=requested_model,
+                # merge: cagrinin ekledigi structured alanlar route_extras'i EZMEZ
+                extras=({**(route_extras or {}), **extras}
+                        if extras is not None else route_extras),
             )
 
-        if self.circuit_open:
+        # Routed attempts use provider-scoped state; the legacy circuit guards
+        # only the single-transport compatibility path (mirrors chat_completion).
+        if route is None and self.circuit_open:
             if time.time() - getattr(self, "circuit_opened_at", 0.0) > 60.0:
                 self.circuit_open = False
                 self.failure_count = 0
@@ -879,6 +1154,18 @@ class LLMGateway:
 
         if is_local_request:
             target_client = self.local_client or AsyncOpenAI(base_url=self.local_base_url, api_key="ollama")
+        elif route is not None:
+            if (
+                os.getenv("LIVE_LLM_E2E") != "1"
+                and os.getenv("PINEAL_ROUTER_LIVE") != "1"
+                and not getattr(self, "live_unlocked", False)
+            ):
+                log_call(error="REAL_LLM_CALL_NOT_EXECUTED")
+                raise RuntimeError(
+                    "REAL_LLM_CALL_NOT_EXECUTED: routed transport canlı kapalı "
+                    "(LIVE_LLM_E2E=1 veya PINEAL_ROUTER_LIVE=1 gerekir)."
+                )
+            target_client = self._client_for_route(route)
         else:
             if os.getenv("LIVE_LLM_E2E") != "1" and not getattr(self, "live_unlocked", False):
                 log_call(error="REAL_LLM_CALL_NOT_EXECUTED")
@@ -908,6 +1195,7 @@ class LLMGateway:
         if (
             not images
             and not is_local_request
+            and route is None
             and self.cache
             and self.cache.is_cachable(prompt, images)
         ):
@@ -925,16 +1213,17 @@ class LLMGateway:
         budget_reserved = False
         if not is_local_request:
             try:
-                self._pricing_guard(selected_model, kind="query")
+                self._pricing_guard(selected_model, kind="query", pricing=pricing)
             except RuntimeError:
                 log_call(error="UNKNOWN_PRICING")
                 raise
-            if selected_model in self.MODEL_PRICING:
+            if pricing is not None or selected_model in self.MODEL_PRICING:
                 reservation = self._maximum_call_cost(
                     selected_model,
                     prompt,
                     system_prompt,
                     images,
+                    pricing,
                 )
                 try:
                     self._reserve_budget(call_id, reservation)
@@ -948,7 +1237,10 @@ class LLMGateway:
                     "UNKNOWN_PRICING_FOR_SPEND_CAP: unpriced models cannot run while a spend cap is active"
                 )
 
-        max_retries = 3
+        # Routed transport: one HTTP attempt per route; the provider cost
+        # ladder / chain itself is the fallback mechanism (mirrors UnifiedRouter
+        # lease semantics). Legacy OpenRouter keeps its bounded same-provider retry.
+        max_retries = 1 if route is not None else 3
         for attempt_index in range(max_retries):
             attempt = attempt_index + 1
             try:
@@ -957,11 +1249,11 @@ class LLMGateway:
                 # reserve again before another request can leave the process.
                 if (
                     not is_local_request
-                    and selected_model in self.MODEL_PRICING
+                    and (pricing is not None or selected_model in self.MODEL_PRICING)
                     and not budget_reserved
                 ):
                     reservation = self._maximum_call_cost(
-                        selected_model, prompt, system_prompt, images
+                        selected_model, prompt, system_prompt, images, pricing
                     )
                     self._reserve_budget(call_id, reservation)
                     budget_reserved = True
@@ -972,14 +1264,32 @@ class LLMGateway:
                     timeout=self.request_timeout_seconds,
                     max_tokens=self.max_output_tokens,
                 )
-                self.failure_count = 0
+                # FINAL-SPEC #27: sessiz ikame firewall'u TUM tasmalarda
+                # gecerli — provider (OpenRouter dahil) istenen model yerine
+                # baska bir model dondurduyse bu asla kabul edilmez.
+                actual_model = getattr(response, "model", None)
+                if actual_model and not self._model_substitution_allowed(
+                    selected_model, str(actual_model)
+                ):
+                    # Tek log: except blogindeki non-retryable dal yazacak;
+                    # buradan sadece marka'lı hata yukseltilir.
+                    raise ModelSubstitutionDeniedError(
+                        f"MODEL_SUBSTITUTION_DENIED: requested '{selected_model}' "
+                        f"but provider returned '{actual_model}'",
+                        requested=selected_model,
+                        actual=str(actual_model),
+                    )
+                if route is not None:
+                    self._record_route_attempt(route, response, success=True)
+                else:
+                    self.failure_count = 0
                 usage = getattr(response, "usage", None)
                 cost_usd = 0.0
                 if not is_local_request:
                     # Settle observed provider usage before parsing the body.
                     # Otherwise a malformed paid response could be retried as
                     # though no billable request had occurred.
-                    cost_usd = self._settle_budget(call_id, selected_model, usage)
+                    cost_usd = self._settle_budget(call_id, selected_model, usage, pricing)
                     logical_cost_usd += cost_usd
                     budget_reserved = False
                 content = response.choices[0].message.content
@@ -1015,6 +1325,8 @@ class LLMGateway:
                 raise
             except Exception as exc:
                 error_text = str(exc).lower()
+                if route is not None:
+                    self._record_route_attempt(route, success=False)
                 is_connection_error = any(
                     marker in error_text for marker in ("connection", "connect", "refused", "10061")
                 )
@@ -1062,6 +1374,26 @@ class LLMGateway:
                     logging.error("LLM Gateway authentication error: %s", exc)
                     log_call(error="AUTH_FAILED", attempt=attempt)
                     raise RuntimeError(f"LLM API Key rejected: {exc}") from exc
+
+                if "model_substitution_denied" in error_text:
+                    # FINAL-SPEC #27: ikame reddi ic retry de zincir fallback'i
+                    # de tetiklemez; rezervasyon iade, kayit tek, hata yukselir.
+                    if budget_reserved:
+                        self._release_budget(call_id)
+                        budget_reserved = False
+                    # #34: kayit, hangi modelin hangisiyle ikame edilmek
+                    # istendigini tek basina aciklayabilmeli (detay kaybolmasin).
+                    # ROUTING-HARDENING: provider'in dondurdugu model ayrica
+                    # STRUCTURED actual_model alani olarak yazilir (spec #10).
+                    log_call(
+                        error=f"MODEL_SUBSTITUTION_DENIED::{str(exc)[:200]}",
+                        attempt=attempt,
+                        extras={
+                            "actual_model": getattr(exc, "actual", None),
+                            "requested_model": getattr(exc, "requested", None),
+                        },
+                    )
+                    raise
 
                 if not self._is_retryable_error(exc):
                     if budget_reserved:
@@ -1173,6 +1505,7 @@ class LLMGateway:
             cost_usd: Optional[float] = None,
             fallback_reason: Optional[str] = None,
             quota_status: Optional[str] = None,
+            extras: Optional[dict[str, Any]] = None,
         ) -> dict[str, Any]:
             return self._log_call(
                 "chat.completions",
@@ -1189,6 +1522,7 @@ class LLMGateway:
                 requested_model=requested_model,
                 fallback_reason=fallback_reason,
                 quota_status=quota_status,
+                extras=extras,
             )
 
         # Routed calls use provider-scoped circuits in UnifiedRouter. The legacy
@@ -1278,8 +1612,11 @@ class LLMGateway:
                             f"'{selected_model}' but provider returned "
                             f"'{actual_model}'"
                         )
-                        log_call(error=error, attempt=attempt)
-                        raise RuntimeError(error)
+                        # ROUTING-HARDENING: tek log — yapılandırılmış
+                        # requested/actual kaydı dış except yazar (spec #10)
+                        raise ModelSubstitutionDeniedError(
+                            error, requested=selected_model, actual=str(actual_model)
+                        )
                 if route is None:
                     self.failure_count = 0
                 usage = getattr(response, "usage", None)
@@ -1330,6 +1667,18 @@ class LLMGateway:
                     if self.failure_count > 5:
                         self.circuit_open = True
                         self.circuit_opened_at = time.time()
+                if isinstance(exc, ModelSubstitutionDeniedError):
+                    # ROUTING-HARDENING: tek, yapılandırılmış red kaydı —
+                    # interface/telemetry regex'e hiç düşmeden okusun (spec #10)
+                    log_call(
+                        error=f"MODEL_SUBSTITUTION_DENIED::{str(exc)[:200]}",
+                        attempt=attempt,
+                        extras={
+                            "actual_model": getattr(exc, "actual", None),
+                            "requested_model": getattr(exc, "requested", selected_model),
+                        },
+                    )
+                    raise
                 logging.error(
                     "OpenAI-compatible gateway request failed (%s)",
                     type(exc).__name__,
@@ -1601,7 +1950,7 @@ class LLMGateway:
 
         return schema.model_validate(parsed_data)
 
-    async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None, images: Optional[List[str]] = None) -> T:
+    async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None, images: Optional[List[str]] = None, route: Optional[GatewayRoute] = None) -> T:
         """LLM'den sorgu atar, beklenen JSON formatını (Pydantic schema) tamir mekanizmasıyla garanti eder.
 
         Repair is scoped to parse/schema failures only. Transport, auth, spend-cap,
@@ -1617,7 +1966,7 @@ class LLMGateway:
         selected_model = model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
         response_text = ""
         try:
-            response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model, images=images)
+            response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model, images=images, route=route)
             parsed_data = self.extract_json(response_text)
             return self._coerce_to_schema(parsed_data, schema)
         except (ValueError, ValidationError, TypeError, KeyError, json.JSONDecodeError) as err:
@@ -1628,7 +1977,7 @@ class LLMGateway:
                 f"DİKKAT: Eksik veri varsa uydurma kelimeler veya sahte skorlar YAZMA. Sadece var olanları yerleştir.\n"
                 f"Eklediğin bozuk çıktı şuydu:\n{response_text[:200]}"
             )
-            repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model, images=images)
+            repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model, images=images, route=route)
             parsed_data = self.extract_json(repair_text)
             return self._coerce_to_schema(parsed_data, schema)
 
@@ -1638,38 +1987,58 @@ class LLMGateway:
         task: str = "depth",
         temperature: float = 0.7,
         system_prompt: str = None,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        agent_name: Optional[str] = None,
     ) -> str:
         """Görev bazlı model zincirini çalıştırır.
 
         Yalnızca GEÇİCİ hatalarda (timeout/connection/408/429/5xx) zincirdeki
         sıradaki modele düşer. AUTH, spend cap, unknown pricing, paid
         escalation, model unavailable ve policy-deny hataları düşmez.
+
+        FINAL-SPEC F-1: ``agent_name`` verilirse zincir AGENT_CHAINS'ten çözülür
+        (matrix = default SoT) ve her model provider merdiveniyle yürür.
         """
         import logging
-        chain = self.capable_chain(task=task, images=images)
+        chain = self.capable_chain(task=task, agent_name=agent_name, images=images)
+        required_caps = self.required_capabilities(
+            task=task, agent_name=agent_name, images=images
+        )
         last_exception = None
 
         for model in chain:
-            try:
-                return await self.query(
-                    prompt=prompt,
-                    temperature=temperature,
-                    model=model,
-                    system_prompt=system_prompt,
-                    images=images
-                )
-            except Exception as e:
-                if not _is_fallback_allowed(e, json_mode=False):
-                    self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
-                    raise
-                last_exception = e
-                self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
-                logging.warning(
-                    f"Model zincirinde geçici hata [{task} -> {model}]: {e}. "
-                    f"Sıradaki modele geçiliyor..."
-                )
-                continue
+            # MP-ROUTING: sağlayıcı merdiveni (free → indirimli → OpenRouter),
+            # sonra zincirdeki sıradaki model.
+            for route in self.agent_route_variants(model, required=required_caps):
+                tried = route.model if route is not None else model
+                try:
+                    result = await self.query(
+                        prompt=prompt,
+                        temperature=temperature,
+                        model=model,
+                        system_prompt=system_prompt,
+                        images=images,
+                        route=route,
+                    )
+                    if route is not None:
+                        # ROUTING-HARDENING: basarili tasima devreyi sifirlar.
+                        self._note_route_health(route.provider_id, ok=True)
+                    return result
+                except Exception as e:
+                    if not _is_fallback_allowed(e, json_mode=False):
+                        self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
+                        raise
+                    if route is not None:
+                        # yalniz GECICI transport hatasi streak'e sayilir
+                        self._note_route_health(route.provider_id, ok=False)
+                    last_exception = e
+                    self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
+                    logging.warning(
+                        f"Model zincirinde geçici hata [{task} -> {model}"
+                        f"@{route.provider_id if route is not None else 'openrouter'}]: {e}. "
+                        f"Sıradaki rota/model deneniyor..."
+                    )
+                    continue
 
         if last_exception:
             raise last_exception
@@ -1693,28 +2062,44 @@ class LLMGateway:
         """
         import logging
         chain = self.capable_chain(task=task, agent_name=agent_name, images=images)
+        required_caps = self.required_capabilities(
+            task=task, agent_name=agent_name, images=images
+        )
         last_exception = None
 
         for model in chain:
-            try:
-                return await self.query_json(
-                    prompt=prompt,
-                    schema=schema,
-                    temperature=temperature,
-                    model=model,
-                    images=images
-                )
-            except Exception as e:
-                if not _is_fallback_allowed(e, json_mode=True):
-                    self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
-                    raise
-                last_exception = e
-                self._annotate_most_recent(model, fallback_reason=_failure_reason(e))
-                logging.warning(
-                    f"JSON Model zincirinde hata [{task} -> {model}]: {e}. "
-                    f"Sıradaki modele geçiliyor..."
-                )
-                continue
+            # MP-ROUTING: önce bu MODELİN sağlayıcı merdiveni denenir
+            # (free → indirimli → OpenRouter); geçici hata sonraki taşımayı
+            # dener, taşımalar bitince zincirdeki sonraki MODELE düşülür.
+            for route in self.agent_route_variants(model, required=required_caps):
+                tried = route.model if route is not None else model
+                try:
+                    result = await self.query_json(
+                        prompt=prompt,
+                        schema=schema,
+                        temperature=temperature,
+                        model=model,
+                        images=images,
+                        route=route,
+                    )
+                    if route is not None:
+                        self._note_route_health(route.provider_id, ok=True)
+                    return result
+                except Exception as e:
+                    if not _is_fallback_allowed(e, json_mode=True):
+                        self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
+                        raise
+                    if route is not None:
+                        # ROUTING-HARDENING: yalniz GECICI transport hatasi sayilir
+                        self._note_route_health(route.provider_id, ok=False)
+                    last_exception = e
+                    self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
+                    logging.warning(
+                        f"JSON zincirinde hata [{task} -> {model}"
+                        f"@{route.provider_id if route is not None else 'openrouter'}]: {e}. "
+                        f"Sıradaki rota/model deneniyor..."
+                    )
+                    continue
 
         if last_exception:
             raise last_exception

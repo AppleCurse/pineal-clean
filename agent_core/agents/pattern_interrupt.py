@@ -80,7 +80,11 @@ class PatternInterrupt:
             f"oranında uyduğunu değerlendir."
         )
         
-        result = await llm_gateway.query_json(prompt, GeneratedMessage)
+        result = await llm_gateway.query_json_chain(
+            prompt, GeneratedMessage, task="dialogue", agent_name="pattern_interrupt"
+        )
+        # F-3: artık tier-1 tek model değil; AGENT_CHAINS["pattern_interrupt"]
+        # zinciri + provider merdiveni + fallback gate'leri üzerinden yürür.
         # [022] fix: gerçek LLM yanıtı ayrıştırıldı -> doğrulandı olarak işaretle.
         # Model default'u fail-closed; burası üretim yolunun TE doğrulama noktası.
         result.data_confidence = True

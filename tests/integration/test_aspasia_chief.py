@@ -8,6 +8,8 @@ from agent_core.domain.memory_models import TaskSnapshot
 def mock_llm_gateway():
     gateway = MagicMock(spec=LLMGateway)
     gateway.query = AsyncMock(return_value="Mocked Socratic response")
+    # F-1: varsayilan akis agent-aware zincir (query_chain); pin yolu query.
+    gateway.query_chain = AsyncMock(return_value="Mocked Socratic response")
     return gateway
 
 @pytest.fixture
