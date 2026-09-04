@@ -22,3 +22,26 @@ def _isolate_response_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("PINEAL_REQUIRE_AUTH", "false")
     monkeypatch.delenv("PINEAL_TOKEN", raising=False)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_rate_limit_state():
+    """[AUDIT P1-18a] `backend.api._rate_buckets` süreç genelinde paylaşılan
+    mutable durumdur.
+
+    Hız sınırı anahtarı artık SUNUCU kimliğine bağlı (eskiden istemcinin
+    gönderdiği `client_id` idi). Eski davranış testler arasında kazara
+    izolasyon sağlıyordu: her test benzersiz bir client_id kullandığı için
+    kovalar çakışmıyordu. Anahtar sunucu kimliğine geçince tüm TestClient
+    istekleri aynı kovayı paylaşmaya başladı ve bir testin tükettiği bütçe
+    sonraki testte erken 429'a yol açtı (ölçülen: test_initiate_rate_limit_429
+    ve test_ws_ordering tam pakette kırmızı, tek başına yeşil).
+    """
+    try:
+        from backend import api
+    except Exception:  # api yüklenemiyorsa test zaten kendi hatasını verir
+        yield
+        return
+    api._rate_buckets.clear()
+    yield
+    api._rate_buckets.clear()

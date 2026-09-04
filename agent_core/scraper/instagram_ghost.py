@@ -11,10 +11,11 @@ Pydantic V2 ile doğrular, güven düşükse InsufficientEvidenceError fırlatı
 """
 
 from __future__ import annotations
+import asyncio
 import json
+import logging
 import random
 import re
-import time
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
@@ -81,9 +82,16 @@ class InstagramGhostScraper:
         self.vault_cookies = vault_cookies or {}
         self.base_url = "https://www.instagram.com"
 
-    def _random_delay(self):
-        """İnsan gibi bekle, bot gibi değil."""
-        time.sleep(random.uniform(2.0, 5.0))
+    async def _random_delay(self):
+        """İnsan gibi bekle, bot gibi değil — ama event loop'u kilitlemeden.
+
+        [AUDIT P1-8] Bu metot eskiden senkron ``time.sleep`` kullanıyordu ve
+        async ``scrape_async`` içinden çağrılıyordu. Sonuç: tek bir kazıma
+        boyunca TÜM süreç (FastAPI event loop'u, /health, WebSocket telemetrisi,
+        diğer kullanıcıların LLM istekleri) 2-5 saniye donuyordu; 3 denemeli
+        retry döngüsünde bu 15 saniyeye kadar çıkabiliyordu.
+        """
+        await asyncio.sleep(random.uniform(2.0, 5.0))
 
     def _extract_from_html(self, html: str, username: str) -> Dict[str, Any]:
         """
@@ -362,17 +370,14 @@ class InstagramGhostScraper:
             raise InsufficientEvidenceError("Playwright page verilmedi - hayalet tarayıcı vault'tan gelmeli, kendi kendine açmam")
 
         target_url = f"{self.base_url}/{username}/"
-        
-        import asyncio
-        import logging
-        
+
         html = ""
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 # Stealth navigation
                 await playwright_page.goto(target_url, wait_until="domcontentloaded", timeout=15000)
-                self._random_delay()
+                await self._random_delay()
                 html = await playwright_page.content()
                 break
             except Exception as e:

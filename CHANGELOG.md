@@ -1,5 +1,170 @@
 # Changelog
 
+## Unreleased (post-rc.2) — 2026-09-04
+
+### ÜRETİM DENETİMİ ONARIM TURU (PRODUCTION_AUDIT_2026-09-04.md) — 7 bulgu kapatıldı
+Denetim 10 kusur buldu; bu tur ilk 6 önceliği + bir ek boşluğu kapattı.
+Her onarım `tests/audit/test_production_audit_findings.py` içinde **mutasyon
+testiyle doğrulanmış** bir regresyon testiyle korunuyor (bkz. aşağıda).
+
+- **[P2-10] Kimlik doğrulama artık FAIL-CLOSED.** `_is_production()` eskiden
+  yalnızca `{"production","prod"}` değerlerini üretim sayıyordu; `PINEAL_ENV`
+  unutulduğunda (en olası dağıtım hatası) tüm `/api/*`, `/v1/*` ve `/ws/*`
+  kimlik doğrulamasız açılıyordu. Artık yalnızca açık bir geliştirme adı
+  (`development|dev|local|localhost|test|testing|ci`) geliştirme sayılır;
+  boş/yazım-hatalı/tanınmayan her değer üretim kabul edilir ve `PINEAL_TOKEN`
+  zorunlu olur. `.env.example` ve `baslat.bat` güncellendi; Railway/Vercel
+  etkilenmiyor (ikisi de `Dockerfile` üzerinden `PINEAL_ENV=production` devralıyor,
+  `tests/unit/test_dockerfile_contract.py` bunu sözleşmeye bağlıyor).
+- **[P0-1] Redaksiyon 31× hızlandı** (67.8 ms → 2.20 ms / 900 string; 200 telemetri
+  mesajı 13.60 s → 0.43 s). İki neden vardı: `_environment_secret_values()` her
+  metin alanı için yeniden çalışıyordu (900 env taraması) ve her sır için ayrı
+  `str.replace` geçişi yapılıyordu. Çözüm: sır listesi `redact_structure` başına
+  BİR kez toplanıp özyinelemeye taşınıyor; tüm sırlar + genel kalıplar tek
+  derlenmiş alternation regex'inde birleşiyor (sır kümesiyle önbellekli).
+  Genel `(?i)` bayrakları kapsamlı `(?i:...)` grubuna taşındı — aksi halde
+  alternation ortasında `re.error` üretiyordu. **11/11 girdide çıktı birebir aynı.**
+- **[P0-2] `ResponseCache` disk sızıntısı kapatıldı.** Süresi dolan satırlar
+  yalnızca yok sayılıyor, hiç silinmiyordu. Artık: `get()` rastladığı süresi
+  dolmuş satırı anında siler; periyodik `prune()` TTL + satır tavanı
+  (`PINEAL_CACHE_MAX_ROWS`, varsayılan 50.000) uygular; açılışta bir kez buda
+  çalışır. **İlk onarımın boşluğu çapraz denetimde yakalandı:** budama yalnızca
+  yazım SAYISINA bağlıydı (her 256), düşük trafikte eşik hiç aşılmıyordu →
+  10 satır süresiz diskte kalıyordu. Tetikleyici ZAMAN temelli yapıldı
+  (`PINEAL_CACHE_PRUNE_INTERVAL_SECONDS`, varsayılan 900 s) ve her `get`/`put`
+  tek float karşılaştırmasıyla kontrol ediyor.
+- **[P0-6] `ResponseCache` artık event loop'u bloke etmiyor.** Her `get`/`put`
+  yeni bir `sqlite3.connect()` açıyordu (ölçülen: 300 okuma = 28.6 ms kesintisiz
+  loop blokesi). Çözüm: tek paylaşılan bağlantı (`check_same_thread=False` +
+  `threading.Lock`), `PRAGMA journal_mode=WAL` + `synchronous=NORMAL` +
+  `auto_vacuum=INCREMENTAL`, ve gateway tarafında `asyncio.to_thread`.
+  Ölçüm: loop blokesi **28.59 ms → 2.08 ms** (bağlantı yeniden kullanımı),
+  `to_thread` ile medyan gecikme **0.59 ms**. PRAGMA sırası sözleşmeye bağlandı:
+  `journal_mode=WAL` önce çalışırsa `auto_vacuum` sessizce 0 kalıyor.
+- **[P0-4] `app.state.rooms` için TTL eviction + tavan + kimlik doğrulama.**
+  Her farklı `client_id` kalıcı bir oda yaratıyordu (ölçülen: 300 farklı
+  `client_id` → 300 tam executor + sender task; eviction yok). Artık:
+  `PINEAL_ROOM_TTL_SECONDS` (1800 s) boşta kalan odaları geri kazanır — aktif
+  görevi veya WebSocket'i olan oda ASLA dokunulmaz; `PINEAL_MAX_ROOMS` (512)
+  tavanı aşılınca `RoomCapacityExceeded` → **503** (500 değil, geçici hata);
+  `client_id` biçim VE uzunluk doğrulanır (`PINEAL_MAX_CLIENT_ID_LENGTH`, 64 —
+  `validate_identifier` regex'i uzunluk sınırlamadığı için 5 KB'lık anahtar
+  kabul ediliyordu). Kapanış yolu da aynı `_close_room` sözleşmesini kullanıyor.
+- **[P0-5] `_rate_buckets` bellek sızıntısı kapatıldı** (ölçülen: 5000 farklı
+  kimlik → 5000 kalıcı deque). `_sweep_rate_buckets` önce kesinlikle süresi
+  dolmuş/boş kovaları siler, tavan hâlâ aşıldıysa EN ESKİ (LRU) kovaları düşürür;
+  tavan `PINEAL_MAX_RATE_BUCKETS` (100.000). **Ölü kod silindi:** boşalan kovayı
+  `rate_limit` içinde silmek hiçbir işe yaramıyordu — izin verilen her çağrı
+  hemen `append` ile anahtarı geri koyuyordu (mutasyon testi bunu kanıtladı:
+  satırı kaldırmak hiçbir testi kızartmadı).
+- **[P1-18a] Hız sınırı kimliği istemci kontrollüydü — KRİTİK.** Middleware
+  hız sınırını sunucudan türetilen `identity_hash` ile kurarken üç handler
+  (`/api/initiate`, `/api/aspasia/command`, `/api/aspasia/chat`) istemcinin
+  gövdede gönderdiği `client_id`'yi anahtar olarak kullanıyordu. Ölçülen:
+  aynı `client_id` ile 8 istek → 3/8 429 (sınır çalışıyor); **her istekte
+  farklı `client_id` → 200 istek, 0/200 429** — sınır hiç devreye girmiyordu.
+  → middleware `request.state.rate_identity` yazar, handler'lar
+  `_rate_identity(request)` okur. Kimlik yoksa fail-safe: tüm kimliksiz
+  çağıranlar **tek ortak kovayı** paylaşır (sınırsız değil).
+  **Davranış değişikliği:** bu üç uçta limit artık *token/IP başına*,
+  `client_id` başına değil. Aynı token arkasındaki tüm istemciler 5 görev/60sn
+  bütçesini paylaşır; çok istemcili kurulumda `RATE_LIMITS` değerleri
+  gözden geçirilmelidir.
+- **[P1-18b] 7 `/api/` ucu tamamen hız sınırsızdı** (`/api/vault`,
+  `/api/override`, `/api/executor/intervene`, `/api/scraper/authorize-alternative`,
+  `/api/tasks*`, `/api/telemetry`, `/api/aspasia/state`). → middleware'e genel
+  `api` kovası (300/60sn), **yalnızca mutasyon yöntemleri** için. GET'lerin
+  dahil edilmemesi ölçümle karar verildi: tek paylaşımlı kova tüm yöntemleri
+  kapsayınca 305 GET aynı kimliğin sonraki POST'larında erken 429 üretti.
+- **[P1-18c] `api.py:1229` bare `except:` `CancelledError`'ı yutuyordu.**
+  Ölçülen: gerçek `websocket_endpoint` park halindeyken iptal edilince
+  `task.cancelled() == False`, görev normal dönüyordu. Kontrol ölçümü
+  `except Exception:`'ın **tek başına yetmediğini** gösterdi: iptal durumunda
+  websocket odadan düşmüyordu. → `except Exception:` + temizlik `finally:`.
+  Onarım sonrası: `CancelledError` yayılıyor **ve** temizlik korunuyor.
+- **[test altyapısı] `tests/conftest.py`'ye `_isolate_rate_limit_state` eklendi.**
+  `_rate_buckets` süreç genelinde paylaşılan mutable durumdur; anahtar sunucu
+  kimliğine geçince testler arası izolasyon kayboldu ve 2 test tam pakette
+  kırmızı, tek başına yeşil oluyordu. Her testten önce/sonra temizlenir.
+- **[P0-2 v3] Cache süresi artık satırda saklanıyor** (`widest_window` ikizi
+  burada da vardı). Satır `created_at` tutuyor ama kendi TTL'ini tutmuyordu;
+  süre her okumada güncel `PINEAL_CACHE_TTL`'den yeniden hesaplanıyordu.
+  Ölçülen: TTL 7 gün → 1 sn yapınca **7 günlük kayıt 1.2 sn'de yok oluyordu**;
+  TTL 1 sn → süresiz yapınca **süresi dolmuş kayıt sonsuza dek yaşıyordu**
+  (`prune()` 0 satır). → `expires_at` kolonu + eski db'ler için tek seferlik
+  `ALTER TABLE` + doldurma + `idx_rc_expires`.
+  **Dikkat (davranış değişikliği):** `PINEAL_CACHE_TTL=0` artık mevcut
+  satırları silmez, yalnızca yeni yazılanları anında süresi dolmuş yapar.
+- **[P2-13] Sınırsız büyüyen iki sözlük kapatıldı** (desen üçüncü kez çıktı:
+  P0-2 `prune`, P0-5 `_sweep_rate_buckets`, şimdi bu ikisi).
+  - `canonical_memory._locks` (`defaultdict(asyncio.Lock)`) — ölçülen: 5.000
+    sıralı `merge_evidence` → **5.000 kalıcı kilit** (izole 0.80 MB, 167 B/girdi),
+    asla silinmiyordu. → `_LockEntry` + bekleyen sayaçlı `_task_lock()`:
+    sözlük artık yalnızca AKTİF bekleyeni olan kilitleri tutuyor.
+    **Kapanış: 5.000 merge → 0 girdi.** Doğruluk kanıtı: 8 eşzamanlı merge,
+    aynı `task_id` → aynı anda en fazla 1 içerde, 0/8 hata; kilit no-op
+    yapılırsa **6/8 `FileNotFoundError`** (aynı `.tmp` yolu çakışıyor) —
+    kilit gerçekten yük taşıyor.
+  - `dialogue_manager.sessions` — ölçülen: 50.000 `start_session` →
+    **50.000 kalıcı `DialogueContext` / 58.0 MB** (1.217 B/girdi), asla
+    silinmiyordu; üstelik `"Oturum bulunamadı veya süresi doldu"` hatası bir
+    süre ima ediyordu ama süreyi uygulayan tek satır kod yoktu.
+    → `PINEAL_DIALOGUE_SESSION_TTL_SECONDS` (1800) +
+    `PINEAL_MAX_DIALOGUE_SESSIONS` (512), her işlemde kontrol edilen eviction.
+    **Kapanış: tavan 100 iken 5.000 → 100; TTL 1 sn iken 200 → 1.**
+    Maruziyet `api.py:210` auth middleware + `experimental` hız limiti
+    (10/60 sn; ölçülen 10×200 + 5×429) ile sınırlı, ama sızıntı monotondu.
+- **[P0-5 v3] `_rate_buckets` — ikiz kusur kapatıldı (çapraz denetim bulgusu).**
+  P0-2'deki "eşiğe hiç ulaşılmama" hatasının aynısı buradaydı; üç ayrı kusur:
+  - **(a) Zaman temelli tetikleyici yoktu** — süpürme yalnızca tavan
+    (100.000) aşıldığında çalışıyordu. Ölçülen: 30.000 tekil anahtar,
+    pencereleri dolmuş, **30.000 kova / 26.4 MB süresiz bellekte**.
+    → `PINEAL_RATE_SWEEP_INTERVAL_SECONDS` (60 sn) + her çağrıda kontrol
+    edilen `_rate_sweep_deadline` (P0-2 ile aynı desen).
+  - **(b) Histerezis yoktu → kendi kendine DoS** — tavan-1'e kırpma, her yeni
+    isteğin tüm sözlüğü yeniden süpürmesi demekti. Ölçülen: üretim tavanında
+    **48-57 ms/istek** → hedef tavanın ~%80'i, **en yavaş istek 0.53 ms**.
+  - **(c) Süpürme kovanın kendi penceresini bilmiyordu** — kova adı
+    saklanmadığı için "en geniş pencere" (60 sn) kullanılıyordu; (a)+(b)
+    onarıldıktan sonra bile 1 sn'lik kova 60 sn bekliyordu. → `_RateBucket`
+    (`__slots__ = ("events", "window")`), ayıklama `b.window` ile.
+    Sonuç: **30.000 kova / 26.4 MB → 1 kova / 0.9 MB**.
+- **[P1-8] Scraper artık event loop'u dondurmuyor.** `_random_delay` senkron
+  `time.sleep(2-5 s)` kullanıyordu ve async `scrape_async` içinden çağrılıyordu
+  → tek kazıma boyunca tüm süreç (health check, WebSocket, diğer kullanıcıların
+  LLM istekleri) donuyordu; 3 denemeli retry'da 15 saniyeye kadar. `async def` +
+  `await asyncio.sleep` yapıldı; 5 mevcut testin senkron mock'u `AsyncMock`'a taşındı.
+- **Küçük:** `backend/api.py` içindeki fonksiyon-seviyesi `import os` /
+  `from fastapi import HTTPException` modül seviyesine alındı; `security.py`'ye
+  yapılandırılmış logger eklendi.
+
+#### Onarım doğrulaması: mutasyon testi (14 mutasyon, 0 sahte test)
+Her onarım geçici olarak geri alınıp ilgili testin KIZARDIĞI doğrulandı.
+Bu tur **iki sahte testi ortaya çıkardı ve düzeltti**:
+- `P0-5/test_rate_bucket_count_is_bounded` — `window=0` ile tüm kovalar aşama 1'de
+  siliniyor, **LRU tavan kırpma hiç çalışmıyordu**; `overflow = 0` mutasyonu testi
+  yeşil bıraktı → pencere uzun tutularak yalnızca LRU yolu zorlanacak şekilde düzeltildi.
+- `P0-5/bos-kova` — silinen ölü kodu test ediyordu (yeşil kaldı) → ölü kod silindi,
+  gerçek geri kazanım yolu (`_sweep_rate_buckets`) ayrıca mutasyonla doğrulandı.
+- `P0-2/acilista-buda` — açılış budaması hiç test edilmiyordu (yeşil kaldı) →
+  `test_startup_prune_clears_rows_left_by_previous_process` eklendi.
+Ayrıca `P1-8` testinin ilk hâli kaynak metninde `"time.sleep"` arıyordu ve
+docstring eşleştiği için kendi kendini kandırıyordu → `inspect.iscoroutinefunction`
++ çağrı noktasında `await` kontrolüne çevrildi.
+
+#### Hâlâ AÇIK (sonraki tur)
+- **P1-6** `extract_username` profil olmayan URL'yi hedef kullanıcı adı sanıyor
+  (`/p/…`, `/reel/…`, `/explore/tags/kedi/` → `kedi`).
+- **P1-7** `InstagramGhostScraper.evaluate_confidence` üretimde HİÇ çağrılmıyor
+  (anti-halüsinasyon kapısı ölü kod; testler yeşil olduğu için görünmüyor).
+- **P2-9** Bozuk `learnings.json` → `/api/override` kalıcı 500 (atomik yazma yok).
+
+#### Doğrulama
+`ruff check .` → temiz · `pytest -q` → **832 passed, 2 skipped, 9 xfailed**
+(9 xfail = yukarıdaki 3 açık bulgu) · CI kapsam kapısı → **%84.66 ≥ %80**.
+Tek başarısız test (`test_open_interpreter_imports_with_installed_psutil`)
+denetim sandbox'ında `open-interpreter` kurulu olmadığı için; kod kusuru değil.
+
 ## Unreleased (post-rc.2) — 2026-09-05
 
 ### ASPASIA TRUE CHIEF LAYER: amaç taşımı + kanonik sonuç döngüsü + UI köprüsü

@@ -76,6 +76,16 @@ jobs:
       - name: Build frontend (so smoke tests the real dist)
         run: cd frontend && npm ci && npm run build
       - name: uvicorn smoke
+        # [AUDIT P2-10 sonrası] Ortam açıkça geliştirme ilan edilmelidir.
+        # Auth artık fail-closed: PINEAL_ENV boş bırakılırsa ortam ÜRETİM
+        # sayılır ve PINEAL_TOKEN zorunlu olur -> lifespan
+        # SecurityConfigurationError(PRODUCTION_AUTH_REQUIRED) ile yeniden
+        # raise eder, uvicorn hiç dinlemeye geçmez ve aşağıdaki dört curl de
+        # başarısız olur. Ölçülen: PR #61 smoke PASS, bu değişiklikten sonra
+        # PR #64 smoke FAIL. Güvenlik düzeltmesi doğru; eksik olan smoke'un
+        # kendi bağlamını beyan etmesiydi.
+        env:
+          PINEAL_ENV: development
         run: |
           uvicorn backend.api:app --port 8000 &
           for i in $(seq 1 30); do curl -sf "http://127.0.0.1:8000/api/telemetry?client_id=ci" && break || sleep 1; done

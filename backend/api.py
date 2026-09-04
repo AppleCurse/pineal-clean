@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
-from collections import defaultdict, deque
+from collections import deque
 import asyncio
 import json
 import logging
@@ -123,15 +123,15 @@ async def lifespan(application: FastAPI):
         raise
 
     yield
-    # Kapanista oda gonderici task'lerini iptal et (temiz kapanis)
-    for room in application.state.rooms.values():
-        task = room.get("sender_task")
-        if task and not task.done():
-            task.cancel()
-        for mission in room.get("mission_tasks", {}).values():
-            if not mission.done():
-                mission.cancel()
+    # Kapanista odalari TEK bir yoldan kapat (temiz kapanis). [AUDIT P0-4]
+    # _close_room hem sender hem gorev task'lerini iptal eder; boylece
+    # calisma zamanindaki eviction ile kapanis ayni sozlesmeyi paylasir.
+    for client_id in list(application.state.rooms):
+        room = application.state.rooms.get(client_id)
+        if room is not None:
+            _close_room(client_id, room)
     application.state.rooms.clear()
+    _rooms_last_seen.clear()
 
 app = FastAPI(title="PINEAL-HERETIC v3.0.0-rc.1 API", lifespan=lifespan)
 app.state.llm_backend_mode = "legacy"
@@ -246,6 +246,11 @@ async def auth_middleware(request: Request, call_next):
 
         identity = presented_token or (request.client.host if request.client else "unknown")
         identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        # [AUDIT P1-18a] Hız sınırı kimliği SUNUCUDAN türetilir ve handler'lara
+        # buradan aktarılır. Eskiden handler'lar istemcinin gönderdiği
+        # client_id'yi anahtar olarak kullanıyordu; client_id her istekte
+        # değiştirilince sınır hiç devreye girmiyordu (ölçülen: 200/200 geçti).
+        request.state.rate_identity = identity_hash
         if request.url.path.startswith("/api/experimental/"):
             if not rate_limit(f"experimental:{identity_hash}", "experimental"):
                 return JSONResponse(
@@ -259,6 +264,19 @@ async def auth_middleware(request: Request, call_next):
                     "rate_limit_error",
                     "rate_limit_exceeded",
                 ),
+                status_code=429,
+            )
+        # [AUDIT P1-18b] Genel kova yalnızca MUTASYON yöntemlerine uygulanır.
+        # Tek kova tüm yöntemleri paylaşsaydı ucuz GET'ler (telemetri, görev
+        # listesi) mutasyonlar için gereken bütçeyi tüketiyordu — ölçülen:
+        # 305 GET sonrası aynı kimlik POST'larında erken 429.
+        if (
+            is_api
+            and request.method not in ("GET", "HEAD", "OPTIONS")
+            and not rate_limit(f"api:{identity_hash}", "api")
+        ):
+            return JSONResponse(
+                {"error": {"code": "RATE_LIMITED", "message": "API rate limit exceeded"}},
                 status_code=429,
             )
     return await call_next(request)
@@ -307,12 +325,35 @@ async def unhandled_error_handler(request: Request, exc: Exception):
 
 # --- Basit kayan-pencere rate limit (FAZ 3; ek bagimlilik yok) ---
 RATE_LIMITS = {
+    # [AUDIT P1-18b] Genel /api/ arka plan kovası. Eskiden /api/vault,
+    # /api/override, /api/executor/intervene, /api/tasks*, /api/telemetry,
+    # /api/aspasia/state ve /api/scraper/authorize-alternative uçlarında HİÇ
+    # hız sınırı yoktu. 300/60sn ölçülerek seçildi: frontend'de polling yok
+    # (setInterval sıfır), CI smoke en kötü 30 telemetri isteği atıyor.
+    "api": (300, 60),
     "initiate": (5, 60),
     "aspasia": (20, 60),
     "experimental": (10, 60),
     "openai": (60, 60),
 }  # (request count, window seconds)
-_rate_buckets: Dict[str, deque] = defaultdict(deque)
+class _RateBucket:
+    """Kayan pencere olayları + BU kovaya ait pencere süresi.
+
+    [AUDIT P0-5 v3] Pencere kovayla birlikte saklanmak zorunda. Eskiden
+    yalnızca deque tutuluyordu ve süpürme "en geniş pencere"yi (tüm
+    kovaların maksimumu, 60 sn) kullanmak zorunda kalıyordu: 1 sn'lik bir
+    kovadaki anahtar 60 sn boyunca bellekte kalıyordu. Ölçülen: 30.000 tekil
+    anahtar, pencere dolmuş, süpürme çalışıyor -> 30.000 kova hâlâ yerinde.
+    """
+
+    __slots__ = ("events", "window")
+
+    def __init__(self, window: float):
+        self.events: deque = deque()
+        self.window = window
+
+
+_rate_buckets: Dict[str, _RateBucket] = {}
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -323,16 +364,102 @@ def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int
     return max(minimum, min(value, maximum))
 
 
+# [AUDIT P0-5] defaultdict her erişimde kalıcı bir anahtar yaratıyordu ve hiçbir
+# zaman silinmiyordu (ölçülen: 5000 farklı kimlik -> 5000 kalıcı deque).
+# identity ya token ya da istemci IP'si olduğundan bu, internete açık bir uçta
+# durdurulamaz bir bellek sızıntısıdır. İki savunma eklendi: boşalan kova anında
+# geri verilir ve anahtar sayısı sert bir tavanla sınırlanır.
+_MAX_RATE_BUCKETS = _bounded_env_int("PINEAL_MAX_RATE_BUCKETS", 100_000, 1_000, 10_000_000)
+# [AUDIT P0-5 v2] Süpürme artık ZAMANA da bağlı. Eskiden yalnızca tavan
+# aşıldığında çalışıyordu; ölçülen iki kusur:
+#   (a) 60.000 tekil anahtar -> 60.000 kalıcı kova / 50.3 MB, hepsinin penceresi
+#       dolmuş ama tavana kadar HİÇBİRİ geri kazanılmıyor (P0-2'nin ikizi).
+#   (b) tavan aşıldığında süpürme HER yeni istekte çalışıyor ve tüm sözlüğü
+#       sorted() ile sıralıyordu -> üretim tavanında ölçülen ~48-57 ms/istek
+#       (kendi kendine DoS).
+_RATE_SWEEP_INTERVAL_SECONDS = max(1.0, float(
+    os.getenv("PINEAL_RATE_SWEEP_INTERVAL_SECONDS", "60")
+))
+_rate_sweep_deadline = time.monotonic() + _RATE_SWEEP_INTERVAL_SECONDS
+
+
+def _maybe_sweep_rate_buckets(now: float) -> None:
+    """Süresi geldiyse süpür. Her çağrıda tek float karşılaştırması (~50 ns)."""
+    global _rate_sweep_deadline
+    if now >= _rate_sweep_deadline:
+        # Son tarih önce yenilenir: süpürme patlasa bile her istekte yeniden
+        # denenmez, maliyet tek bir isteğe yığılmaz.
+        _rate_sweep_deadline = now + _RATE_SWEEP_INTERVAL_SECONDS
+        _sweep_rate_buckets(now)
+
+
+def _sweep_rate_buckets(now: float) -> None:
+    """Süresi dolmuş kovaları geri kazanır, gerekirse tavanın altına indirir.
+
+    Üç aşama:
+      1. Kendi penceresi dolmuş veya boş kovalar silinir — bunları düşürmek
+         hiçbir limiti gevşetmez. Pencere KOVADA saklandığı için ayıklama
+         kova başına doğrudur (bkz. _RateBucket).
+      2. Hâlâ tavandaysa EN ESKİ (LRU) kovalar düşürülür.
+      3. HİSTEREZİS: tavan-1'e değil tavanın ~%80'ine inilir. Aksi halde
+         süpürme her yeni istekte yeniden tetikleniyordu (ölçülen ~57 ms/istek).
+    """
+    for key in [
+        k for k, b in _rate_buckets.items()
+        if not b.events or now - b.events[-1] > b.window
+    ]:
+        _rate_buckets.pop(key, None)
+    target = max(1, _MAX_RATE_BUCKETS - max(1, _MAX_RATE_BUCKETS // 5))
+    overflow = len(_rate_buckets) - target
+    if overflow > 0:
+        oldest = sorted(
+            _rate_buckets,
+            key=lambda k: _rate_buckets[k].events[-1] if _rate_buckets[k].events else 0.0,
+        )
+        for key in oldest[:overflow]:
+            _rate_buckets.pop(key, None)
+
+
+# [AUDIT P1-18a] Kimlik yoksa TÜM kimliksiz çağıranlar tek ortak kovayı
+# paylaşır. Fail-safe: "kimlik yok -> sınırsız" değil, "kimlik yok -> paylaşımlı
+# ve sınırlı". Doğrudan handler çağrısı (test) da sınırsız yol bulamaz.
+_UNIDENTIFIED_RATE_IDENTITY = "unidentified"
+
+
+def _rate_identity(request: Request) -> str:
+    """Hız sınırı için sunucudan türetilmiş kimliği döndürür.
+
+    Handler'lar eskiden `req.client_id` kullanıyordu — bu, istemcinin gövdede
+    gönderdiği bir alan. Ölçülen: aynı client_id ile 8 istek -> 3/8 429
+    (sınır çalışıyor); her istekte farklı client_id -> 200 istek, 0/200 429.
+    """
+    identity = getattr(getattr(request, "state", None), "rate_identity", None)
+    return identity or _UNIDENTIFIED_RATE_IDENTITY
+
+
 def rate_limit(key: str, bucket: str) -> bool:
     """True = izin ver; False = limit asildi (429)."""
     limit, window = RATE_LIMITS.get(bucket, (999, 1))
     now = time.monotonic()
-    q = _rate_buckets[key]
-    while q and now - q[0] > window:
-        q.popleft()
-    if len(q) >= limit:
+    _maybe_sweep_rate_buckets(now)
+    bucket = _rate_buckets.get(key)
+    if bucket is None:
+        if len(_rate_buckets) >= _MAX_RATE_BUCKETS:
+            _sweep_rate_buckets(now)
+        bucket = _rate_buckets[key] = _RateBucket(window)
+    elif bucket.window != window:
+        bucket.window = window          # RATE_LIMITS çalışma zamanında değişti
+    events = bucket.events
+    while events and now - events[0] > window:
+        events.popleft()
+    if len(events) >= limit:
         return False
-    q.append(now)
+    # [AUDIT P0-5] Boşalan kova burada silinMEZ: izin verilen her çağrı hemen
+    # aşağıdaki append ile anahtarı geri koyardı, yani silme ölü koddu
+    # (mutasyon testiyle doğrulandı: satırı kaldırmak hiçbir testi kızartmadı).
+    # Geri kazanımın gerçek yolları zaman temelli _maybe_sweep_rate_buckets ve
+    # tavan acil-durum süpürmesidir.
+    events.append(now)
     return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
@@ -365,23 +492,130 @@ async def _scraper_capability() -> dict:
         _telemetry_capability["value"] = result
         return result
 
+VAULT_FILE = ".pineal_vault.json"
+
+
+def _load_vault(vault_file: str = VAULT_FILE) -> dict:
+    """[AUDIT P0-3] Kasayı HER ZAMAN bir dict olarak döndürür.
+
+    Eskiden ``json.load`` bir try/except içindeydi ama sonrasındaki
+    ``vault.pop(...)`` / ``vault.get(...)`` çağrıları korumasızdı. Dosya bir
+    JSON dizisi/null/metin/sayı içerdiğinde (elle düzenleme, yarım kalan yazma)
+    ``get_room`` TypeError/AttributeError atıyordu ve get_room HER endpoint'in
+    giriş kapısı olduğu için tüm API 500 dönüyordu — üstelik sessizce, log yok.
+    """
+    if not os.path.exists(vault_file):
+        return {}
+    try:
+        with open(vault_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.warning(
+            "VAULT_CORRUPT: %s okunamadı (%s: %s); boş kasa ile devam ediliyor",
+            vault_file, type(exc).__name__, exc,
+        )
+        return {}
+    if not isinstance(data, dict):
+        logger.error(
+            "VAULT_SCHEMA_INVALID: %s bir JSON nesnesi değil (%s); yok sayıldı",
+            vault_file, type(data).__name__,
+        )
+        return {}
+    return data
+
+
+# [AUDIT P0-4] Oda kayıt defteri sınırları. client_id istemcinin seçtiği,
+# doğrulanmayan bir string olduğu için sınırsız oda = sınırsız PinealExecutor +
+# sender task + kuyruk = OOM (ölçülen: 300 farklı client_id -> 300 kalıcı oda).
+_MAX_ROOMS = _bounded_env_int("PINEAL_MAX_ROOMS", 512, 1, 1_000_000)
+# Üretecin biçimi "client_<7 karakter>"; 64 geniş bir pay bırakır.
+_MAX_CLIENT_ID_LENGTH = _bounded_env_int("PINEAL_MAX_CLIENT_ID_LENGTH", 64, 8, 4_096)
+_ROOM_TTL_SECONDS = float(os.getenv("PINEAL_ROOM_TTL_SECONDS", "1800"))
+_rooms_last_seen: Dict[str, float] = {}
+
+
+class RoomCapacityExceeded(RuntimeError):
+    """Eşzamanlı oda tavanı aşıldı; istemciye 503 olarak yansıtılır."""
+
+
+@app.exception_handler(RoomCapacityExceeded)
+async def room_capacity_handler(request: Request, exc: RoomCapacityExceeded):
+    """[AUDIT P0-4] Oda tavanı bir hata değil, kasıtlı bir korumadır.
+
+    500 değil 503 döner: istemci (ve yük dengeleyici) bunu "geçici, tekrar
+    denenebilir" olarak yorumlar; 500 ile karıştırılıp alarm üretilmez.
+    """
+    logger.warning("ROOM_CAPACITY_EXCEEDED path=%s", request.url.path)
+    body = (
+        _openai_error("Server room capacity exceeded", "server_error", "room_capacity_exceeded")
+        if request.url.path.startswith("/v1/")
+        else {"error": {"code": "ROOM_CAPACITY_EXCEEDED", "message": str(exc)}}
+    )
+    return JSONResponse(body, status_code=503)
+
+
+def _close_room(client_id: str, room: dict) -> None:
+    """Bir odayı kapatır: sender task ve görev task'leri iptal edilir."""
+    sender = room.get("sender_task")
+    if sender is not None and not sender.done():
+        sender.cancel()
+    for mission in (room.get("mission_tasks") or {}).values():
+        if not mission.done():
+            mission.cancel()
+    # Not: aktif WebSocket'i olan bir oda _evict_rooms tarafından zaten
+    # atlanır; burada soket kapatmaya çalışmak (close() bir coroutine'dir)
+    # await edilemeyeceği için yapılmaz.
+    app.state.rooms.pop(client_id, None)
+    _rooms_last_seen.pop(client_id, None)
+
+
+def _evict_rooms(now: float) -> int:
+    """Boşta kalmış odaları geri kazanır. Aktif görevi/bağlantısı olan dokunulmaz."""
+    if now - getattr(_evict_rooms, "_last_sweep", 0.0) < 5.0:
+        return 0
+    _evict_rooms._last_sweep = now
+    evicted = 0
+    for client_id in list(app.state.rooms):
+        room = app.state.rooms.get(client_id)
+        if room is None:
+            continue
+        if room.get("mission_tasks") or room.get("websockets"):
+            continue
+        if now - _rooms_last_seen.get(client_id, now) < _ROOM_TTL_SECONDS:
+            continue
+        _close_room(client_id, room)
+        evicted += 1
+    if evicted:
+        logger.info("ROOM_EVICTION: %s boşta kalmış oda kapatıldı", evicted)
+    return evicted
+
+
 def get_room(client_id: str) -> dict:
+    # [AUDIT P0-4] client_id bir güvenlik sınırıdır: biçim VE uzunluk
+    # doğrulanır. validate_identifier'ın regex'i uzunluk sınırlamadığı için
+    # (^[A-Za-z0-9_-]+$) 5 KB'lık bir client_id kabul ediliyordu; her biri
+    # kalıcı bir sözlük anahtarı + tam bir oda demek.
+    if not client_id or len(client_id) > _MAX_CLIENT_ID_LENGTH:
+        raise HTTPException(status_code=400, detail="INVALID_CLIENT_ID")
+    try:
+        validate_identifier(client_id, field="client_id")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="INVALID_CLIENT_ID") from None
+    now = time.monotonic()
+    _evict_rooms(now)
+    _rooms_last_seen[client_id] = now
     if client_id not in app.state.rooms:
+        if len(app.state.rooms) >= _MAX_ROOMS:
+            raise RoomCapacityExceeded(
+                f"ROOM_CAPACITY_EXCEEDED: {_MAX_ROOMS} eşzamanlı oda sınırına ulaşıldı"
+            )
         executor = PinealExecutor(
             log_callback=lambda lvl, msg: sync_log(client_id, lvl, msg),
             emit_event_callback=lambda evt: sync_event(client_id, evt),
             snapshot_callback=lambda s: sync_snapshot(client_id, s)
         )
-        vault = {}
-        
         # Otomatik Kasa (.pineal_vault.json / .env) yüklemesi
-        vault_file = ".pineal_vault.json"
-        if os.path.exists(vault_file):
-            try:
-                with open(vault_file, "r", encoding="utf-8") as f:
-                    vault = json.load(f)
-            except Exception:
-                pass
+        vault = _load_vault()
 
         api_key = vault.pop("api_key", None) or os.getenv("OPENROUTER_API_KEY")
         if api_key and not api_key.startswith("sk-or-v1-YOUR"):
@@ -1033,7 +1267,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     try:
         while True:
             await websocket.receive_text()
-    except:
+    except Exception:
+        # [AUDIT P1-18c] Eskiden bare `except:` idi. Ölçülen: bare except
+        # BaseException'ı da yakaladığı için asyncio.CancelledError yutuluyor
+        # ve görev iptal edilmiş sayılmıyordu (task.cancelled() == False).
+        # `except Exception:`'a geçmek tek başına YETMEZ: kontrol ölçümünde
+        # iptal durumunda temizlik kayboldu. Bu yüzden temizlik finally'de.
+        logger.debug("WebSocket bağlantısı koptu: %s", client_id)
+    finally:
         room["websockets"].discard(websocket)
 
 class InitiatePayload(BaseModel):
@@ -1271,8 +1512,8 @@ async def _send_result(room: dict, data: dict):
     await _send_ws(room, json.dumps(data))
 
 @app.post("/api/initiate")
-async def api_initiate(req: InitiatePayload):
-    if not rate_limit(f"initiate:{req.client_id}", "initiate"):
+async def api_initiate(req: InitiatePayload, request: Request):
+    if not rate_limit(f"initiate:{_rate_identity(request)}", "initiate"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
             status_code=429,
@@ -1559,13 +1800,13 @@ class AspasiaCommandPayload(BaseModel):
 
 
 @app.post("/api/aspasia/command")
-async def aspasia_command(payload: AspasiaCommandPayload):
+async def aspasia_command(payload: AspasiaCommandPayload, request: Request):
     """Aspasia: doğal dil niyeti -> yapılandırılmış komut -> gerçek orchestrator.
 
     Kabul edilen tek yazma eylemi run_profile_analysis'tir ve hedef doğrulama
     (gerçek scraper host sözleşmesi) + gateway politika yığınını aynen geçer.
     """
-    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+    if not rate_limit(f"aspasia:{_rate_identity(request)}", "aspasia"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
             status_code=429,
@@ -1612,9 +1853,9 @@ async def aspasia_state(client_id: str = "default"):
 
 
 @app.post("/api/aspasia/chat")
-async def aspasia_chat(payload: AspasiaChatPayload):
+async def aspasia_chat(payload: AspasiaChatPayload, request: Request):
     """Aspasia Kokpit Şefi ile canlı Sokratik diyalog"""
-    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+    if not rate_limit(f"aspasia:{_rate_identity(request)}", "aspasia"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
             status_code=429,
@@ -1836,9 +2077,7 @@ class InterpreterPayload(BaseModel):
 @app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
-    import os
     if os.getenv("ENABLE_INTERPRETER", "false").lower() != "true":
-        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Interpreter endpoint is disabled by default for security.")
         
     room = get_room(req.client_id)

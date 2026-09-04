@@ -56,6 +56,9 @@ if not exist frontend\dist (
 )
 
 REM --- Sunucu: http://localhost:8000 ---
+REM [AUDIT P2-10] PINEAL_ENV artik fail-closed: set edilmemis/bozuk bir deger
+REM URETIM sayilir ve PINEAL_TOKEN ister. Yerel baslatici acikca gelistirme der.
+if not defined PINEAL_ENV set PINEAL_ENV=development
 echo Sunucu baslatiliyor: http://localhost:8000
 echo.
 python -m uvicorn backend.api:app --host 0.0.0.0 --port 8000

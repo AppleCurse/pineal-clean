@@ -45,7 +45,7 @@ async def test_navigation_timeout_raises_after_retries():
     mock_page.goto.side_effect = Exception("net::ERR_CONNECTION_TIMED_OUT timeout")
 
     scraper = InstagramGhostScraper()
-    with patch.object(scraper, "_random_delay", return_value=None):
+    with patch.object(scraper, "_random_delay", new_callable=AsyncMock):
         with patch("asyncio.sleep", new_callable=AsyncMock):  # asyncio modülünden patch
             with pytest.raises(InsufficientEvidenceError) as exc_info:
                 await scraper.scrape_async("hedef", playwright_page=mock_page)
@@ -80,7 +80,7 @@ async def test_permanent_browser_error_raises_immediately():
     mock_page.goto = _tracked_goto
 
     scraper = InstagramGhostScraper()
-    with patch.object(scraper, "_random_delay", return_value=None):
+    with patch.object(scraper, "_random_delay", new_callable=AsyncMock):
         with pytest.raises(InsufficientEvidenceError) as exc_info:
             await scraper.scrape_async("hedef", playwright_page=mock_page)
 
@@ -105,7 +105,7 @@ async def test_login_wall_raises_no_cookie_leak():
     )
 
     scraper = InstagramGhostScraper(vault_cookies={"sessionid": "SECRET_COOKIE_VALUE_12345"})
-    with patch.object(scraper, "_random_delay", return_value=None):
+    with patch.object(scraper, "_random_delay", new_callable=AsyncMock):
         with pytest.raises(InsufficientEvidenceError) as exc_info:
             await scraper.scrape_async("hedef", playwright_page=mock_page)
 
@@ -130,7 +130,7 @@ async def test_rate_limit_raises_insufficient_evidence():
     )
 
     scraper = InstagramGhostScraper()
-    with patch.object(scraper, "_random_delay", return_value=None):
+    with patch.object(scraper, "_random_delay", new_callable=AsyncMock):
         with pytest.raises(InsufficientEvidenceError) as exc_info:
             await scraper.scrape_async("hedef", playwright_page=mock_page)
 
@@ -148,7 +148,7 @@ async def test_empty_html_no_json_raises():
     mock_page.content.return_value = "<html><body>Beklenmedik sayfa</body></html>"
 
     scraper = InstagramGhostScraper()
-    with patch.object(scraper, "_random_delay", return_value=None):
+    with patch.object(scraper, "_random_delay", new_callable=AsyncMock):
         with pytest.raises(InsufficientEvidenceError) as exc_info:
             await scraper.scrape_async("hedef", playwright_page=mock_page)
 
