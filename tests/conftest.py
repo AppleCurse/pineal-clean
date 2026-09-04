@@ -45,3 +45,22 @@ def _isolate_rate_limit_state():
     api._rate_buckets.clear()
     yield
     api._rate_buckets.clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_env_secret_cache():
+    """[AUDIT P0-1 v2] Ortam sırları önbelleği 1 sn ömürlüdür.
+
+    Testler `monkeypatch.setenv` ile secret eklediğinde önbellek eski değeri
+    tutarsa maskeleme sessizce başarısız olur. PR #62'nin `lru_cache` sürümü
+    bunu dosya-yerel bir fixture ile çözüyordu; burada GLOBAL yapılır, böylece
+    hiçbir test dosyası korunmasız kalmaz.
+    """
+    try:
+        from agent_core.utils.security import clear_env_secret_cache
+    except Exception:
+        yield
+        return
+    clear_env_secret_cache()
+    yield
+    clear_env_secret_cache()

@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import socket
+import time
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
@@ -254,7 +255,40 @@ async def safe_get(
     raise UnsafeURLError("TOO_MANY_REDIRECTS")
 
 
+# [AUDIT P0-1 v2] Ortam sırları KISA ömürlü önbellekte tutulur.
+#
+# Neden sınırsız değil: PR #62 `@functools.lru_cache(maxsize=1)` öneriyordu.
+# Ölçülen kusur: süreç başladıktan SONRA ortama eklenen bir secret bir daha
+# hiç maskelenmiyor -> "log satırı: parola mor-salkim-42 burada" olduğu gibi
+# sızıyor. lru_cache'in kendi testi bunu yakalamıyor çünkü cache_clear()
+# fixture'ı yalnızca kendi dosyasında autouse.
+#
+# Neden hiç önbellek yok değil: çağrı başına tam ortam taraması sıcak log
+# yolunda 52.6 µs; önbellekle 2.2 µs (24x). 1 saniyelik pencere hem kazancı
+# korur hem sızıntıyı sınırlar. Testler için tests/conftest.py'deki autouse
+# fixture her testten önce/sonra önbelleği temizler (dosya-yerel değil, global).
+_ENV_SECRET_CACHE_TTL_SECONDS = 1.0
+_env_secret_cache: Optional[tuple] = None
+
+
+def clear_env_secret_cache() -> None:
+    """Ortam sırları önbelleğini düşürür (testler ve çalışma zamanı anahtar enjeksiyonu için)."""
+    global _env_secret_cache
+    _env_secret_cache = None
+
+
 def _environment_secret_values() -> tuple[str, ...]:
+    global _env_secret_cache
+    now = time.monotonic()
+    cached = _env_secret_cache
+    if cached is not None and now - cached[0] < _ENV_SECRET_CACHE_TTL_SECONDS:
+        return cached[1]
+    values = _compute_environment_secret_values()
+    _env_secret_cache = (now, values)
+    return values
+
+
+def _compute_environment_secret_values() -> tuple[str, ...]:
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "COOKIE")
     return tuple(
         value

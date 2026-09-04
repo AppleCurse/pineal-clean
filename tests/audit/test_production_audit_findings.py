@@ -995,3 +995,57 @@ def test_websocket_cancellation_propagates_and_still_cleans_up():
     propagated, cleaned = asyncio.run(scenario())
     assert propagated, "CancelledError yutuldu; görev iptal edilmiş sayılmıyor"
     assert cleaned, "iptal durumunda websocket odadan düşürülmedi (finally eksik)"
+
+
+# --------------------------------------------------------------------------
+# P0-1 v2  Ortam sırları önbelleği: hızlı AMA bayatlaması sınırlı
+# --------------------------------------------------------------------------
+def test_env_secret_cache_is_bounded_not_permanent(monkeypatch):
+    """[AUDIT P0-1 v2] Önbellek hız vermeli ama sırrı sonsuza dek gizlememeli.
+
+    PR #62 `@functools.lru_cache(maxsize=1)` öneriyordu. Ölçülen kusur: süreç
+    başladıktan SONRA ortama eklenen secret bir daha hiç maskelenmiyordu
+    ("parola mor-salkim-42 burada" düz metin sızıyordu). Kendi testi bunu
+    yakalamıyordu çünkü cache_clear() fixture'ı yalnız kendi dosyasındaydı.
+    """
+    from agent_core.utils import security
+
+    secret = "mor-salkim-42"            # hiçbir genel desene uymayan nötr değer
+    monkeypatch.delenv("SONRADAN_SECRET", raising=False)
+    security.clear_env_secret_cache()
+    security.redact_text("ısınma satırı")          # önbellek dolar
+    monkeypatch.setenv("SONRADAN_SECRET", secret)
+
+    # Pencere içinde bilinen, SINIRLI bir gecikme vardır.
+    assert secret in security.redact_text(f"parola {secret} burada")
+
+    # Monotonik saati TTL'in ötesine taşı: pencere kapanmalı ve maskelenmeli.
+    real_time = security.time
+
+    class _IleriSaat:
+        @staticmethod
+        def monotonic():
+            return real_time.monotonic() + 10.0
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+    monkeypatch.setattr(security, "time", _IleriSaat)
+    assert security.redact_text(f"parola {secret} burada") == "parola [REDACTED] burada", (
+        "TTL dolduğu hâlde secret maskelenmedi; önbellek kalıcı (lru_cache kusuru)"
+    )
+
+
+def test_env_secret_cache_can_be_cleared_explicitly(monkeypatch):
+    """Çalışma zamanında anahtar enjekte eden kod önbelleği hemen düşürebilmeli."""
+    from agent_core.utils import security
+
+    secret = "salkim-moru-99"
+    monkeypatch.delenv("ANINDA_SECRET", raising=False)
+    security.clear_env_secret_cache()
+    security.redact_text("ısınma")
+    monkeypatch.setenv("ANINDA_SECRET", secret)
+
+    assert secret in security.redact_text(secret)      # pencere içinde
+    security.clear_env_secret_cache()                  # açık düşürme
+    assert security.redact_text(secret) == "[REDACTED]"
