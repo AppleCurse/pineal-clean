@@ -123,6 +123,9 @@
   Gate A paralı çağrı içerir), Gate A fail-closed secret kontrolü + `LIVE_LLM_E2E=1` +
   `OPENROUTER_MAX_SPEND_USD`, Gate B'nin gerçek imaj/health/production-auth/Chromium/teardown
   adımları ve `concurrency.cancel-in-progress: false`.
+- **Merge kanıtı** — PR #60 squash-merge ile main'de (`68fa552`); ardından `gh workflow list` →
+  `Release Gates active` (id `349137796`). Dispatch'in kendisi agent token'ında Actions-write olmadığı
+  için **403** döndü → Gate A/B'nin yeşil koşu kaydı operatör adımı olarak `NOT_EXECUTED` yazıldı.
 - **Belge hizalama** — `RELEASE_EVIDENCE.md` §12'ye 2026-09-03 güncelleme tablosu (mekanizma
   kapandı ≠ gate kapandı; run URL'si işlenmeden gate'ler açık sayılır),
   `docs/reports/SON_HUKUM_DENETIM.md`'ye eski "kırmızı" hükümlerinin `f1e4602` üzerindeki yeniden
