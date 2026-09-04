@@ -27,6 +27,9 @@ ilk hâlini belgelemeye devam ediyor.
 | P1-8 | `time.sleep` loop'u donduruyor | ✅ KAPATILDI | `iscoroutinefunction` + `await` çağrı noktası |
 | P2-10 | auth fail-open | ✅ KAPATILDI | `PINEAL_ENV` yok + token yok → startup **reddedildi** (`PRODUCTION_AUTH_REQUIRED`) |
 | P2-13 | sınırsız `_locks` + `sessions` | ✅ KAPATILDI | 5.000 merge → **0 kilit girdisi**; tavan 100 iken 5.000 → **100 oturum**; kilit koruması kanıtlandı (kilitsiz **6/8 `FileNotFoundError`**) |
+| P1-18a | hız sınırı kimliği istemci kontrollü | ✅ KAPATILDI | farklı `client_id` ile 200 istek → **0/200 429**; onarım sonrası 12 istek → **7/12 429** |
+| P1-18b | 7 `/api/` ucu sınırsız | ✅ KAPATILDI | genel `api` kovası (300/60sn, yalnız mutasyon) → **5/305 429** |
+| P1-18c | `:1229` bare `except:` | ✅ KAPATILDI | `task.cancelled()` **False → True**, temizlik korunuyor |
 | P1-6 | `extract_username` | ⛔ AÇIK | — |
 | P1-7 | `evaluate_confidence` ölü kod | ⛔ AÇIK | — |
 | P2-9 | bozuk `learnings.json` 500 | ⛔ AÇIK | — |

@@ -846,3 +846,152 @@ def test_cache_schema_migrates_legacy_db_without_expires_at(tmp_path):
         assert filled is not None, "göç mevcut satırların expires_at değerini doldurmadı"
     finally:
         cache.close()
+
+
+# --------------------------------------------------------------------------
+# P1-18a/b/c  Hız sınırı kimliği istemci kontrollüydü + bare except
+# --------------------------------------------------------------------------
+def _dev_client():
+    from fastapi.testclient import TestClient
+
+    from backend import api
+
+    api._rate_buckets.clear()
+    return api, TestClient(api.app)
+
+
+def test_rate_limit_identity_is_server_derived_not_client_supplied(monkeypatch):
+    """[AUDIT P1-18a] Hız sınırı istemcinin gönderdiği client_id'ye bağlanamaz.
+
+    Ölçülen eski davranış: /api/initiate (limit 5/60sn) her istekte farklı
+    client_id ile 200 istek -> 0/200 429. Sınır hiç devreye girmiyordu.
+    Düzeltme sonrası: 12 farklı client_id -> 7/12 429.
+    """
+    import uuid
+
+    api, client = _dev_client()
+
+    # run_mission gerçek kazıma işi yapıyor ve TestClient portal kapanışını
+    # thread.join()'de kilitliyordu (tam pakette ölçülen donma). Hız sınırı
+    # davranışını ölçmek için görev gövdesi etkisizleştirilir; endpoint'in
+    # kendi rate_limit yolu aynen çalışır.
+    async def _no_mission(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(api, "run_mission", _no_mission)
+    codes = [
+        client.post("/api/initiate", json={
+            "client_id": f"cli{uuid.uuid4().hex[:9]}",
+            "url": "https://www.instagram.com/ornek/",
+            "rituals": "x", "playlist": "y", "envies": "z",
+        }).status_code
+        for _ in range(8)
+    ]
+    try:
+        assert codes.count(429) > 0, (
+            f"{codes} — farklı client_id ile hız sınırı atlatılıyor; "
+            "anahtar istemci kontrollü"
+        )
+    finally:
+        api._rate_buckets.clear()
+
+
+def test_rate_identity_falls_back_to_shared_bucket_not_unlimited():
+    """Kimlik yoksa fail-safe: paylaşımlı ve sınırlı kova, sınırsız değil."""
+    from backend import api
+
+    class Bare:
+        pass
+
+    first = api._rate_identity(Bare())
+    second = api._rate_identity(Bare())
+    assert first == second, (
+        "kimliksiz çağıranlar farklı kova alıyor -> her biri sınırsız olur"
+    )
+    assert first == api._UNIDENTIFIED_RATE_IDENTITY
+
+    class WithIdentity:
+        state = type("S", (), {"rate_identity": "sunucu-kimligi"})()
+
+    assert api._rate_identity(WithIdentity()) == "sunucu-kimligi"
+
+
+def test_general_api_bucket_limits_previously_unlimited_endpoints(monkeypatch):
+    """[AUDIT P1-18b] Mutasyon uçları (/api/override, /api/executor/intervene,
+    /api/tasks/*/cancel, DELETE /api/tasks/*) önceden tamamen sınırsızdı.
+
+    Genel kova paylaşımlı süreç-durumudur; bu test onu tüketip bırakırsa
+    sonraki testler erken 429 alır (ölçülen gerçek bir tam-paket arızası).
+    Bu yüzden limit küçültülür ve kova sonda temizlenir.
+    """
+    api, client = _dev_client()
+    monkeypatch.setitem(api.RATE_LIMITS, "api", (3, 60))
+    try:
+        codes = [
+            client.post("/api/tasks/olmayan-gorev/cancel").status_code
+            for _ in range(6)
+        ]
+        assert codes.count(429) > 0, (
+            f"{codes} — mutasyon uçlarında genel /api/ kovası çalışmıyor"
+        )
+        assert codes[0] != 429, "ilk istek sınırlanmamalıydı"
+
+        # GET'ler genel kovayı tüketmemeli: ucuz okuma, mutasyon bütçesini yemesin.
+        api._rate_buckets.clear()
+        gets = [client.get("/api/telemetry?client_id=ci").status_code for _ in range(10)]
+        assert gets.count(429) == 0, (
+            f"GET istekleri genel kovadan sınırlanıyor: {gets}"
+        )
+    finally:
+        api._rate_buckets.clear()
+
+
+def test_websocket_cancellation_propagates_and_still_cleans_up():
+    """[AUDIT P1-18c] bare `except:` CancelledError'ı yutuyordu.
+
+    Ölçülen eski davranış: task.cancelled() == False, görev normal döndü.
+    Ayrıca kontrol ölçümü `except Exception:`'ın TEK BAŞINA yetmediğini
+    gösterdi: iptal durumunda temizlik kayboluyordu. Bu yüzden finally.
+    """
+    import asyncio
+
+    from backend import api
+
+    class FakeWS:
+        def __init__(self):
+            self.parked = asyncio.Event()
+
+        async def accept(self):
+            pass
+
+        async def receive_json(self):
+            return {}
+
+        async def send_json(self, _payload):
+            pass
+
+        async def close(self, code=1000):
+            pass
+
+        async def receive_text(self):
+            await self.parked.wait()
+            return ""
+
+    async def scenario():
+        ws = FakeWS()
+        cid = "cancel-probe-test"
+        task = asyncio.create_task(api.websocket_endpoint(ws, cid))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        propagated = False
+        try:
+            await task
+        except asyncio.CancelledError:
+            propagated = True
+        room = api.app.state.rooms.get(cid, {})
+        cleaned = len(room.get("websockets", ())) == 0
+        return propagated, cleaned
+
+    propagated, cleaned = asyncio.run(scenario())
+    assert propagated, "CancelledError yutuldu; görev iptal edilmiş sayılmıyor"
+    assert cleaned, "iptal durumunda websocket odadan düşürülmedi (finally eksik)"

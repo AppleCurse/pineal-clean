@@ -246,6 +246,11 @@ async def auth_middleware(request: Request, call_next):
 
         identity = presented_token or (request.client.host if request.client else "unknown")
         identity_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        # [AUDIT P1-18a] Hız sınırı kimliği SUNUCUDAN türetilir ve handler'lara
+        # buradan aktarılır. Eskiden handler'lar istemcinin gönderdiği
+        # client_id'yi anahtar olarak kullanıyordu; client_id her istekte
+        # değiştirilince sınır hiç devreye girmiyordu (ölçülen: 200/200 geçti).
+        request.state.rate_identity = identity_hash
         if request.url.path.startswith("/api/experimental/"):
             if not rate_limit(f"experimental:{identity_hash}", "experimental"):
                 return JSONResponse(
@@ -259,6 +264,19 @@ async def auth_middleware(request: Request, call_next):
                     "rate_limit_error",
                     "rate_limit_exceeded",
                 ),
+                status_code=429,
+            )
+        # [AUDIT P1-18b] Genel kova yalnızca MUTASYON yöntemlerine uygulanır.
+        # Tek kova tüm yöntemleri paylaşsaydı ucuz GET'ler (telemetri, görev
+        # listesi) mutasyonlar için gereken bütçeyi tüketiyordu — ölçülen:
+        # 305 GET sonrası aynı kimlik POST'larında erken 429.
+        if (
+            is_api
+            and request.method not in ("GET", "HEAD", "OPTIONS")
+            and not rate_limit(f"api:{identity_hash}", "api")
+        ):
+            return JSONResponse(
+                {"error": {"code": "RATE_LIMITED", "message": "API rate limit exceeded"}},
                 status_code=429,
             )
     return await call_next(request)
@@ -307,6 +325,12 @@ async def unhandled_error_handler(request: Request, exc: Exception):
 
 # --- Basit kayan-pencere rate limit (FAZ 3; ek bagimlilik yok) ---
 RATE_LIMITS = {
+    # [AUDIT P1-18b] Genel /api/ arka plan kovası. Eskiden /api/vault,
+    # /api/override, /api/executor/intervene, /api/tasks*, /api/telemetry,
+    # /api/aspasia/state ve /api/scraper/authorize-alternative uçlarında HİÇ
+    # hız sınırı yoktu. 300/60sn ölçülerek seçildi: frontend'de polling yok
+    # (setInterval sıfır), CI smoke en kötü 30 telemetri isteği atıyor.
+    "api": (300, 60),
     "initiate": (5, 60),
     "aspasia": (20, 60),
     "experimental": (10, 60),
@@ -394,6 +418,23 @@ def _sweep_rate_buckets(now: float) -> None:
         )
         for key in oldest[:overflow]:
             _rate_buckets.pop(key, None)
+
+
+# [AUDIT P1-18a] Kimlik yoksa TÜM kimliksiz çağıranlar tek ortak kovayı
+# paylaşır. Fail-safe: "kimlik yok -> sınırsız" değil, "kimlik yok -> paylaşımlı
+# ve sınırlı". Doğrudan handler çağrısı (test) da sınırsız yol bulamaz.
+_UNIDENTIFIED_RATE_IDENTITY = "unidentified"
+
+
+def _rate_identity(request: Request) -> str:
+    """Hız sınırı için sunucudan türetilmiş kimliği döndürür.
+
+    Handler'lar eskiden `req.client_id` kullanıyordu — bu, istemcinin gövdede
+    gönderdiği bir alan. Ölçülen: aynı client_id ile 8 istek -> 3/8 429
+    (sınır çalışıyor); her istekte farklı client_id -> 200 istek, 0/200 429.
+    """
+    identity = getattr(getattr(request, "state", None), "rate_identity", None)
+    return identity or _UNIDENTIFIED_RATE_IDENTITY
 
 
 def rate_limit(key: str, bucket: str) -> bool:
@@ -1226,7 +1267,14 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     try:
         while True:
             await websocket.receive_text()
-    except:
+    except Exception:
+        # [AUDIT P1-18c] Eskiden bare `except:` idi. Ölçülen: bare except
+        # BaseException'ı da yakaladığı için asyncio.CancelledError yutuluyor
+        # ve görev iptal edilmiş sayılmıyordu (task.cancelled() == False).
+        # `except Exception:`'a geçmek tek başına YETMEZ: kontrol ölçümünde
+        # iptal durumunda temizlik kayboldu. Bu yüzden temizlik finally'de.
+        logger.debug("WebSocket bağlantısı koptu: %s", client_id)
+    finally:
         room["websockets"].discard(websocket)
 
 class InitiatePayload(BaseModel):
@@ -1464,8 +1512,8 @@ async def _send_result(room: dict, data: dict):
     await _send_ws(room, json.dumps(data))
 
 @app.post("/api/initiate")
-async def api_initiate(req: InitiatePayload):
-    if not rate_limit(f"initiate:{req.client_id}", "initiate"):
+async def api_initiate(req: InitiatePayload, request: Request):
+    if not rate_limit(f"initiate:{_rate_identity(request)}", "initiate"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
             status_code=429,
@@ -1752,13 +1800,13 @@ class AspasiaCommandPayload(BaseModel):
 
 
 @app.post("/api/aspasia/command")
-async def aspasia_command(payload: AspasiaCommandPayload):
+async def aspasia_command(payload: AspasiaCommandPayload, request: Request):
     """Aspasia: doğal dil niyeti -> yapılandırılmış komut -> gerçek orchestrator.
 
     Kabul edilen tek yazma eylemi run_profile_analysis'tir ve hedef doğrulama
     (gerçek scraper host sözleşmesi) + gateway politika yığınını aynen geçer.
     """
-    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+    if not rate_limit(f"aspasia:{_rate_identity(request)}", "aspasia"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
             status_code=429,
@@ -1805,9 +1853,9 @@ async def aspasia_state(client_id: str = "default"):
 
 
 @app.post("/api/aspasia/chat")
-async def aspasia_chat(payload: AspasiaChatPayload):
+async def aspasia_chat(payload: AspasiaChatPayload, request: Request):
     """Aspasia Kokpit Şefi ile canlı Sokratik diyalog"""
-    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+    if not rate_limit(f"aspasia:{_rate_identity(request)}", "aspasia"):
         return JSONResponse(
             {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
             status_code=429,

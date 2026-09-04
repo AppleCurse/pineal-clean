@@ -57,6 +57,35 @@ testiyle doğrulanmış** bir regresyon testiyle korunuyor (bkz. aşağıda).
   `rate_limit` içinde silmek hiçbir işe yaramıyordu — izin verilen her çağrı
   hemen `append` ile anahtarı geri koyuyordu (mutasyon testi bunu kanıtladı:
   satırı kaldırmak hiçbir testi kızartmadı).
+- **[P1-18a] Hız sınırı kimliği istemci kontrollüydü — KRİTİK.** Middleware
+  hız sınırını sunucudan türetilen `identity_hash` ile kurarken üç handler
+  (`/api/initiate`, `/api/aspasia/command`, `/api/aspasia/chat`) istemcinin
+  gövdede gönderdiği `client_id`'yi anahtar olarak kullanıyordu. Ölçülen:
+  aynı `client_id` ile 8 istek → 3/8 429 (sınır çalışıyor); **her istekte
+  farklı `client_id` → 200 istek, 0/200 429** — sınır hiç devreye girmiyordu.
+  → middleware `request.state.rate_identity` yazar, handler'lar
+  `_rate_identity(request)` okur. Kimlik yoksa fail-safe: tüm kimliksiz
+  çağıranlar **tek ortak kovayı** paylaşır (sınırsız değil).
+  **Davranış değişikliği:** bu üç uçta limit artık *token/IP başına*,
+  `client_id` başına değil. Aynı token arkasındaki tüm istemciler 5 görev/60sn
+  bütçesini paylaşır; çok istemcili kurulumda `RATE_LIMITS` değerleri
+  gözden geçirilmelidir.
+- **[P1-18b] 7 `/api/` ucu tamamen hız sınırsızdı** (`/api/vault`,
+  `/api/override`, `/api/executor/intervene`, `/api/scraper/authorize-alternative`,
+  `/api/tasks*`, `/api/telemetry`, `/api/aspasia/state`). → middleware'e genel
+  `api` kovası (300/60sn), **yalnızca mutasyon yöntemleri** için. GET'lerin
+  dahil edilmemesi ölçümle karar verildi: tek paylaşımlı kova tüm yöntemleri
+  kapsayınca 305 GET aynı kimliğin sonraki POST'larında erken 429 üretti.
+- **[P1-18c] `api.py:1229` bare `except:` `CancelledError`'ı yutuyordu.**
+  Ölçülen: gerçek `websocket_endpoint` park halindeyken iptal edilince
+  `task.cancelled() == False`, görev normal dönüyordu. Kontrol ölçümü
+  `except Exception:`'ın **tek başına yetmediğini** gösterdi: iptal durumunda
+  websocket odadan düşmüyordu. → `except Exception:` + temizlik `finally:`.
+  Onarım sonrası: `CancelledError` yayılıyor **ve** temizlik korunuyor.
+- **[test altyapısı] `tests/conftest.py`'ye `_isolate_rate_limit_state` eklendi.**
+  `_rate_buckets` süreç genelinde paylaşılan mutable durumdur; anahtar sunucu
+  kimliğine geçince testler arası izolasyon kayboldu ve 2 test tam pakette
+  kırmızı, tek başına yeşil oluyordu. Her testten önce/sonra temizlenir.
 - **[P0-2 v3] Cache süresi artık satırda saklanıyor** (`widest_window` ikizi
   burada da vardı). Satır `created_at` tutuyor ama kendi TTL'ini tutmuyordu;
   süre her okumada güncel `PINEAL_CACHE_TTL`'den yeniden hesaplanıyordu.
