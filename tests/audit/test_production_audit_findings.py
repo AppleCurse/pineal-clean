@@ -643,3 +643,112 @@ def test_non_development_environments_require_token(monkeypatch, value):
     monkeypatch.delenv("PINEAL_TOKEN", raising=False)
     with pytest.raises(SecurityConfigurationError):
         security_posture()
+
+
+# --------------------------------------------------------------------------
+# P2-13  Sınırsız büyüyen iki sözlük: canonical_memory._locks ve
+#        dialogue_manager.sessions  (desen üçüncü kez çıktı)
+# --------------------------------------------------------------------------
+def test_canonical_memory_locks_are_reclaimed(tmp_path):
+    """[AUDIT P2-13] `_locks` toplam task sayısıyla değil eşzamanlılıkla sınırlı olmalı.
+
+    Ölçülen eski davranış: 5.000 sıralı merge_evidence -> 5.000 kalıcı
+    asyncio.Lock (izole 0.80 MB, 167 bayt/girdi), hiçbir zaman silinmiyordu.
+    """
+    import asyncio
+
+    from agent_core.services.canonical_memory import CanonicalMemory
+
+    mem = CanonicalMemory(storage_path=str(tmp_path))
+
+    async def run():
+        for i in range(500):
+            await mem.merge_evidence(f"task-{i}", [{"source": "x", "claim": f"c{i}"}])
+
+    asyncio.run(run())
+
+    assert len(mem._locks) == 0, (
+        f"{len(mem._locks)} kilit girdisi kaldı; defaultdict her task_id için "
+        "kalıcı girdi üretiyor ve hiçbir geri kazanım yok"
+    )
+
+
+def test_canonical_memory_lock_still_serializes_concurrent_merges(tmp_path):
+    """Sızıntı kapatılırken kilit BOZULMAMALI: aynı task'ta çakışma olmamalı.
+
+    Kilit no-op yapılırsa 8 eşzamanlı merge aynı `.tmp` yolunda çakışır
+    (ölçülen: 6/8 FileNotFoundError). Kilit yerindeyken 0/8 hata.
+    """
+    import asyncio
+
+    from agent_core.services import canonical_memory as cm
+
+    mem = cm.CanonicalMemory(storage_path=str(tmp_path))
+    state = {"n": 0, "max": 0, "errors": 0}
+    orig = cm.CanonicalMemory._atomic_write
+
+    def spy(path, payload):
+        state["n"] += 1
+        state["max"] = max(state["max"], state["n"])
+        time.sleep(0.005)                       # çakışma penceresini aç
+        try:
+            return orig(path, payload)
+        finally:
+            state["n"] -= 1
+
+    async def run():
+        results = await asyncio.gather(
+            *[mem.merge_evidence("ayni-task", [{"source": "x", "claim": f"c{i}"}]) for i in range(8)],
+            return_exceptions=True,
+        )
+        state["errors"] = sum(1 for r in results if isinstance(r, Exception))
+
+    cm.CanonicalMemory._atomic_write = staticmethod(spy)
+    try:
+        asyncio.run(run())
+    finally:
+        cm.CanonicalMemory._atomic_write = staticmethod(orig)
+
+    assert state["max"] == 1, f"aynı anda {state['max']} merge içerdeydi; kilit dışlama sağlamıyor"
+    assert state["errors"] == 0, f"{state['errors']}/8 merge hata verdi; kilit korumuyor"
+
+
+def test_dialogue_sessions_are_bounded_by_cap(monkeypatch):
+    """[AUDIT P2-13] `sessions` tavanla sınırlı olmalı.
+
+    Ölçülen eski davranış: 50.000 start_session -> 50.000 kalıcı
+    DialogueContext / 58.0 MB, girdi başına 1.217 bayt, hiçbiri silinmiyordu.
+    """
+    from agent_core.chat.dialogue_manager import DialogueManager
+
+    monkeypatch.setenv("PINEAL_MAX_DIALOGUE_SESSIONS", "100")
+    monkeypatch.setenv("PINEAL_DIALOGUE_SESSION_TTL_SECONDS", "3600")
+    dm = DialogueManager(llm_gateway=object())
+
+    for i in range(5_000):
+        dm.start_session(f"task-{i}", {"b": 1}, {"k": 2})
+
+    assert len(dm.sessions) <= 100, (
+        f"{len(dm.sessions)} oturum birikti; tavan uygulanmıyor"
+    )
+
+
+def test_dialogue_sessions_expire_by_time(monkeypatch):
+    """Oturumlar ZAMANLA düşmeli — 'süresi doldu' hatası bunu ima ediyordu
+    ama uygulayan tek satır kod yoktu."""
+    from agent_core.chat.dialogue_manager import DialogueManager
+
+    monkeypatch.setenv("PINEAL_MAX_DIALOGUE_SESSIONS", "10000")
+    monkeypatch.setenv("PINEAL_DIALOGUE_SESSION_TTL_SECONDS", "1")
+    dm = DialogueManager(llm_gateway=object())
+
+    for i in range(200):
+        dm.start_session(f"task-{i}", {}, {})
+    assert len(dm.sessions) == 200
+
+    time.sleep(1.2)
+    dm.start_session("yeni", {}, {})
+
+    assert len(dm.sessions) == 1, (
+        f"{len(dm.sessions)} oturum kaldı; TTL dolmuş oturumlar geri kazanılmıyor"
+    )

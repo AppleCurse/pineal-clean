@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import re
-from collections import defaultdict
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Optional
@@ -32,6 +32,16 @@ class MemoryCorruptedError(RuntimeError):
         super().__init__(f"{self.error_code}: task {task_id} canonical memory is corrupt ({reason})")
 
 
+class _LockEntry:
+    """Bir task'ın kilidi + onu bekleyen sayısı (geri kazanım için)."""
+
+    __slots__ = ("lock", "waiters")
+
+    def __init__(self):
+        self.lock = asyncio.Lock()
+        self.waiters = 0
+
+
 class CanonicalMemory:
     """Canonical evidence store with fail-closed corruption semantics.
 
@@ -43,7 +53,29 @@ class CanonicalMemory:
     def __init__(self, storage_path: str = "./memory/"):
         self.storage_path = storage_path
         os.makedirs(storage_path, exist_ok=True)
-        self._locks = defaultdict(asyncio.Lock)
+        # [AUDIT P2-13] Ölçülen: 5.000 merge_evidence -> 5.000 kalıcı
+        # asyncio.Lock (izole 0.80 MB, 167 bayt/girdi) ve hiçbir zaman
+        # silinmiyordu. defaultdict her task_id için kalıcı girdi üretir.
+        # Artık sözlük yalnızca AKTİF BEKLEYENİ olan kilitleri tutar:
+        # boyut toplam task sayısıyla değil eşzamanlılıkla sınırlı.
+        self._locks: Dict[str, "_LockEntry"] = {}
+
+    @asynccontextmanager
+    async def _task_lock(self, task_id: str):
+        entry = self._locks.get(task_id)
+        if entry is None:
+            entry = _LockEntry()
+            self._locks[task_id] = entry
+        entry.waiters += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.waiters -= 1
+            # Son bekleyen ayrıldıysa girdiyi bırak; yalnızca hâlâ AYNI
+            # nesne duruyorsa (araya yeni bekleyen girmiş olabilir).
+            if entry.waiters == 0 and self._locks.get(task_id) is entry:
+                del self._locks[task_id]
 
     @staticmethod
     def _validate_task_id(task_id: str):
@@ -129,7 +161,7 @@ class CanonicalMemory:
         """Merge evidence atomically, refusing to overwrite corrupted memory."""
         profile_file = self._profile_file(task_id)
 
-        async with self._locks[task_id]:
+        async with self._task_lock(task_id):
             inspection = await asyncio.to_thread(self.inspect_task_memory, task_id)
             self._raise_if_corrupted(task_id, profile_file, inspection)
             existing = inspection["data"] or {}
@@ -144,7 +176,7 @@ class CanonicalMemory:
         It refuses to run unless the current canonical file is corrupt.
         """
         profile_file = self._profile_file(task_id)
-        async with self._locks[task_id]:
+        async with self._task_lock(task_id):
             inspection = await asyncio.to_thread(self.inspect_task_memory, task_id)
             if inspection["state"] != MemoryState.CORRUPTED.value:
                 raise ValueError(f"Task {task_id} memory is not corrupted")

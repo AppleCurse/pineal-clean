@@ -57,6 +57,25 @@ testiyle doğrulanmış** bir regresyon testiyle korunuyor (bkz. aşağıda).
   `rate_limit` içinde silmek hiçbir işe yaramıyordu — izin verilen her çağrı
   hemen `append` ile anahtarı geri koyuyordu (mutasyon testi bunu kanıtladı:
   satırı kaldırmak hiçbir testi kızartmadı).
+- **[P2-13] Sınırsız büyüyen iki sözlük kapatıldı** (desen üçüncü kez çıktı:
+  P0-2 `prune`, P0-5 `_sweep_rate_buckets`, şimdi bu ikisi).
+  - `canonical_memory._locks` (`defaultdict(asyncio.Lock)`) — ölçülen: 5.000
+    sıralı `merge_evidence` → **5.000 kalıcı kilit** (izole 0.80 MB, 167 B/girdi),
+    asla silinmiyordu. → `_LockEntry` + bekleyen sayaçlı `_task_lock()`:
+    sözlük artık yalnızca AKTİF bekleyeni olan kilitleri tutuyor.
+    **Kapanış: 5.000 merge → 0 girdi.** Doğruluk kanıtı: 8 eşzamanlı merge,
+    aynı `task_id` → aynı anda en fazla 1 içerde, 0/8 hata; kilit no-op
+    yapılırsa **6/8 `FileNotFoundError`** (aynı `.tmp` yolu çakışıyor) —
+    kilit gerçekten yük taşıyor.
+  - `dialogue_manager.sessions` — ölçülen: 50.000 `start_session` →
+    **50.000 kalıcı `DialogueContext` / 58.0 MB** (1.217 B/girdi), asla
+    silinmiyordu; üstelik `"Oturum bulunamadı veya süresi doldu"` hatası bir
+    süre ima ediyordu ama süreyi uygulayan tek satır kod yoktu.
+    → `PINEAL_DIALOGUE_SESSION_TTL_SECONDS` (1800) +
+    `PINEAL_MAX_DIALOGUE_SESSIONS` (512), her işlemde kontrol edilen eviction.
+    **Kapanış: tavan 100 iken 5.000 → 100; TTL 1 sn iken 200 → 1.**
+    Maruziyet `api.py:210` auth middleware + `experimental` hız limiti
+    (10/60 sn; ölçülen 10×200 + 5×429) ile sınırlı, ama sızıntı monotondu.
 - **[P0-5 v3] `_rate_buckets` — ikiz kusur kapatıldı (çapraz denetim bulgusu).**
   P0-2'deki "eşiğe hiç ulaşılmama" hatasının aynısı buradaydı; üç ayrı kusur:
   - **(a) Zaman temelli tetikleyici yoktu** — süpürme yalnızca tavan
