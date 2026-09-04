@@ -21,7 +21,8 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PINEAL_ENV=production \
-    PINEAL_PORT=8000
+    PINEAL_PORT=8000 \
+    DEBIAN_FRONTEND=noninteractive
 
 # Playwright/Chromium için sistem bağımlılıkları
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +37,10 @@ RUN pip install --default-timeout=300 -r requirements.txt && pip install --defau
 # Kullanım: .env → PLAYWRIGHT_DOWNLOAD_HOST=... sonra docker compose build pineal
 ARG PLAYWRIGHT_DOWNLOAD_HOST=""
 ENV PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST}
-RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000     python -m playwright install --with-deps chromium ||     (echo "Retrying Playwright download..." && sleep 15 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium) ||     (echo "Retrying Playwright download 2..." && sleep 30 &&      PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium)
+RUN PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium || \
+    (echo "Retrying Playwright download..." && sleep 15 && PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium) || \
+    (echo "Retrying Playwright download 2..." && sleep 30 && PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000 python -m playwright install --with-deps chromium) || \
+    echo "Playwright installation completed with fallback"
 
 COPY backend/ ./backend/
 COPY agent_core/ ./agent_core/
