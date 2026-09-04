@@ -57,6 +57,21 @@ testiyle doğrulanmış** bir regresyon testiyle korunuyor (bkz. aşağıda).
   `rate_limit` içinde silmek hiçbir işe yaramıyordu — izin verilen her çağrı
   hemen `append` ile anahtarı geri koyuyordu (mutasyon testi bunu kanıtladı:
   satırı kaldırmak hiçbir testi kızartmadı).
+- **[P0-5 v3] `_rate_buckets` — ikiz kusur kapatıldı (çapraz denetim bulgusu).**
+  P0-2'deki "eşiğe hiç ulaşılmama" hatasının aynısı buradaydı; üç ayrı kusur:
+  - **(a) Zaman temelli tetikleyici yoktu** — süpürme yalnızca tavan
+    (100.000) aşıldığında çalışıyordu. Ölçülen: 30.000 tekil anahtar,
+    pencereleri dolmuş, **30.000 kova / 26.4 MB süresiz bellekte**.
+    → `PINEAL_RATE_SWEEP_INTERVAL_SECONDS` (60 sn) + her çağrıda kontrol
+    edilen `_rate_sweep_deadline` (P0-2 ile aynı desen).
+  - **(b) Histerezis yoktu → kendi kendine DoS** — tavan-1'e kırpma, her yeni
+    isteğin tüm sözlüğü yeniden süpürmesi demekti. Ölçülen: üretim tavanında
+    **48-57 ms/istek** → hedef tavanın ~%80'i, **en yavaş istek 0.53 ms**.
+  - **(c) Süpürme kovanın kendi penceresini bilmiyordu** — kova adı
+    saklanmadığı için "en geniş pencere" (60 sn) kullanılıyordu; (a)+(b)
+    onarıldıktan sonra bile 1 sn'lik kova 60 sn bekliyordu. → `_RateBucket`
+    (`__slots__ = ("events", "window")`), ayıklama `b.window` ile.
+    Sonuç: **30.000 kova / 26.4 MB → 1 kova / 0.9 MB**.
 - **[P1-8] Scraper artık event loop'u dondurmuyor.** `_random_delay` senkron
   `time.sleep(2-5 s)` kullanıyordu ve async `scrape_async` içinden çağrılıyordu
   → tek kazıma boyunca tüm süreç (health check, WebSocket, diğer kullanıcıların
@@ -69,6 +84,9 @@ testiyle doğrulanmış** bir regresyon testiyle korunuyor (bkz. aşağıda).
 #### Onarım doğrulaması: mutasyon testi (14 mutasyon, 0 sahte test)
 Her onarım geçici olarak geri alınıp ilgili testin KIZARDIĞI doğrulandı.
 Bu tur **iki sahte testi ortaya çıkardı ve düzeltti**:
+- `P0-5/test_rate_bucket_count_is_bounded` — `window=0` ile tüm kovalar aşama 1'de
+  siliniyor, **LRU tavan kırpma hiç çalışmıyordu**; `overflow = 0` mutasyonu testi
+  yeşil bıraktı → pencere uzun tutularak yalnızca LRU yolu zorlanacak şekilde düzeltildi.
 - `P0-5/bos-kova` — silinen ölü kodu test ediyordu (yeşil kaldı) → ölü kod silindi,
   gerçek geri kazanım yolu (`_sweep_rate_buckets`) ayrıca mutasyonla doğrulandı.
 - `P0-2/acilista-buda` — açılış budaması hiç test edilmiyordu (yeşil kaldı) →

@@ -22,7 +22,7 @@ ilk hâlini belgelemeye devam ediyor.
 | P0-2 | cache prune yok | ✅ KAPATILDI (v2) | düşük trafikte 10 satır → **1 satır**, `pruned=10` |
 | P0-3 | dict olmayan vault 500 | ✅ KAPATILDI | 4 varyant (list/null/str/int) → dict |
 | P0-4 | rooms eviction yok | ✅ KAPATILDI | tavan 8 iken 12 istek → `[200×8, 503×4]`, oda sayısı **8** |
-| P0-5 | `_rate_buckets` sızıntısı | ✅ KAPATILDI | 2000 kimlik, tavan 50 → **≤50 kova** |
+| P0-5 | `_rate_buckets` sızıntısı | ✅ KAPATILDI (v3) | 30.000 tekil anahtar, pencere dolmuş → **30.000 kova / 26.4 MB → 1 kova / 0.9 MB**; tavan doluyken **48-57 ms/istek → 0.53 ms** |
 | P0-6 | senkron SQLite | ✅ KAPATILDI | loop blokesi **28.59 ms → 2.08 ms**; `to_thread` ile medyan **0.59 ms** |
 | P1-8 | `time.sleep` loop'u donduruyor | ✅ KAPATILDI | `iscoroutinefunction` + `await` çağrı noktası |
 | P2-10 | auth fail-open | ✅ KAPATILDI | `PINEAL_ENV` yok + token yok → startup **reddedildi** (`PRODUCTION_AUTH_REQUIRED`) |
@@ -83,11 +83,53 @@ P0-4 aktif oda korumasi    KIZARDI (test gerçek)     1 failed
 P0-4 oda tavani            KIZARDI (test gerçek)     1 failed
 P0-4 client_id dogrulama   KIZARDI (test gerçek)     1 failed
 P0-5 LRU kirpma            KIZARDI (test gerçek)     1 failed
-P0-5 suresi dolmus silme   KIZARDI (test gerçek)     1 failed
+P0-5 suresi dolmus silme   KIZARDI (test gerçek)     2 failed
+P0-5 kova penceresi        KIZARDI (test gerçek)     1 failed
+P0-5 zaman tetik           KIZARDI (test gerçek)     1 failed, 1 passed
+P0-5 histerezis            KIZARDI (test gerçek)     1 failed
 P1-8 async delay           KIZARDI (test gerçek)     2 failed
 P2-10 fail-closed          KIZARDI (test gerçek)     2 failed, 4 passed
-SAHTE/UYGULANAMAYAN: 0 / 14
+SAHTE/UYGULANAMAYAN: 0 / 17
 ```
+
+### ⚑ P0-5 v3 — çapraz denetim bulgusu (ikiz kusur, 2026-09-04)
+
+**Soru (Salim):** "_sweep_rate_buckets'i ne tetikliyor?" — P0-2'deki
+"eşiğe hiç ulaşılmama" hatasının ikizi burada da vardı. **Vardı ve üç kusurluydu.**
+
+**(a) Zaman temelli tetikleyici yoktu.** Süpürme yalnızca
+`len(_rate_buckets) >= _MAX_RATE_BUCKETS` (üretimde **100.000**) ve anahtar
+yeni olduğunda çalışıyordu. Ölçülen: 30.000 tekil anahtar, pencereleri dolmuş,
+süpürmeyi çağıran hiçbir şey yok → **30.000 kova / 26.4 MB süresiz bellekte.**
+Onarım: `_RATE_SWEEP_INTERVAL_SECONDS` (varsayılan 60 sn) + her çağrıda
+kontrol edilen `_rate_sweep_deadline` — P0-2 ile aynı desen.
+
+**(b) Histerezis yoktu → kendi kendine DoS.** Tavan aşıldığında süpürme
+tavan-1'e kırpıyordu, yani **her yeni istek** tüm sözlüğü yeniden
+süpürüyordu. Ölçülen: tavan 2.000 iken **12/12 istek 0.50-0.70 ms**; üretim
+tavanı 100.000'de **48, 57, 51, 52, 49, 47 ms/istek.** Onarım: hedef tavanın
+~%80'i. Sonuç: **en yavaş istek 0.53 ms, 1 ms üzeri 0/12.**
+
+**(c) Süpürme kovanın kendi penceresini bilmiyordu.** Kova adı saklanmadığı
+için ayıklama "en geniş pencere"yi (tüm kovaların maksimumu, 60 sn)
+kullanıyordu. (a) ve (b) onarıldıktan sonra bile 1 sn'lik pencereye ait
+30.000 anahtar **60 sn boyunca** bellekte kalıyordu — ölçülen: zaman tetikleyici
+açık, aralık geçmiş, **30.000 kova hâlâ yerinde.** Onarım: `_RateBucket`
+(`__slots__ = ("events", "window")`), ayıklama artık `b.window` ile. Sonuç:
+**30.000 kova / 26.4 MB → 1 kova / 0.9 MB.**
+
+**Bu turun bulduğu dördüncü sahte test:** `test_rate_bucket_count_is_bounded`
+`window=0` kullanıyordu, yani tüm kovalar aşama 1'de siliniyor ve **LRU tavan
+kırpma hiç çalışmıyordu** — `overflow = 0` mutasyonu testi yeşil bıraktı. Test,
+pencere uzun tutularak yalnızca LRU yolunu zorlayacak şekilde düzeltildi.
+
+**Genel kural (iki kez kanıtlandı):** *"Her N işlemde bir temizle" tetikleyicisi
+yetersizdir.* Düşük trafikte eşik hiç aşılmaz. Her işlemde kontrol edilen
+monotonik bir son tarih ile eşleştirilmelidir (P0-2 `prune`, P0-5 `_sweep_rate_buckets`).
+
+**Hâlâ aynı desende AÇIK (P2-13):** `canonical_memory.py:46`
+`self._locks = defaultdict(asyncio.Lock)` ve `dialogue_manager.py:21`
+`self.sessions` — her `task_id` için büyür, hiçbir geri kazanım yok.
 
 **Bu tur üç sahte testi ortaya çıkardı ve düzeltti:**
 

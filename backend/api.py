@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
-from collections import defaultdict, deque
+from collections import deque
 import asyncio
 import json
 import logging
@@ -312,7 +312,24 @@ RATE_LIMITS = {
     "experimental": (10, 60),
     "openai": (60, 60),
 }  # (request count, window seconds)
-_rate_buckets: Dict[str, deque] = defaultdict(deque)
+class _RateBucket:
+    """Kayan pencere olayları + BU kovaya ait pencere süresi.
+
+    [AUDIT P0-5 v3] Pencere kovayla birlikte saklanmak zorunda. Eskiden
+    yalnızca deque tutuluyordu ve süpürme "en geniş pencere"yi (tüm
+    kovaların maksimumu, 60 sn) kullanmak zorunda kalıyordu: 1 sn'lik bir
+    kovadaki anahtar 60 sn boyunca bellekte kalıyordu. Ölçülen: 30.000 tekil
+    anahtar, pencere dolmuş, süpürme çalışıyor -> 30.000 kova hâlâ yerinde.
+    """
+
+    __slots__ = ("events", "window")
+
+    def __init__(self, window: float):
+        self.events: deque = deque()
+        self.window = window
+
+
+_rate_buckets: Dict[str, _RateBucket] = {}
 
 
 def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -329,30 +346,51 @@ def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int
 # durdurulamaz bir bellek sızıntısıdır. İki savunma eklendi: boşalan kova anında
 # geri verilir ve anahtar sayısı sert bir tavanla sınırlanır.
 _MAX_RATE_BUCKETS = _bounded_env_int("PINEAL_MAX_RATE_BUCKETS", 100_000, 1_000, 10_000_000)
+# [AUDIT P0-5 v2] Süpürme artık ZAMANA da bağlı. Eskiden yalnızca tavan
+# aşıldığında çalışıyordu; ölçülen iki kusur:
+#   (a) 60.000 tekil anahtar -> 60.000 kalıcı kova / 50.3 MB, hepsinin penceresi
+#       dolmuş ama tavana kadar HİÇBİRİ geri kazanılmıyor (P0-2'nin ikizi).
+#   (b) tavan aşıldığında süpürme HER yeni istekte çalışıyor ve tüm sözlüğü
+#       sorted() ile sıralıyordu -> üretim tavanında ölçülen ~48-57 ms/istek
+#       (kendi kendine DoS).
+_RATE_SWEEP_INTERVAL_SECONDS = max(1.0, float(
+    os.getenv("PINEAL_RATE_SWEEP_INTERVAL_SECONDS", "60")
+))
+_rate_sweep_deadline = time.monotonic() + _RATE_SWEEP_INTERVAL_SECONDS
+
+
+def _maybe_sweep_rate_buckets(now: float) -> None:
+    """Süresi geldiyse süpür. Her çağrıda tek float karşılaştırması (~50 ns)."""
+    global _rate_sweep_deadline
+    if now >= _rate_sweep_deadline:
+        # Son tarih önce yenilenir: süpürme patlasa bile her istekte yeniden
+        # denenmez, maliyet tek bir isteğe yığılmaz.
+        _rate_sweep_deadline = now + _RATE_SWEEP_INTERVAL_SECONDS
+        _sweep_rate_buckets(now)
 
 
 def _sweep_rate_buckets(now: float) -> None:
-    """Kova sayısını tavanın altına indirir (yalnızca tavan aşıldığında).
+    """Süresi dolmuş kovaları geri kazanır, gerekirse tavanın altına indirir.
 
-    İki aşama:
-      1. Kesinlikle süresi dolmuş (en geniş pencereyi bile aşmış) veya boş
-         kovalar silinir — bunları düşürmek hiçbir limiti gevşetmez.
-      2. Hâlâ tavandaysa EN ESKİ (LRU) kovalar düşürülür. Kova adı
-         saklanmadığı için pencere başına ayıklama yapılamaz; en eski kova
-         zaten sınıra en yakın olanıdır ve bu yol yalnızca bir acil durum
-         önlemi olarak (tavan aşıldığında) çalışır.
+    Üç aşama:
+      1. Kendi penceresi dolmuş veya boş kovalar silinir — bunları düşürmek
+         hiçbir limiti gevşetmez. Pencere KOVADA saklandığı için ayıklama
+         kova başına doğrudur (bkz. _RateBucket).
+      2. Hâlâ tavandaysa EN ESKİ (LRU) kovalar düşürülür.
+      3. HİSTEREZİS: tavan-1'e değil tavanın ~%80'ine inilir. Aksi halde
+         süpürme her yeni istekte yeniden tetikleniyordu (ölçülen ~57 ms/istek).
     """
-    widest_window = max(window for _, window in RATE_LIMITS.values())
     for key in [
-        k for k, q in _rate_buckets.items()
-        if not q or now - q[-1] > widest_window
+        k for k, b in _rate_buckets.items()
+        if not b.events or now - b.events[-1] > b.window
     ]:
         _rate_buckets.pop(key, None)
-    overflow = len(_rate_buckets) - _MAX_RATE_BUCKETS + 1
+    target = max(1, _MAX_RATE_BUCKETS - max(1, _MAX_RATE_BUCKETS // 5))
+    overflow = len(_rate_buckets) - target
     if overflow > 0:
         oldest = sorted(
             _rate_buckets,
-            key=lambda k: _rate_buckets[k][-1] if _rate_buckets[k] else 0.0,
+            key=lambda k: _rate_buckets[k].events[-1] if _rate_buckets[k].events else 0.0,
         )
         for key in oldest[:overflow]:
             _rate_buckets.pop(key, None)
@@ -362,20 +400,25 @@ def rate_limit(key: str, bucket: str) -> bool:
     """True = izin ver; False = limit asildi (429)."""
     limit, window = RATE_LIMITS.get(bucket, (999, 1))
     now = time.monotonic()
-    q = _rate_buckets.get(key)
-    if q is None:
+    _maybe_sweep_rate_buckets(now)
+    bucket = _rate_buckets.get(key)
+    if bucket is None:
         if len(_rate_buckets) >= _MAX_RATE_BUCKETS:
             _sweep_rate_buckets(now)
-        q = _rate_buckets[key]
-    while q and now - q[0] > window:
-        q.popleft()
-    if len(q) >= limit:
+        bucket = _rate_buckets[key] = _RateBucket(window)
+    elif bucket.window != window:
+        bucket.window = window          # RATE_LIMITS çalışma zamanında değişti
+    events = bucket.events
+    while events and now - events[0] > window:
+        events.popleft()
+    if len(events) >= limit:
         return False
     # [AUDIT P0-5] Boşalan kova burada silinMEZ: izin verilen her çağrı hemen
     # aşağıdaki append ile anahtarı geri koyardı, yani silme ölü koddu
     # (mutasyon testiyle doğrulandı: satırı kaldırmak hiçbir testi kızartmadı).
-    # Geri kazanımın TEK gerçek yolu _sweep_rate_buckets'tir.
-    _rate_buckets.setdefault(key, q).append(now)
+    # Geri kazanımın gerçek yolları zaman temelli _maybe_sweep_rate_buckets ve
+    # tavan acil-durum süpürmesidir.
+    events.append(now)
     return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}

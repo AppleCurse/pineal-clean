@@ -28,7 +28,6 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
-from collections import deque
 
 import pytest
 
@@ -361,26 +360,100 @@ def test_get_room_rejects_malformed_client_id():
 # P0-5  _rate_buckets anahtarları asla silinmiyor
 # --------------------------------------------------------------------------
 def test_expired_rate_bucket_is_released(monkeypatch):
-    """Penceresi dolmuş kova süpürmede bırakılmalı, taze kova korunmalı.
+    """Kendi penceresi dolmuş kova süpürmede bırakılmalı, taze kova korunmalı.
 
-    Not: başarılı bir `rate_limit` çağrısı kovayı zorunlu olarak YENİDEN
-    ekler (az önce bir istek kaydedildi). Bu yüzden geri kazanım doğrudan
-    süpürme birimi üzerinden doğrulanır.
+    Pencere KOVADA saklanır; süpürme artık "en geniş pencere"yi kullanmaz.
+    Bu, 1 sn'lik bir kovadaki anahtarın 60 sn beklemesini engeller.
     """
     from backend import api
 
     now = time.monotonic()
     api._rate_buckets.clear()
-    api._rate_buckets["stale"] = deque([now - 10_000])
-    api._rate_buckets["empty"] = deque()
-    api._rate_buckets["fresh"] = deque([now])
+    api._rate_buckets["stale"] = api._RateBucket(60)
+    api._rate_buckets["stale"].events.append(now - 61)
+    api._rate_buckets["empty"] = api._RateBucket(60)
+    api._rate_buckets["short-stale"] = api._RateBucket(1)
+    api._rate_buckets["short-stale"].events.append(now - 2)
+    api._rate_buckets["fresh"] = api._RateBucket(60)
+    api._rate_buckets["fresh"].events.append(now)
     monkeypatch.setattr(api, "_MAX_RATE_BUCKETS", 100)
 
     api._sweep_rate_buckets(now)
 
-    assert "stale" not in api._rate_buckets, "süresi dolmuş kova geri verilmedi"
+    assert "stale" not in api._rate_buckets, "penceresi dolmuş kova geri verilmedi"
     assert "empty" not in api._rate_buckets, "boş kova geri verilmedi"
+    assert "short-stale" not in api._rate_buckets, (
+        "kısa pencereli kova, başka kovaların 60 sn'lik penceresi yüzünden "
+        "bellekte tutuluyor — pencere kova başına uygulanmıyor"
+    )
     assert "fresh" in api._rate_buckets, "taze kova yanlışlıkla silindi"
+    api._rate_buckets.clear()
+
+
+def test_rate_buckets_reclaimed_without_waiting_for_cap(monkeypatch):
+    """[AUDIT P0-5 v3 — çapraz denetim bulgusu] Geri kazanım ZAMANA bağlı olmalı.
+
+    Salim'in sorusu: P0-2'deki "eşiğe hiç ulaşılmama" hatasının ikizi burada
+    da var mı? Vardı — süpürme yalnızca tavan (100.000) aşıldığında
+    çalışıyordu. Ölçülen: 30.000 tekil anahtar, pencereleri dolmuş, süpürme
+    çağıran hiçbir şey yok -> 30.000 kova / 26.4 MB süresiz bellekte.
+    Onarım sonrası aynı senaryo 1 kovaya / 0.9 MB'a iniyor.
+    """
+    from backend import api
+
+    api.RATE_LIMITS["openai"] = (60, 1)          # pencere 1 sn
+    api._rate_buckets.clear()
+    monkeypatch.setattr(api, "_RATE_SWEEP_INTERVAL_SECONDS", 1.0)
+    monkeypatch.setattr(api, "_rate_sweep_deadline", time.monotonic() + 1.0)
+
+    for i in range(2_000):                       # tavanın ÇOK altında
+        api.rate_limit(f"tekil-{i}", "openai")
+    assert len(api._rate_buckets) == 2_000
+
+    time.sleep(1.2)                              # pencere + süpürme aralığı doldu
+    api.rate_limit("tetikleyici", "openai")      # TEK istek geri kazanmalı
+
+    assert len(api._rate_buckets) <= 2, (
+        f"{len(api._rate_buckets)} kova kaldı; düşük trafikte tavana hiç "
+        "ulaşılmadığı için süresi dolmuş kovalar geri kazanılmıyor"
+    )
+    api._rate_buckets.clear()
+    api.RATE_LIMITS["openai"] = (60, 60)
+
+
+def test_sweep_does_not_run_on_every_request_at_cap(monkeypatch):
+    """Tavan aşıldığında süpürme HER istekte çalışmamalı (histerezis).
+
+    Ölçülen eski davranış: tavan doluyken 12/12 istek süpürme ödüyordu;
+    üretim tavanında (100.000) bu istek başına ~48-57 ms demekti — kendi
+    kendine DoS. Histerezis tavanın ~%80'ine indiği için süpürme seyrelir.
+    """
+    from backend import api
+
+    api._rate_buckets.clear()
+    monkeypatch.setattr(api, "_MAX_RATE_BUCKETS", 200)
+    monkeypatch.setattr(api, "_RATE_SWEEP_INTERVAL_SECONDS", 1e9)   # yalnız tavan yolu
+
+    sweeps = {"n": 0}
+    real = api._sweep_rate_buckets
+
+    def counting(now):
+        sweeps["n"] += 1
+        real(now)
+
+    monkeypatch.setattr(api, "_sweep_rate_buckets", counting)
+
+    for i in range(200):
+        api.rate_limit(f"dolu-{i}", "openai")
+    sweeps["n"] = 0
+    for i in range(40):
+        api.rate_limit(f"yeni-{i}", "openai")
+
+    assert sweeps["n"] < 40, (
+        f"40 istekte {sweeps['n']} süpürme çalıştı; histerezis yok, "
+        "her istek tüm sözlüğü sıralıyor"
+    )
+    assert len(api._rate_buckets) <= 200
     api._rate_buckets.clear()
 
 
@@ -390,13 +463,16 @@ def test_rate_bucket_count_is_bounded(monkeypatch):
 
     api._rate_buckets.clear()
     monkeypatch.setattr(api, "_MAX_RATE_BUCKETS", 50)
-    monkeypatch.setitem(api.RATE_LIMITS, "openai", (60, 0))   # hepsi anında süresi dolar
+    monkeypatch.setattr(api, "_RATE_SWEEP_INTERVAL_SECONDS", 1e9)  # yalnız tavan yolu
+    # Pencere UZUN tutulur: kovaların hepsi taze. Böylece sayıyı yalnızca LRU
+    # aşaması düşürebilir — aşama 1 (süresi dolmuş) hiçbir şey silmez.
+    monkeypatch.setitem(api.RATE_LIMITS, "openai", (60, 1_000_000))
 
     for i in range(2_000):
         api.rate_limit(f"identity-{i}", "openai")
 
     assert len(api._rate_buckets) <= 50, (
-        f"{len(api._rate_buckets)} kalıcı kova birikti; tavan/süpürme çalışmıyor"
+        f"{len(api._rate_buckets)} kalıcı kova birikti; LRU tavan kırpma çalışmıyor"
     )
     api._rate_buckets.clear()
     monkeypatch.setitem(api.RATE_LIMITS, "openai", (60, 60))
