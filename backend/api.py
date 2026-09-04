@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, HTTPException, WebSocket, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
@@ -123,15 +123,15 @@ async def lifespan(application: FastAPI):
         raise
 
     yield
-    # Kapanista oda gonderici task'lerini iptal et (temiz kapanis)
-    for room in application.state.rooms.values():
-        task = room.get("sender_task")
-        if task and not task.done():
-            task.cancel()
-        for mission in room.get("mission_tasks", {}).values():
-            if not mission.done():
-                mission.cancel()
+    # Kapanista odalari TEK bir yoldan kapat (temiz kapanis). [AUDIT P0-4]
+    # _close_room hem sender hem gorev task'lerini iptal eder; boylece
+    # calisma zamanindaki eviction ile kapanis ayni sozlesmeyi paylasir.
+    for client_id in list(application.state.rooms):
+        room = application.state.rooms.get(client_id)
+        if room is not None:
+            _close_room(client_id, room)
     application.state.rooms.clear()
+    _rooms_last_seen.clear()
 
 app = FastAPI(title="PINEAL-HERETIC v3.0.0-rc.1 API", lifespan=lifespan)
 app.state.llm_backend_mode = "legacy"
@@ -323,16 +323,59 @@ def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int
     return max(minimum, min(value, maximum))
 
 
+# [AUDIT P0-5] defaultdict her erişimde kalıcı bir anahtar yaratıyordu ve hiçbir
+# zaman silinmiyordu (ölçülen: 5000 farklı kimlik -> 5000 kalıcı deque).
+# identity ya token ya da istemci IP'si olduğundan bu, internete açık bir uçta
+# durdurulamaz bir bellek sızıntısıdır. İki savunma eklendi: boşalan kova anında
+# geri verilir ve anahtar sayısı sert bir tavanla sınırlanır.
+_MAX_RATE_BUCKETS = _bounded_env_int("PINEAL_MAX_RATE_BUCKETS", 100_000, 1_000, 10_000_000)
+
+
+def _sweep_rate_buckets(now: float) -> None:
+    """Kova sayısını tavanın altına indirir (yalnızca tavan aşıldığında).
+
+    İki aşama:
+      1. Kesinlikle süresi dolmuş (en geniş pencereyi bile aşmış) veya boş
+         kovalar silinir — bunları düşürmek hiçbir limiti gevşetmez.
+      2. Hâlâ tavandaysa EN ESKİ (LRU) kovalar düşürülür. Kova adı
+         saklanmadığı için pencere başına ayıklama yapılamaz; en eski kova
+         zaten sınıra en yakın olanıdır ve bu yol yalnızca bir acil durum
+         önlemi olarak (tavan aşıldığında) çalışır.
+    """
+    widest_window = max(window for _, window in RATE_LIMITS.values())
+    for key in [
+        k for k, q in _rate_buckets.items()
+        if not q or now - q[-1] > widest_window
+    ]:
+        _rate_buckets.pop(key, None)
+    overflow = len(_rate_buckets) - _MAX_RATE_BUCKETS + 1
+    if overflow > 0:
+        oldest = sorted(
+            _rate_buckets,
+            key=lambda k: _rate_buckets[k][-1] if _rate_buckets[k] else 0.0,
+        )
+        for key in oldest[:overflow]:
+            _rate_buckets.pop(key, None)
+
+
 def rate_limit(key: str, bucket: str) -> bool:
     """True = izin ver; False = limit asildi (429)."""
     limit, window = RATE_LIMITS.get(bucket, (999, 1))
     now = time.monotonic()
-    q = _rate_buckets[key]
+    q = _rate_buckets.get(key)
+    if q is None:
+        if len(_rate_buckets) >= _MAX_RATE_BUCKETS:
+            _sweep_rate_buckets(now)
+        q = _rate_buckets[key]
     while q and now - q[0] > window:
         q.popleft()
     if len(q) >= limit:
         return False
-    q.append(now)
+    # [AUDIT P0-5] Boşalan kova burada silinMEZ: izin verilen her çağrı hemen
+    # aşağıdaki append ile anahtarı geri koyardı, yani silme ölü koddu
+    # (mutasyon testiyle doğrulandı: satırı kaldırmak hiçbir testi kızartmadı).
+    # Geri kazanımın TEK gerçek yolu _sweep_rate_buckets'tir.
+    _rate_buckets.setdefault(key, q).append(now)
     return True
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
@@ -365,23 +408,130 @@ async def _scraper_capability() -> dict:
         _telemetry_capability["value"] = result
         return result
 
+VAULT_FILE = ".pineal_vault.json"
+
+
+def _load_vault(vault_file: str = VAULT_FILE) -> dict:
+    """[AUDIT P0-3] Kasayı HER ZAMAN bir dict olarak döndürür.
+
+    Eskiden ``json.load`` bir try/except içindeydi ama sonrasındaki
+    ``vault.pop(...)`` / ``vault.get(...)`` çağrıları korumasızdı. Dosya bir
+    JSON dizisi/null/metin/sayı içerdiğinde (elle düzenleme, yarım kalan yazma)
+    ``get_room`` TypeError/AttributeError atıyordu ve get_room HER endpoint'in
+    giriş kapısı olduğu için tüm API 500 dönüyordu — üstelik sessizce, log yok.
+    """
+    if not os.path.exists(vault_file):
+        return {}
+    try:
+        with open(vault_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.warning(
+            "VAULT_CORRUPT: %s okunamadı (%s: %s); boş kasa ile devam ediliyor",
+            vault_file, type(exc).__name__, exc,
+        )
+        return {}
+    if not isinstance(data, dict):
+        logger.error(
+            "VAULT_SCHEMA_INVALID: %s bir JSON nesnesi değil (%s); yok sayıldı",
+            vault_file, type(data).__name__,
+        )
+        return {}
+    return data
+
+
+# [AUDIT P0-4] Oda kayıt defteri sınırları. client_id istemcinin seçtiği,
+# doğrulanmayan bir string olduğu için sınırsız oda = sınırsız PinealExecutor +
+# sender task + kuyruk = OOM (ölçülen: 300 farklı client_id -> 300 kalıcı oda).
+_MAX_ROOMS = _bounded_env_int("PINEAL_MAX_ROOMS", 512, 1, 1_000_000)
+# Üretecin biçimi "client_<7 karakter>"; 64 geniş bir pay bırakır.
+_MAX_CLIENT_ID_LENGTH = _bounded_env_int("PINEAL_MAX_CLIENT_ID_LENGTH", 64, 8, 4_096)
+_ROOM_TTL_SECONDS = float(os.getenv("PINEAL_ROOM_TTL_SECONDS", "1800"))
+_rooms_last_seen: Dict[str, float] = {}
+
+
+class RoomCapacityExceeded(RuntimeError):
+    """Eşzamanlı oda tavanı aşıldı; istemciye 503 olarak yansıtılır."""
+
+
+@app.exception_handler(RoomCapacityExceeded)
+async def room_capacity_handler(request: Request, exc: RoomCapacityExceeded):
+    """[AUDIT P0-4] Oda tavanı bir hata değil, kasıtlı bir korumadır.
+
+    500 değil 503 döner: istemci (ve yük dengeleyici) bunu "geçici, tekrar
+    denenebilir" olarak yorumlar; 500 ile karıştırılıp alarm üretilmez.
+    """
+    logger.warning("ROOM_CAPACITY_EXCEEDED path=%s", request.url.path)
+    body = (
+        _openai_error("Server room capacity exceeded", "server_error", "room_capacity_exceeded")
+        if request.url.path.startswith("/v1/")
+        else {"error": {"code": "ROOM_CAPACITY_EXCEEDED", "message": str(exc)}}
+    )
+    return JSONResponse(body, status_code=503)
+
+
+def _close_room(client_id: str, room: dict) -> None:
+    """Bir odayı kapatır: sender task ve görev task'leri iptal edilir."""
+    sender = room.get("sender_task")
+    if sender is not None and not sender.done():
+        sender.cancel()
+    for mission in (room.get("mission_tasks") or {}).values():
+        if not mission.done():
+            mission.cancel()
+    # Not: aktif WebSocket'i olan bir oda _evict_rooms tarafından zaten
+    # atlanır; burada soket kapatmaya çalışmak (close() bir coroutine'dir)
+    # await edilemeyeceği için yapılmaz.
+    app.state.rooms.pop(client_id, None)
+    _rooms_last_seen.pop(client_id, None)
+
+
+def _evict_rooms(now: float) -> int:
+    """Boşta kalmış odaları geri kazanır. Aktif görevi/bağlantısı olan dokunulmaz."""
+    if now - getattr(_evict_rooms, "_last_sweep", 0.0) < 5.0:
+        return 0
+    _evict_rooms._last_sweep = now
+    evicted = 0
+    for client_id in list(app.state.rooms):
+        room = app.state.rooms.get(client_id)
+        if room is None:
+            continue
+        if room.get("mission_tasks") or room.get("websockets"):
+            continue
+        if now - _rooms_last_seen.get(client_id, now) < _ROOM_TTL_SECONDS:
+            continue
+        _close_room(client_id, room)
+        evicted += 1
+    if evicted:
+        logger.info("ROOM_EVICTION: %s boşta kalmış oda kapatıldı", evicted)
+    return evicted
+
+
 def get_room(client_id: str) -> dict:
+    # [AUDIT P0-4] client_id bir güvenlik sınırıdır: biçim VE uzunluk
+    # doğrulanır. validate_identifier'ın regex'i uzunluk sınırlamadığı için
+    # (^[A-Za-z0-9_-]+$) 5 KB'lık bir client_id kabul ediliyordu; her biri
+    # kalıcı bir sözlük anahtarı + tam bir oda demek.
+    if not client_id or len(client_id) > _MAX_CLIENT_ID_LENGTH:
+        raise HTTPException(status_code=400, detail="INVALID_CLIENT_ID")
+    try:
+        validate_identifier(client_id, field="client_id")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="INVALID_CLIENT_ID") from None
+    now = time.monotonic()
+    _evict_rooms(now)
+    _rooms_last_seen[client_id] = now
     if client_id not in app.state.rooms:
+        if len(app.state.rooms) >= _MAX_ROOMS:
+            raise RoomCapacityExceeded(
+                f"ROOM_CAPACITY_EXCEEDED: {_MAX_ROOMS} eşzamanlı oda sınırına ulaşıldı"
+            )
         executor = PinealExecutor(
             log_callback=lambda lvl, msg: sync_log(client_id, lvl, msg),
             emit_event_callback=lambda evt: sync_event(client_id, evt),
             snapshot_callback=lambda s: sync_snapshot(client_id, s)
         )
-        vault = {}
-        
         # Otomatik Kasa (.pineal_vault.json / .env) yüklemesi
-        vault_file = ".pineal_vault.json"
-        if os.path.exists(vault_file):
-            try:
-                with open(vault_file, "r", encoding="utf-8") as f:
-                    vault = json.load(f)
-            except Exception:
-                pass
+        vault = _load_vault()
 
         api_key = vault.pop("api_key", None) or os.getenv("OPENROUTER_API_KEY")
         if api_key and not api_key.startswith("sk-or-v1-YOUR"):
@@ -1836,9 +1986,7 @@ class InterpreterPayload(BaseModel):
 @app.post("/api/experimental/interpreter/execute")
 async def interpreter_execute(req: InterpreterPayload):
     """Open Interpreter ile otonom kod icra eder"""
-    import os
     if os.getenv("ENABLE_INTERPRETER", "false").lower() != "true":
-        from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Interpreter endpoint is disabled by default for security.")
         
     room = get_room(req.client_id)

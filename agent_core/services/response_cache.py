@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from typing import Optional
 
@@ -34,6 +35,17 @@ MAX_CACHABLE_PROMPT_CHARS = 32_000
 # Varsayılan saklama süresi: 7 gün.
 DEFAULT_TTL_SECONDS = 7 * 24 * 3600
 
+# [AUDIT P0-2] Sert satır tavanı: TTL'den bağımsız ikinci bir emniyet kemeri.
+# Süresi dolan ama bir daha HİÇ okunmayan anahtarlar diskte kalıcı kalırdı.
+DEFAULT_MAX_ROWS = 50_000
+
+# Kaç yazma işleminden sonra tam budama (prune) yapılır (ikincil tetikleyici).
+_PRUNE_EVERY_WRITES = 256
+
+# [AUDIT P0-2 v2] Zaman temelli budama aralığı (birincil tetikleyici).
+# Yazım sayısına bağlı tetikleyici düşük trafikte hiç çalışmıyordu.
+DEFAULT_PRUNE_INTERVAL_SECONDS = 900
+
 
 class ResponseCache:
     """SQLite tabanlı, TTL'li, thread-güvenli birebir yanıt cache'i."""
@@ -42,25 +54,73 @@ class ResponseCache:
         self,
         db_path: str = "./cache/responses.db",
         ttl_seconds: Optional[int] = DEFAULT_TTL_SECONDS,
+        max_rows: int = DEFAULT_MAX_ROWS,
+        prune_interval_seconds: float = DEFAULT_PRUNE_INTERVAL_SECONDS,
     ):
         self.enabled = True
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
+        self.max_rows = max(1, int(max_rows))
+        self.prune_interval_seconds = max(1.0, float(prune_interval_seconds))
         self.hits = 0
         self.misses = 0
         self.errors = 0
+        self.pruned = 0
+        self._writes_since_prune = 0
+        # [AUDIT P0-2 v2] Budama tetikleyicisi eskiden YALNIZCA yazım sayısına
+        # bağlıydı (her 256 yazım). Ölçülen boşluk: düşük trafikli ama benzersiz
+        # anahtar üreten bir sistemde 256 eşiğine HİÇ ulaşılmıyor ve süresi
+        # dolmuş ama bir daha okunmayan satırlar sonsuza dek diskte kalıyordu
+        # (10 yazım + TTL doldu + okuma yok -> 10 satır diskte, pruned=0).
+        # Çözüm: ZAMAN temelli son tarih. Her get/put tek bir float karşılaştırması
+        # yapar (~50 ns); süre geçtiyse budama çalışır. Yazım-sayısı tetikleyicisi
+        # yüksek trafikli iş yükleri için ikincil emniyet olarak kalır.
+        self._prune_deadline = time.monotonic() + self.prune_interval_seconds
+        # [AUDIT P0-6] Tek paylaşılan bağlantı + kilit. Eskiden her get/put yeni
+        # bir sqlite3.connect() açıyordu: hem bağlanma maliyeti hem de WAL
+        # olmadan yazıcı kilidi. Bağlantı artık yeniden kullanılıyor ve erişim
+        # tek bir kilit ile serileştiriliyor (SQLite'ın istediği de bu).
+        self._lock = threading.Lock()
+        self._conn: Optional[sqlite3.Connection] = None
         self._init_db()
+        # Açılışta bir kez buda: yeniden başlatma, birikmiş süresi dolmuş
+        # satırları temizlemek için doğal bir fırsattır.
+        self.prune()
 
     def _connect(self) -> sqlite3.Connection:
-        directory = os.path.dirname(self.db_path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        return sqlite3.connect(self.db_path, timeout=5)
+        """Paylaşılan bağlantıyı döndürür; ilk çağrıda açar. Kilit İÇİNDE çağrılır."""
+        if self._conn is not None:
+            return self._conn
+        if self.db_path != ":memory:":
+            directory = os.path.dirname(self.db_path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+        conn = sqlite3.connect(self.db_path, timeout=5, check_same_thread=False)
+        if self.db_path != ":memory:":
+            # [AUDIT P0-2] SIRA ÖNEMLİ: auto_vacuum yalnızca boş bir veritabanında
+            # değişebilir ve "PRAGMA journal_mode=WAL" dosyayı başlatır. WAL
+            # önce çalışırsa auto_vacuum sessizce 0 kalır (ölçülerek doğrulandı).
+            # Not: mevcut bir db için bir kez "PRAGMA auto_vacuum=INCREMENTAL;
+            # VACUUM;" gerekir; yeni kurulumlarda otomatik etkinleşir.
+            conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            # WAL: yazıcı okuyucuyu bloke etmez; NORMAL fsync maliyetini düşürür.
+            conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn = conn
+        return conn
+
+    def close(self) -> None:
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                finally:
+                    self._conn = None
 
     def _init_db(self) -> None:
         try:
-            conn = self._connect()
-            try:
+            with self._lock:
+                conn = self._connect()
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS response_cache (
@@ -74,11 +134,12 @@ class ResponseCache:
                     "CREATE INDEX IF NOT EXISTS idx_rc_created ON response_cache(created_at)"
                 )
                 conn.commit()
-            finally:
-                conn.close()
         except Exception as exc:  # cache asla ana akışı bozmamalı
             logger.warning("ResponseCache başlatılamadı, cache devre dışı: %s", exc)
             self.errors += 1
+            # [AUDIT] Telemetri yalan söylemesin: başlatılamayan cache
+            # "enabled": True raporlamaz.
+            self.enabled = False
 
     @staticmethod
     def make_key(
@@ -113,60 +174,112 @@ class ResponseCache:
             return False
         return True
 
+    def _maybe_prune(self) -> None:
+        """Zamanı geldiyse buda. Her get/put'ta tek float karşılaştırması."""
+        if time.monotonic() >= self._prune_deadline:
+            self.prune()
+
     def get(self, key: str) -> Optional[str]:
+        self._maybe_prune()
         try:
-            conn = self._connect()
-            try:
-                row = conn.execute(
+            with self._lock:
+                row = self._connect().execute(
                     "SELECT value, created_at FROM response_cache WHERE key = ?",
                     (key,),
                 ).fetchone()
-            finally:
-                conn.close()
+                if row is not None and self._is_expired(row[1]):
+                    # [AUDIT P0-2] Süresi dolan satır burada SİLİNİR. Eskiden
+                    # yalnızca yok sayılıyordu ve diskte süresiz kalıyordu.
+                    self._connect().execute(
+                        "DELETE FROM response_cache WHERE key = ?", (key,)
+                    )
+                    self._connect().commit()
+                    self.pruned += 1
+                    row = None
 
             if row is None:
                 self.misses += 1
                 return None
 
-            value, created_at = row
-            if self.ttl_seconds and (time.time() - float(created_at)) > self.ttl_seconds:
-                # Süresi dolmuş — yoksay (yeni değerin üzerine yazılacak)
-                self.misses += 1
-                return None
-
             self.hits += 1
-            return value
+            return row[0]
         except Exception as exc:
             logger.warning("Cache okuma hatası: %s", exc)
             self.errors += 1
             self.misses += 1
             return None
 
+    def _is_expired(self, created_at: float) -> bool:
+        # ttl_seconds=None -> süresiz; 0 -> anında süresi dolar (test sözleşmesi).
+        if self.ttl_seconds is None:
+            return False
+        return (time.time() - float(created_at)) > self.ttl_seconds
+
     def put(self, key: str, value: str) -> None:
         if not value:
             return
         try:
-            conn = self._connect()
-            try:
+            with self._lock:
+                conn = self._connect()
                 conn.execute(
                     "INSERT OR REPLACE INTO response_cache (key, value, created_at) "
                     "VALUES (?, ?, ?)",
                     (key, value, time.time()),
                 )
                 conn.commit()
-            finally:
-                conn.close()
+                self._writes_since_prune += 1
+                due = self._writes_since_prune >= _PRUNE_EVERY_WRITES
+                if due:
+                    self._writes_since_prune = 0
+            if due or time.monotonic() >= self._prune_deadline:
+                self.prune()
         except Exception as exc:
             logger.warning("Cache yazma hatası: %s", exc)
             self.errors += 1
 
+    def prune(self) -> int:
+        """[AUDIT P0-2] Süresi dolmuş ve tavanı aşan satırları kalıcı siler.
+
+        Dönen değer silinen satır sayısıdır. Budama hiçbir zaman ana akışı
+        bozmaz; hata yalnızca loglanır ve sayaca yazılır. Son tarih her
+        çağrıda (başarılı ya da değil) yenilenir; aksi halde budama hatası
+        sürekli yeniden denenir ve her işlemde kilit çekişmesi yaratır.
+        """
+        self._prune_deadline = time.monotonic() + self.prune_interval_seconds
+        try:
+            with self._lock:
+                conn = self._connect()
+                deleted = 0
+                if self.ttl_seconds is not None:
+                    cutoff = time.time() - self.ttl_seconds
+                    deleted += conn.execute(
+                        "DELETE FROM response_cache WHERE created_at < ?", (cutoff,)
+                    ).rowcount or 0
+                if self.max_rows:
+                    deleted += conn.execute(
+                        "DELETE FROM response_cache WHERE key NOT IN ("
+                        "  SELECT key FROM response_cache ORDER BY created_at DESC LIMIT ?"
+                        ")",
+                        (self.max_rows,),
+                    ).rowcount or 0
+                conn.commit()
+                if deleted:
+                    self.pruned += deleted
+                    conn.execute("PRAGMA incremental_vacuum")
+                return deleted
+        except Exception as exc:
+            logger.warning("Cache budanamadı: %s", exc)
+            self.errors += 1
+            return 0
+
     def stats(self) -> dict:
         total = self.hits + self.misses
         return {
-            "enabled": True,
+            "enabled": bool(self.enabled),
             "hits": self.hits,
             "misses": self.misses,
             "errors": self.errors,
+            "pruned_rows": self.pruned,
             "hit_rate": f"{(self.hits / total * 100):.1f}%" if total else "0.0%",
         }
 
@@ -177,6 +290,8 @@ class NullCache:
     enabled = False
     hits = 0
     misses = 0
+    errors = 0
+    pruned = 0
 
     def is_cachable(self, prompt: str, images: Optional[list]) -> bool:
         return False
@@ -187,8 +302,23 @@ class NullCache:
     def put(self, key: str, value: str) -> None:
         return None
 
+    def prune(self) -> int:
+        return 0
+
+    def close(self) -> None:
+        return None
+
     def stats(self) -> dict:
-        return {"enabled": False}
+        # ResponseCache.stats() ile aynı sözleşme: tüketici tarafında
+        # KeyError riski olmasın diye tüm alanlar mevcut.
+        return {
+            "enabled": False,
+            "hits": 0,
+            "misses": 0,
+            "errors": 0,
+            "pruned_rows": 0,
+            "hit_rate": "0.0%",
+        }
 
 
 def build_cache_from_env() -> "ResponseCache | NullCache":
@@ -203,4 +333,20 @@ def build_cache_from_env() -> "ResponseCache | NullCache":
         ttl = int(os.getenv("PINEAL_CACHE_TTL", str(DEFAULT_TTL_SECONDS)))
     except ValueError:
         ttl = DEFAULT_TTL_SECONDS
-    return ResponseCache(db_path=db_path, ttl_seconds=ttl)
+    try:
+        max_rows = int(os.getenv("PINEAL_CACHE_MAX_ROWS", str(DEFAULT_MAX_ROWS)))
+    except ValueError:
+        max_rows = DEFAULT_MAX_ROWS
+    try:
+        prune_interval = float(os.getenv(
+            "PINEAL_CACHE_PRUNE_INTERVAL_SECONDS",
+            str(DEFAULT_PRUNE_INTERVAL_SECONDS),
+        ))
+    except ValueError:
+        prune_interval = DEFAULT_PRUNE_INTERVAL_SECONDS
+    return ResponseCache(
+        db_path=db_path,
+        ttl_seconds=ttl,
+        max_rows=max_rows,
+        prune_interval_seconds=prune_interval,
+    )

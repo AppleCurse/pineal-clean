@@ -1205,7 +1205,9 @@ class LLMGateway:
                 system_prompt=system_prompt,
                 temperature=temperature,
             )
-            cached = self.cache.get(cache_key)
+            # [AUDIT P0-6] sqlite erişimi SENKRONdur; event loop üzerinde
+            # çalıştırılırsa tüm API donar (ölçülen 30.7 ms / 300 okuma).
+            cached = await asyncio.to_thread(self.cache.get, cache_key)
             if cached is not None:
                 log_call(cache_hit=True, record_provider="cache")
                 return cached
@@ -1296,7 +1298,8 @@ class LLMGateway:
 
                 if cache_key and content:
                     try:
-                        self.cache.put(cache_key, content)
+                        # [AUDIT P0-6] yazma da thread'e devredilir (bkz. get).
+                        await asyncio.to_thread(self.cache.put, cache_key, content)
                     except Exception as cache_error:
                         # A cache write must never retry an already billed call.
                         logging.warning("LLM response cache write failed: %s", cache_error)

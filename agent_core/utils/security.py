@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import os
 import re
 import secrets
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 _BLOCKED_HOSTNAMES = frozenset({
@@ -28,6 +31,13 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(?:authorization\s*:\s*bearer|bearer)\s+[A-Za-z0-9._~+/=-]{6,}"),
     re.compile(r"(?i)\b(?:sessionid|auth_token|access_token|api[_-]?key|cookie)\s*[=:]\s*[^\s;,]+"),
 )
+
+# [AUDIT P2-10] Güvenlik varsayılanı fail-CLOSED'dır: PINEAL_ENV yalnızca
+# aşağıdaki açık geliştirme adlarından biriyse kimlik doğrulama kapatılabilir.
+# Boş/tanınmayan/yazım-hatalı bir değer ÜRETİM sayılır (bkz. _is_production).
+_DEVELOPMENT_ENVIRONMENTS = frozenset({
+    "development", "dev", "local", "localhost", "test", "testing", "ci",
+})
 
 
 class UnsafeURLError(ValueError):
@@ -57,13 +67,33 @@ class ResolvedPublicURL:
     host_header: str
 
 
+def _environment_name() -> str:
+    """PINEAL_ENV'in normalize edilmiş değeri; set edilmemişse boş dize."""
+    return os.getenv("PINEAL_ENV", "").strip().lower()
+
+
 def _is_production() -> bool:
-    return os.getenv("PINEAL_ENV", "development").strip().lower() in {"production", "prod"}
+    """[AUDIT P2-10] fail-closed ortam tespiti.
+
+    Eski davranış yalnızca {"production", "prod"} değerlerini üretim sayıyordu;
+    PINEAL_ENV unutulduğunda (en olası dağıtım hatası) tüm /api/* ve /v1/*
+    kimlik doğrulamasız açılıyordu. Artık yalnızca _DEVELOPMENT_ENVIRONMENTS
+    içindeki AÇIK bir değer geliştirme sayılır; boş ya da tanınmayan her değer
+    üretim kabul edilir ve PINEAL_TOKEN zorunlu hale gelir.
+    """
+    return _environment_name() not in _DEVELOPMENT_ENVIRONMENTS
 
 
 def security_posture() -> dict:
     """Validate auth posture and describe development's explicit open mode."""
-    environment = "production" if _is_production() else "development"
+    configured_environment = os.getenv("PINEAL_ENV", "").strip()
+    environment = "development" if not _is_production() else "production"
+    if not configured_environment:
+        logger.warning(
+            "AUTH_FAIL_CLOSED: PINEAL_ENV set edilmemiş; ortam ÜRETİM varsayıldı. "
+            "Yerel geliştirme için PINEAL_ENV=development (veya "
+            "PINEAL_REQUIRE_AUTH=false) açıkça ayarlanmalı."
+        )
     token = os.getenv("PINEAL_TOKEN", "")
     explicitly_required = os.getenv("PINEAL_REQUIRE_AUTH", "false").strip().lower() == "true"
     required = environment == "production" or explicitly_required
@@ -233,23 +263,119 @@ def _environment_secret_values() -> tuple[str, ...]:
     )
 
 
+# [AUDIT P0-1] Redaksiyon eskiden her metin alanı için (a) tüm os.environ'ı
+# yeniden tarıyor ve (b) her sır için ayrı bir str.replace geçişi yapıyordu:
+# N metin x M sır. Ölçülen maliyet 900 string'lik tek telemetri gövdesinde
+# 67.8 ms, 200 mesajda 13.60 s saf CPU (event loop üzerinde).
+# Yeni tasarım:
+#   * sır listesi redaksiyon BAŞINA bir kez toplanır, yaprak başına değil
+#     (redact_structure özyinelemeye hazır deseni aşağıya taşır),
+#   * tüm sırlar + genel kalıplar TEK derlenmiş alternation regex'inde
+#     birleşir -> metin başına N+3 geçiş yerine 1 geçiş,
+#   * derlenmiş desen sır kümesiyle önbelleğe alınır (sınırlı).
+_REDACTOR_CACHE: dict[tuple[str, ...], re.Pattern] = {}
+_REDACTOR_CACHE_LIMIT = 8
+_GLOBAL_FLAG_PREFIX = re.compile(r"^\(\?([aiLmsx]+)\)")
+_FLAG_LETTERS = (
+    (re.IGNORECASE, "i"),
+    (re.MULTILINE, "m"),
+    (re.DOTALL, "s"),
+    (re.VERBOSE, "x"),
+    (re.ASCII, "a"),
+    (re.LOCALE, "L"),
+)
+
+
+def _scoped_pattern_source(pattern: re.Pattern) -> str:
+    """Bir deseni, alternation içine GÜVENLE gömülebilir hale getirir.
+
+    Genel (global) satır-içi bayraklar — ör. ``(?i)`` — bir alternation'ın
+    ortasında Python 3.11'de ``re.error: global flags not at the start``
+    üretir. Bu yüzden bayraklar kapsamlı (scoped) ``(?i:...)`` grubuna
+    taşınır; ``flags=`` ile verilmiş bayraklar da aynı biçimde korunur.
+    """
+    source = pattern.pattern
+    letters = ""
+    inline = _GLOBAL_FLAG_PREFIX.match(source)
+    if inline:
+        letters = inline.group(1)
+        source = source[inline.end():]
+    for flag, letter in _FLAG_LETTERS:
+        if pattern.flags & flag and letter not in letters:
+            letters += letter
+    return f"(?{letters}:{source})" if letters else f"(?:{source})"
+
+
+def _compile_combined(literals: list[str]):
+    parts = literals + [_scoped_pattern_source(p) for p in _SECRET_PATTERNS]
+    return re.compile("|".join(parts))
+
+
+def _redaction_pattern(secrets: tuple[str, ...]) -> re.Pattern:
+    cached = _REDACTOR_CACHE.get(secrets)
+    if cached is not None:
+        return cached
+    # En uzun sır önce: str.replace'in "ilk eşleşen kazanır" davranışı korunur.
+    literals = [re.escape(item) for item in sorted(
+        {item for item in secrets if item}, key=len, reverse=True
+    )]
+    try:
+        compiled = _compile_combined(literals)
+    except re.error:  # pragma: no cover - güvenlik ağı
+        logger.warning(
+            "Birleşik redaksiyon deseni derlenemedi; birebir eşdeğer ayrı geçişlere düşülüyor"
+        )
+        compiled = _FallbackRedactor(literals)
+    if len(_REDACTOR_CACHE) >= _REDACTOR_CACHE_LIMIT:
+        _REDACTOR_CACHE.clear()
+    _REDACTOR_CACHE[secrets] = compiled
+    return compiled
+
+
+class _FallbackRedactor:
+    """Birleşik desen derlenemezse birebir eşdeğer çok-geçişli redaksiyon."""
+
+    __slots__ = ("_literals",)
+
+    def __init__(self, literals: list[str]):
+        self._literals = literals
+
+    def sub(self, replacement: str, text: str) -> str:
+        for literal in self._literals:
+            text = re.sub(literal, replacement, text)
+        for pattern in _SECRET_PATTERNS:
+            text = pattern.sub(replacement, text)
+        return text
+
+
+def _apply_redaction(text: str, secrets: tuple[str, ...]) -> str:
+    return _redaction_pattern(secrets).sub("[REDACTED]", text)
+
+
 def redact_text(value: object, *, extra_secrets: Iterable[str] = ()) -> str:
-    text = str(value)
-    for secret in (*_environment_secret_values(), *tuple(extra_secrets)):
-        if secret:
-            text = text.replace(secret, "[REDACTED]")
-    for pattern in _SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
-    return text
+    secrets = _environment_secret_values()
+    extra = tuple(extra_secrets)
+    if extra:
+        secrets = secrets + extra
+    return _apply_redaction(str(value), secrets)
 
 
-def redact_structure(value: object) -> object:
+def _redact_with(value: object, secrets: tuple[str, ...]) -> object:
+    """Özyinelemeli yardımcı: sır listesi bir kez toplanır, aşağıya taşınır."""
     if isinstance(value, dict):
-        return {key: redact_structure(item) for key, item in value.items()}
+        return {key: _redact_with(item, secrets) for key, item in value.items()}
     if isinstance(value, list):
-        return [redact_structure(item) for item in value]
+        return [_redact_with(item, secrets) for item in value]
     if isinstance(value, tuple):
-        return tuple(redact_structure(item) for item in value)
+        return tuple(_redact_with(item, secrets) for item in value)
     if isinstance(value, str):
-        return redact_text(value)
+        return _apply_redaction(value, secrets)
     return value
+
+
+def redact_structure(value: object, *, extra_secrets: Iterable[str] = ()) -> object:
+    secrets = _environment_secret_values()
+    extra = tuple(extra_secrets)
+    if extra:
+        secrets = secrets + extra
+    return _redact_with(value, secrets)

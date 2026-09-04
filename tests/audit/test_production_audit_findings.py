@@ -1,0 +1,569 @@
+"""Üretim denetimi (2026-09-04) — kapatılan kusurların REGRESYON KORUMASI.
+
+Bu dosya yeni bir davranış sözleşmesi icat etmez; denetimde ölçülen somut
+kusurların geri gelmesini engeller.
+
+Durum (2026-09-04 onarım turu):
+  KAPATILDI  P0-1 redact O(N x M)          -> iplik önbellekli tek geçiş regex
+             P0-2 cache prune yok          -> get() siler + periyodik prune
+             P0-3 dict olmayan vault 500   -> _load_vault() her zaman dict
+             P0-4 rooms eviction yok       -> TTL eviction + tavan + id doğrulama
+             P0-5 _rate_buckets sızıntısı  -> boş kova iadesi + LRU tavan
+             P1-8 time.sleep event loop    -> async _random_delay
+             P2-10 auth fail-open          -> PINEAL_ENV belirsizse üretim
+  AÇIK       P1-6 extract_username doğrulaması yok
+             P1-7 evaluate_confidence üretimde çağrılmıyor
+             P2-9 bozuk learnings.json /api/override'i 500 yapıyor
+
+AÇIK maddeler `xfail(strict=False)` ile işaretlidir: onarıldıklarında XPASS'e
+dönerler ve işaretin kaldırılması gerektiğini söylerler. KAPATILAN maddeler
+artık normal testtir — davranış geri gelirse suite KIZARIR.
+
+Çalıştırma:
+    pytest tests/audit/test_production_audit_findings.py -v
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import time
+from collections import deque
+
+import pytest
+
+from agent_core.services.response_cache import ResponseCache
+from agent_core.utils.security import redact_structure
+
+
+# --------------------------------------------------------------------------
+# P0-1  redact_text her string için tüm environment'ı yeniden tarıyor
+# --------------------------------------------------------------------------
+def test_redact_structure_recomputes_env_secrets_per_string(monkeypatch):
+    """Her metin alanı için `_environment_secret_values()` yeniden kuruluyor.
+
+    Ölçülen maliyet: 900 string'lik tek bir telemetri gövdesi için 900 kez
+    env taraması. Telemetri yolu (broadcast_log / broadcast_event) bunu
+    event loop üzerinde senkron çağırır.
+    """
+    import agent_core.utils.security as sec
+
+    for i in range(40):
+        monkeypatch.setenv(f"AUDIT_SECRET_{i}", "z" * 24 + str(i))
+
+    calls = {"n": 0}
+    original = sec._environment_secret_values
+
+    def spy(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sec, "_environment_secret_values", spy)
+    payload = {"rows": [{"a": f"x{i}", "b": "y", "c": "z"} for i in range(300)]}
+
+    redact_structure(payload)
+
+    # 900 metin alanı -> 900 env taraması. Beklenen: 1 (önbellekli).
+    assert calls["n"] == 1, (
+        f"_environment_secret_values {calls['n']} kez çağrıldı; "
+        "sır listesi önbelleğe alınmadığı için maliyet metin alanı x env sayısı"
+    )
+
+
+# --------------------------------------------------------------------------
+# P0-2  ResponseCache süresi dolan satırları asla silmiyor (disk sızıntısı)
+# --------------------------------------------------------------------------
+def test_response_cache_prunes_expired_rows(tmp_path):
+    """Süresi dolan satırlar silinmeli ve ayrılan alan yeniden kullanılmalı.
+
+    Ham dosya boyutu bilinçli olarak ÖLÇÜLMÜYOR: SQLite boş sayfaları ancak
+    tam bir VACUUM ile işletim sistemine iade eder. Sızıntının gerçek ölçütü
+    (a) kalan satır sayısı ve (b) aynı hacim tekrar yazıldığında veritabanının
+    BÜYÜMEMESİdir — yani alan geri kazanılıp yeniden kullanılıyor mu.
+    """
+    db = tmp_path / "responses.db"
+    cache = ResponseCache(db_path=str(db), ttl_seconds=1)
+
+    for i in range(500):
+        cache.put(f"k{i}", "gövde " * 50)
+    pages_before = _page_count(db)
+
+    time.sleep(1.1)
+    assert all(cache.get(f"k{i}") is None for i in range(500))
+
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("SELECT COUNT(*) FROM response_cache").fetchone()[0]
+        free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    assert rows == 0, f"{rows} süresi dolmuş satır hâlâ duruyor (disk sızıntısı)"
+    assert free > 0, "silinen satırların alanı serbest bırakılmadı"
+    assert cache.pruned >= 500, f"pruned sayacı {cache.pruned}; silmeler izlenmiyor"
+
+    # Alan gerçekten yeniden kullanılıyor mu: aynı hacmi tekrar yaz.
+    for i in range(500):
+        cache.put(f"yeni{i}", "gövde " * 50)
+    assert _page_count(db) <= pages_before + 4, (
+        f"veritabanı {_page_count(db)} sayfaya büyüdü (önce {pages_before}); "
+        "serbest alan yeniden kullanılmıyor"
+    )
+
+
+def test_low_traffic_expired_rows_are_pruned_by_time_not_write_count(tmp_path):
+    """[AUDIT P0-2 v2] Düşük trafikte budama ZAMANA bağlı olmalı.
+
+    İlk onarım budamayı yalnızca yazım SAYISINA bağlamıştı (her 256 yazım).
+    Ölçülen boşluk: az sayıda ama benzersiz anahtar üreten bir sistemde 256
+    eşiğine HİÇ ulaşılmıyor, süresi dolmuş satırlar sonsuza dek diskte
+    kalıyordu (10 yazım + TTL doldu + okuma yok -> 10 satır diskte, pruned=0).
+    Bu test o senaryoyu birebir kurar.
+    """
+    cache = ResponseCache(
+        db_path=str(tmp_path / "low.db"), ttl_seconds=1, prune_interval_seconds=1.0
+    )
+    for i in range(10):                       # 256 eşiğinin ÇOK altında
+        cache.put(f"tekil-{i}", "gövde " * 50)
+
+    time.sleep(1.3)                           # hepsinin TTL'i ve budama aralığı doldu
+    cache.put("yeni-anahtar", "x")            # tek bir masum yazma tetiklemeli
+
+    with sqlite3.connect(tmp_path / "low.db") as conn:
+        rows = conn.execute("SELECT COUNT(*) FROM response_cache").fetchone()[0]
+    assert rows == 1, (
+        f"{rows} satır kaldı; süresi dolmuş 10 satır budanmadı "
+        "(düşük trafikte yazım-sayısı tetikleyicisi hiç çalışmaz)"
+    )
+    assert cache.pruned >= 10, f"pruned={cache.pruned}; zaman temelli budama çalışmadı"
+
+
+def test_startup_prune_clears_rows_left_by_previous_process(tmp_path):
+    """Yeniden başlatma, önceki süreçten kalan süresi dolmuş satırları hemen temizlemeli.
+
+    Zaman temelli tetikleyici ilk işleme kadar bekler (varsayılan 15 dk).
+    Açılış budaması olmazsa bir çökme/yeniden başlatma döngüsünde birikmiş
+    satırlar o süre boyunca diskte kalır. Bu test tam olarak o boşluğu kapatır:
+    önceki "süreç" satır bırakır, yeni örnek açılır açılmaz temizlemelidir —
+    hiçbir get/put çağrısı yapılmadan.
+    """
+    db = tmp_path / "restart.db"
+
+    previous = ResponseCache(db_path=str(db), ttl_seconds=3600)
+    for i in range(25):
+        previous.put(f"eski-{i}", "gövde " * 40)
+    previous.close()
+
+    # Yeni süreç: TTL artık 0 -> mevcut 25 satırın hepsi süresi dolmuş sayılır.
+    restarted = ResponseCache(db_path=str(db), ttl_seconds=0)
+
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("SELECT COUNT(*) FROM response_cache").fetchone()[0]
+    assert rows == 0, (
+        f"açılışta {rows} süresi dolmuş satır bırakıldı; "
+        "yeniden başlatma birikimi temizlemiyor"
+    )
+    assert restarted.pruned >= 25
+    restarted.close()
+
+
+def test_prune_deadline_is_rearmed_even_when_prune_fails(tmp_path, monkeypatch):
+    """Budama patlarsa son tarih yine de yenilenmeli.
+
+    Aksi halde her get/put budamayı yeniden dener: kilit çekişmesi + her
+    işlemde tekrarlanan hata logu (sessiz performans çöküşü).
+    """
+    cache = ResponseCache(db_path=str(tmp_path / "fail.db"), ttl_seconds=60)
+    cache._prune_deadline = 0.0               # "süresi geçmiş" durumuna zorla
+    monkeypatch.setattr(cache, "_conn", None)
+    monkeypatch.setattr(cache, "_connect", lambda: (_ for _ in ()).throw(OSError("disk yok")))
+
+    before = cache._prune_deadline
+    cache.get("herhangi")
+    assert cache._prune_deadline > before, "hatalı budama son tarihi yenilemedi"
+    assert cache.errors >= 1
+
+
+def test_cache_pragmas_are_applied(tmp_path):
+    """WAL/auto_vacuum ayarları GERÇEKTEN etkin olmalı.
+
+    Sıra tuzağı: `PRAGMA journal_mode=WAL` veritabanı dosyasını başlatır ve
+    sonrasında `auto_vacuum` değiştirilemez (sessizce 0 kalır). Bu test o
+    regresyonu yakalar; ayrıca :memory: için dosya-özel pragmaların
+    atlanmadığını doğrular.
+    """
+    cache = ResponseCache(db_path=str(tmp_path / "pragma.db"), ttl_seconds=60)
+    conn = cache._conn
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA auto_vacuum").fetchone()[0] == 2, (
+        "auto_vacuum=INCREMENTAL uygulanmadı — PRAGMA sırası bozulmuş "
+        "(journal_mode=WAL önce çalışırsa auto_vacum sessizce 0 kalır)"
+    )
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+
+    memory_cache = ResponseCache(db_path=":memory:", ttl_seconds=60)
+    assert memory_cache._conn.execute("PRAGMA journal_mode").fetchone()[0] == "memory"
+    # :memory: üzerinde de yazma/okuma çalışmalı (paylaşılan bağlantı sayesinde)
+    memory_cache.put("k", "v")
+    assert memory_cache.get("k") == "v"
+
+
+def _page_count(db) -> int:
+    with sqlite3.connect(db) as conn:
+        return conn.execute("PRAGMA page_count").fetchone()[0]
+
+
+# --------------------------------------------------------------------------
+# P0-3  get_room(): dict olmayan .pineal_vault.json 500 üretir
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("raw", ['["a","b"]', "null", '"düz metin"', "42"])
+def test_get_room_survives_non_dict_vault(tmp_path, monkeypatch, raw):
+    """`.pineal_vault.json` elle düzenlenip bozulursa API tamamen ölür.
+
+    `json.load` try/except içinde ama sonraki `vault.pop/get` çağrıları değil.
+    """
+    from backend import api
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".pineal_vault.json").write_text(raw, encoding="utf-8")
+    api.app.state.rooms.clear()
+
+    room = api.get_room("audit-client")  # TypeError/AttributeError atmamalı
+    assert isinstance(room["vault"], dict)
+    api.app.state.rooms.clear()
+
+
+# --------------------------------------------------------------------------
+# P0-4  app.state.rooms için hiçbir eviction/TTL yok
+# --------------------------------------------------------------------------
+def test_idle_rooms_are_reclaimed(monkeypatch):
+    """Boşta kalan odalar geri kazanılmalı; aktif görevi olanlar korunmalı."""
+    from backend import api
+
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+    monkeypatch.setattr(api, "_ROOM_TTL_SECONDS", 0.0)
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+
+    api.get_room("idle-room")
+    assert len(api.app.state.rooms) == 1
+
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+    api.get_room("trigger-sweep")          # herhangi bir oda erişimi süpürmeyi tetikler
+
+    assert "idle-room" not in api.app.state.rooms, "boşta kalan oda geri kazanılmadı"
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+
+
+def test_room_ttl_uses_real_production_window(monkeypatch):
+    """Üretim sabitiyle (1800 sn) TTL karşılaştırması doğru mu?
+
+    Sahte kısa bir TTL ile test etmek karşılaştırma mantığını kanıtlamaz.
+    Burada saat `time.monotonic` üzerinden kontrol edilir ve modülün GERÇEK
+    varsayılanı olan 1800 saniye kullanılır: 1799. sn'de oda yaşamalı,
+    1801. sn'de geri kazanılmalı.
+    """
+    from backend import api
+
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+    assert api._ROOM_TTL_SECONDS == 1800.0, (
+        f"üretim TTL sabiti değişmiş: {api._ROOM_TTL_SECONDS}"
+    )
+
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(api.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+
+    api.get_room("ttl-room")
+    assert "ttl-room" in api.app.state.rooms
+
+    # 1799 saniye sonra: hâlâ taze, dokunulmamalı
+    clock["now"] += 1_799.0
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+    api.get_room("probe-1")
+    assert "ttl-room" in api.app.state.rooms, "oda TTL dolmadan erken geri kazanıldı"
+
+    # 1801 saniyeye ulaş: süresi dolmuş olmalı
+    clock["now"] += 2.0
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+    api.get_room("probe-2")
+    assert "ttl-room" not in api.app.state.rooms, (
+        "oda 1800 sn sonra geri kazanılmadı — TTL karşılaştırması bozuk"
+    )
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+
+
+def test_active_rooms_survive_eviction(monkeypatch):
+    """Aktif görevi olan bir oda TTL geçmiş olsa bile ASLA geri kazanılmamalı.
+
+    Aksi halde çalışan bir görev ortasında executor'ı altından çekilir ve
+    görev sessizce kaybolur.
+    """
+    import asyncio
+
+    from backend import api
+
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+    clock = {"now": 5_000.0}
+    monkeypatch.setattr(api.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+
+    room = api.get_room("busy-room")
+    never_finishing = asyncio.get_event_loop_policy().new_event_loop().create_future()
+    room["mission_tasks"]["op_test"] = never_finishing
+
+    clock["now"] += 99_999.0                  # TTL'i fersah fersah aş
+    monkeypatch.setattr(api._evict_rooms, "_last_sweep", 0.0, raising=False)
+    api.get_room("probe")
+
+    assert "busy-room" in api.app.state.rooms, "aktif görevi olan oda geri kazanıldı"
+    never_finishing.cancel()
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+
+
+def test_room_capacity_is_bounded(monkeypatch):
+    """Oda tavanı aşılınca yeni oda YARATILMAMALI, 503 üretilmeli."""
+    from backend import api
+
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+    monkeypatch.setattr(api, "_MAX_ROOMS", 4)
+    monkeypatch.setattr(api, "_ROOM_TTL_SECONDS", 10_000.0)
+
+    for i in range(4):
+        api.get_room(f"cap-{i}")
+    assert len(api.app.state.rooms) == 4
+
+    with pytest.raises(api.RoomCapacityExceeded):
+        api.get_room("cap-overflow")
+    assert len(api.app.state.rooms) == 4, "tavan aşıldığı halde oda yaratıldı"
+    api.app.state.rooms.clear()
+    api._rooms_last_seen.clear()
+
+
+def test_get_room_rejects_malformed_client_id():
+    """client_id bir güvenlik sınırıdır: biçim doğrulaması olmadan sınırsız
+    uzunlukta/şekilde anahtarlarla kayıt defteri şişirilebilir."""
+    from fastapi import HTTPException
+
+    from backend import api
+
+    api.app.state.rooms.clear()
+    for bad in ["../etc/passwd", "a" * 5_000, "boşluk var", ""]:
+        with pytest.raises(HTTPException):
+            api.get_room(bad)
+    assert len(api.app.state.rooms) == 0
+    api.app.state.rooms.clear()
+
+
+# --------------------------------------------------------------------------
+# P0-5  _rate_buckets anahtarları asla silinmiyor
+# --------------------------------------------------------------------------
+def test_expired_rate_bucket_is_released(monkeypatch):
+    """Penceresi dolmuş kova süpürmede bırakılmalı, taze kova korunmalı.
+
+    Not: başarılı bir `rate_limit` çağrısı kovayı zorunlu olarak YENİDEN
+    ekler (az önce bir istek kaydedildi). Bu yüzden geri kazanım doğrudan
+    süpürme birimi üzerinden doğrulanır.
+    """
+    from backend import api
+
+    now = time.monotonic()
+    api._rate_buckets.clear()
+    api._rate_buckets["stale"] = deque([now - 10_000])
+    api._rate_buckets["empty"] = deque()
+    api._rate_buckets["fresh"] = deque([now])
+    monkeypatch.setattr(api, "_MAX_RATE_BUCKETS", 100)
+
+    api._sweep_rate_buckets(now)
+
+    assert "stale" not in api._rate_buckets, "süresi dolmuş kova geri verilmedi"
+    assert "empty" not in api._rate_buckets, "boş kova geri verilmedi"
+    assert "fresh" in api._rate_buckets, "taze kova yanlışlıkla silindi"
+    api._rate_buckets.clear()
+
+
+def test_rate_bucket_count_is_bounded(monkeypatch):
+    """Farklı kimlikler sınırsız sayıda kalıcı sözlük girdisi bırakmamalı."""
+    from backend import api
+
+    api._rate_buckets.clear()
+    monkeypatch.setattr(api, "_MAX_RATE_BUCKETS", 50)
+    monkeypatch.setitem(api.RATE_LIMITS, "openai", (60, 0))   # hepsi anında süresi dolar
+
+    for i in range(2_000):
+        api.rate_limit(f"identity-{i}", "openai")
+
+    assert len(api._rate_buckets) <= 50, (
+        f"{len(api._rate_buckets)} kalıcı kova birikti; tavan/süpürme çalışmıyor"
+    )
+    api._rate_buckets.clear()
+    monkeypatch.setitem(api.RATE_LIMITS, "openai", (60, 60))
+
+
+# --------------------------------------------------------------------------
+# P1-6  extract_username URL path'ini doğrulamıyor -> yanlış hedef kazıma
+# --------------------------------------------------------------------------
+@pytest.mark.xfail(reason="P1-6 AÇIK: extract_username profil-disi URL'yi hedef sanıyor", strict=False)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.instagram.com/p/CxYz123Ab/",
+        "https://www.instagram.com/reel/DaBc9/",
+        "https://www.instagram.com/explore/tags/kedi/",
+        "https://www.instagram.com/stories/someone/123/",
+        "https://www.instagram.com/accounts/login/",
+        "https://www.instagram.com/",
+    ],
+)
+def test_extract_username_rejects_non_profile_urls(url):
+    """Modül dokümanı 'yanlış hedef kazınmaz' diyor; kod path'i doğrulamıyor."""
+    from agent_core.services.platform_registry import (
+        effective_scraper_type,
+        extract_username,
+    )
+
+    assert effective_scraper_type(url) == "instagram"
+    username = extract_username(url)
+    # Şu an: 'CxYz123Ab', 'kedi', '123', 'login', 'www.instagram.com' ...
+    assert username not in {
+        "CxYz123Ab", "DaBc9", "kedi", "123", "login", "www.instagram.com",
+    }, f"{url!r} profil URL'si değil ama {username!r} hedef kullanıcı adı kabul edildi"
+
+
+# --------------------------------------------------------------------------
+# P1-7  Scraper anti-halüsinasyon güven kapısı üretimde hiç çağrılmıyor
+# --------------------------------------------------------------------------
+@pytest.mark.xfail(reason="P1-7 AÇIK: evaluate_confidence uretimde hic cagrilmıyor", strict=False)
+def test_evaluate_confidence_is_wired_into_production():
+    """Testler evaluate_confidence'ı doğruluyor, üretim kodu hiç çağırmıyor."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    callers = []
+    for path in (root / "agent_core").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"\.evaluate_confidence\(", text):
+            callers.append(f"{path.relative_to(root)}:{text[:match.start()].count(chr(10)) + 1}")
+    assert callers, (
+        "evaluate_confidence yalnızca tanımıyla var; hiçbir üretim yolundan "
+        "çağrılmıyor — 'skor < 0.6 ise halt' sözleşmesi uygulanmıyor"
+    )
+
+
+# --------------------------------------------------------------------------
+# P1-8  Scraper event loop'u 2-5 saniye bloke ediyor
+# --------------------------------------------------------------------------
+def test_scraper_delay_does_not_block_event_loop():
+    """_random_delay event loop'u bloke etmemeli.
+
+    Kaynak metninde "time.sleep" aramak yeterli değil (docstring de eşleşir);
+    asıl sözleşme: fonksiyon bir coroutine olmalı VE çağrı noktası await etmeli.
+    """
+    import inspect
+
+    from agent_core.scraper.instagram_ghost import InstagramGhostScraper
+
+    assert inspect.iscoroutinefunction(InstagramGhostScraper._random_delay), (
+        "_random_delay senkron; async scrape_async içinden çağrıldığında tüm "
+        "event loop 2-5 saniye donar"
+    )
+    source = inspect.getsource(InstagramGhostScraper.scrape_async)
+    assert "await self._random_delay()" in source, (
+        "çağrı noktası await etmiyor — coroutine hiç çalışmaz ya da uyarı üretir"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scraper_delay_yields_to_event_loop(monkeypatch):
+    """Davranışsal kanıt: bekleme sırasında event loop başka iş çalıştırabilmeli."""
+    import asyncio
+
+    from agent_core.scraper.instagram_ghost import InstagramGhostScraper
+
+    original_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: original_sleep(0))
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        for _ in range(20):
+            await asyncio.sleep(0)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    await InstagramGhostScraper()._random_delay()
+    await task
+    assert ticks > 0, "bekleme sırasında event loop hiç işlemedi (senkron blokaj)"
+
+
+# --------------------------------------------------------------------------
+# P2-9  /api/override bozuk learnings.json ile kalıcı 500
+# --------------------------------------------------------------------------
+@pytest.mark.xfail(reason="P2-9 AÇIK: bozuk learnings.json /api/override'i kalici 500 yapar", strict=False)
+@pytest.mark.parametrize("raw", ['{ bozuk', '{"fact": "x"}'])
+def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
+    from fastapi.testclient import TestClient
+
+    from backend import api
+
+    monkeypatch.setenv("PINEAL_MEMORY_PATH", str(tmp_path))
+    api.app.state.rooms.clear()
+    room = api.get_room("audit-override")
+    storage = room["executor"].memory.storage_path
+    os.makedirs(storage, exist_ok=True)
+    with open(os.path.join(storage, "learnings.json"), "w", encoding="utf-8") as fh:
+        fh.write(raw)
+
+    with TestClient(api.app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/api/override",
+            json={"client_id": "audit-override", "fact": "deneme", "tag": "t"},
+        )
+    api.app.state.rooms.clear()
+
+    assert response.status_code != 500, (
+        f"learnings.json={raw!r} iken /api/override 500 döndü; "
+        "dosya bir kez bozulursa endpoint kalıcı olarak kullanılamaz"
+    )
+
+
+# --------------------------------------------------------------------------
+# P2-10  Üretimde PINEAL_ENV set edilmezse kimlik doğrulama tamamen kapalı
+# --------------------------------------------------------------------------
+def test_auth_fails_closed_by_default(monkeypatch):
+    """PINEAL_ENV unutulduğunda (en olası dağıtım hatası) uygulama kimlik
+    doğrulamasız AÇILMAMALI; token yoksa startup reddedilmeli."""
+    from agent_core.utils.security import SecurityConfigurationError, security_posture
+
+    monkeypatch.delenv("PINEAL_ENV", raising=False)
+    monkeypatch.delenv("PINEAL_TOKEN", raising=False)
+    monkeypatch.delenv("PINEAL_REQUIRE_AUTH", raising=False)
+
+    with pytest.raises(SecurityConfigurationError) as raised:
+        security_posture()
+    assert raised.value.error_code == "PRODUCTION_AUTH_REQUIRED", (
+        "PINEAL_ENV belirsizken geliştirme varsayılıyor — fail-open"
+    )
+
+
+def test_explicit_development_still_opens_auth(monkeypatch):
+    """Geriye uyumluluk: açık geliştirme seçimi çalışmaya devam etmeli."""
+    from agent_core.utils.security import security_posture
+
+    monkeypatch.setenv("PINEAL_ENV", "development")
+    monkeypatch.delenv("PINEAL_TOKEN", raising=False)
+    monkeypatch.delenv("PINEAL_REQUIRE_AUTH", raising=False)
+    assert security_posture()["auth_required"] is False
+
+
+@pytest.mark.parametrize("value", ["production", "prod", "staging", "PRODUCTION", " production "])
+def test_non_development_environments_require_token(monkeypatch, value):
+    from agent_core.utils.security import SecurityConfigurationError, security_posture
+
+    monkeypatch.setenv("PINEAL_ENV", value)
+    monkeypatch.delenv("PINEAL_TOKEN", raising=False)
+    with pytest.raises(SecurityConfigurationError):
+        security_posture()
