@@ -1,6 +1,21 @@
 from pydantic import BaseModel, ConfigDict
 from typing import List, Dict
 
+# ASPASIA TRUE CHIEF LAYER — goal sozlesmesinin TEK kaynagi (burasi).
+# Goal id'leri UYDURMA degil: her goal, router'in gercekten secip kanit
+# kapisiyla korudugu mevcut uzmanlara haritalanir. Yeni bir registry degil;
+# mevcut target-leg uzmanlarinin kullanici-dili taksonomisi.
+GOAL_FOCUS: Dict[str, tuple] = {
+    "profile_analysis": ("autonomous_verifier", "human_behavior", "passion_mapper",
+                         "friction_detector", "cognitive_profiler"),  # semsiye goal
+    "contradiction_detection": ("authenticity_auditor",),
+    "behavioral_assessment": ("human_behavior",),
+    "passion_friction": ("passion_mapper", "friction_detector"),
+    "cognitive_tone": ("cognitive_profiler",),
+    "outreach_bridge": ("resonance_calc", "pattern_interrupt", "resonance_synthesizer"),
+    "autonomous_verification": ("autonomous_verifier",),
+}
+
 class RoutePlan(BaseModel):
     agents: List[str]
     reasoning: str
@@ -11,8 +26,38 @@ class RoutePlan(BaseModel):
 class CognitiveRouter:
     """
     Hangi ajanların çalışacağına karar veren beyin.
+
+    ASPASIA goal katmanı: kullanıcı AMACI (aspasia_goals) yalnız "ne isteniyor"
+    bilgisidir; AJAN SEÇİMİ yine bu sınıfta, kanit/kabiliyet kapilariyla
+    yapilir. Goal yoksa davranis birebir eskisiyle aynidir (backward compat).
     """
-    
+
+    @staticmethod
+    def _normalize_goals(input_data: Dict) -> "tuple[List[str], List[str]]":
+        """aspasia_goals: yabanci/uydurma isimler plani DEGISTIRMEZ; reasoning'e
+        dürüst not düşülür. (Aspasia girisinde sema zaten reddeder; bu katman
+        dogrudan /api/initiate gonderen ic kullanicilar icin son savunma.)"""
+        raw = input_data.get("aspasia_goals") if isinstance(input_data, dict) else None
+        if not isinstance(raw, list) or not raw:
+            return [], []
+        known: List[str] = []
+        unknown: List[str] = []
+        for g in raw:
+            if isinstance(g, str) and g in GOAL_FOCUS:
+                if g not in known:
+                    known.append(g)
+            else:
+                unknown.append(str(g)[:40])
+        return known, unknown
+
+    @staticmethod
+    def _goal_selected(goals: List[str], agent: str) -> bool:
+        """Agent aktif goal kumesi tarafindan isteniyor mu?
+        'profile_analysis' semsiyesi her seyi kapsar; bos goal = daraltma yok."""
+        if not goals or "profile_analysis" in goals:
+            return True
+        return any(agent in GOAL_FOCUS[g] for g in goals)
+
     async def analyze(self, input_data: Dict) -> RoutePlan:
         target = input_data.get("target_profile") or {}
         user = input_data.get("user_profile") or {}
@@ -34,6 +79,14 @@ class CognitiveRouter:
         
         agents = []
         reasoning = []
+        goals, unknown_goals = self._normalize_goals(input_data)
+        if unknown_goals:
+            reasoning.append(
+                "Bilinmeyen goal'ler yok sayıldı (uydurma capability çalıştırılmaz): "
+                + ", ".join(unknown_goals)
+            )
+        if goals:
+            reasoning.append("Aspasia amaç seti: " + ", ".join(goals))
         
         # Her zaman önce kendine ayna tut
         if has_user:
@@ -57,27 +110,42 @@ class CognitiveRouter:
             # the routed analysis. Keeping it out of this route prevents a
             # second provider call and AgentRun overwrite.
 
+            # POLICY bacağı: teyit kullanıcı tercihine göre DÜŞMEZ — kanıt
+            # doğrulama doktrini her planda zorunludur.
             agents.append('autonomous_verifier')
             reasoning.append("Otonom Teyit (Arama & Kanıt)")
 
-            agents.append('human_behavior')
-            reasoning.append("Hedef Davranış Analizi")
+            # Hedef-tercih bacakları: goal seti yalnız BURAYI daraltabilir;
+            # kanit-kapili bacaklar (asagidaki authenticity) tercihle silinmez.
+            if self._goal_selected(goals, 'human_behavior'):
+                agents.append('human_behavior')
+                reasoning.append("Hedef Davranış Analizi")
 
-            agents.append('passion_mapper')
-            reasoning.append("Tutku ve Neşe Haritalama")
-            
-            agents.append('friction_detector')
-            reasoning.append("Hassasiyet ve Sınır Tespiti")
-            
-            agents.append('cognitive_profiler')
-            reasoning.append("Bilişsel Ton ve Üslup")
+            if self._goal_selected(goals, 'passion_mapper'):
+                agents.append('passion_mapper')
+                reasoning.append("Tutku ve Neşe Haritalama")
+
+            if self._goal_selected(goals, 'friction_detector'):
+                agents.append('friction_detector')
+                reasoning.append("Hassasiyet ve Sınır Tespiti")
+
+            if self._goal_selected(goals, 'cognitive_profiler'):
+                agents.append('cognitive_profiler')
+                reasoning.append("Bilişsel Ton ve Üslup")
 
             if 'visual_evidence' in input_data:
+                # Kanit varsa denetim her amaclarla kosar (kaldirilamaz kanit
+                # bacagi); kanit yoksa goal ASLA zorla ajan ekLEMEZ — honest skip.
                 agents.append('authenticity_auditor')
                 reasoning.append("Özgünlük ve Tutarlılık Denetimi")
+            elif 'contradiction_detection' in goals:
+                reasoning.append(
+                    "goal contradiction_detection: görsel kanıt yok — "
+                    "authenticity_auditor ATLANDI (honest skip, sahte denetim yok)"
+                )
             
             # Kullanıcı da hedef de varsa rezonans ve sahici köprü hesapla
-            if has_user:
+            if has_user and self._goal_selected(goals, 'resonance_calc'):
                 agents.append('resonance_calc')
                 reasoning.append("Sahici Değer ve Uyum Hesabı")
                 

@@ -134,6 +134,85 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 | 9 | `/health` HTTP 200 `status: ready` | `curl -sf http://localhost:8000/health \| python3 -m json.tool` |
 | 10 | Canlı LLM gate geçti | `OPENROUTER_API_KEY=... LIVE_LLM_E2E=1 python live_llm_gate.py` |
 
+## Routing zinciri: source-of-truth ve operasyon düğmeleri (MP-ROUTING / FINAL-SPEC)
+
+**Sıra sözleşmesi (precedence):**
+
+1. `OPENROUTER_AGENT_CHAIN_<AJAN>` ortam değişkeni — **açık, acil durum /
+   operasyon override'ıdır**. Verildiği an o ajan için matrix'i GEÇERSİZ KILAR
+   ve her telemetri kaydına `"chain_source": "env_override"` yazar. Kalıcı
+   politika değişikliği matrix'e yazılır; env yalnız geçiş içindir.
+2. `LLMGateway.AGENT_CHAINS` — **varsayılan source of truth**. 14 ajanın
+   tamamı (friction/passion/profiler/resonance/verifier+extract/osint/vision/
+   aspasia/authenticity/depth_analyst/human_behavior/mirror/pattern) artık
+   `agent_name` ile bu tabloya bağlıdır; tablo değişince ajan davranışı anında
+   değişir.
+3. Görev zinciri `CHAINS[task]` — yalnız matriste olmayan isimler için
+   (`"chain_source": "task_chain"`).
+
+**Sağlayıcı merdiveni (her model için):** `agent_route_variants()` aynı modeli
+doğrudan sağlayıcı API'lerinde (GROQ/CEREBRAS/NOUS/DEEPSEEK anahtarları +
+provider_catalog) arar; adaylık için DÖRT kapı birden gerekir: credential var,
+katalog modeli sunuyor, FINAL politikası izin veriyor (ücretli rota ancak
+`PINEAL_ALLOW_PAID_ESCALATION=1`), kota EXHAUSTED değil. Sıralama
+**free → indirimli → fiyatlandırılmış**; OpenRouter indirimli rota yoksa kendi
+fiyatıyla birincildir. Fiyatı izlenemeyen rota spend-cap aktifken teklif
+edilmez. OpenRouter santral değil havuzun üyesidir.
+
+**Fiyat muhasebesi:** spend cap/reservasyon/settlement daima route'un
+**effective** fiyatından yürür (ör. `claude-sonnet-5@nous-research` = $1.6/$8,
+liste $2/$10 DEĞİL); telemetri `route_key`, `pricing_in/out`,
+`list_pricing_in/out`, `discount_pct` taşır. Kanıt:
+`tests/unit/test_final_spec_compliance.py::test_nous_sonnet_effective_price_and_zero_openrouter_calls`.
+
+**Bilinçli redler (bypass yok):** provider istenen model yerine başka model
+dönerse `MODEL_SUBSTITUTION_DENIED` — ic retry de zincir fallback'i de YOK;
+spend-cap, paid-escalation, unknown-pricing, auth redleri merdiveni DURDURUR.
+Reddin detayı (`requested → returned` model çifti) artık `call_log` kaydının
+içindedir (`MODEL_SUBSTITUTION_DENIED::...`) — Aspasia denetim katmanı buradan
+açıklar; ayrı bir hata kaynağı yoktur.
+
+## Aspasia komut katmanı (ASPASIA-PROMOTION)
+Aspasia merkezi doğal-dil arayüzüdür; **orchestrator değildir.** Görev
+yaratma/planlama politikası değişmedi: plan = `CognitiveRouter`, yürütme =
+`PinealExecutor`, yaşam döngüsü = `TaskLifecycleRegistry`, routing/kota/spend
+= `LLMGateway` + `final_routing_policy`.
+
+- **Okuma:** `agent_core/aspasia/interface.py` salt-okur denetçiler
+  (`RoutingInspector`, `TelemetryReader`, `QuotaReader`, `CostReader`,
+  `AgentInspector`) mevcut SoT nesnelerini okur; yeni telemetri/kota defteri
+  TUTMAZ. Okunamayan alan uydurulmaz: `unknown`/`unavailable`/boş digest.
+- **Yazma:** TEK kanal `AspasiaCommandGateway.submit()` → LLM niyeti
+  `AspasiaIntent` (extra=forbid) olarak çıkarılır (gerçek `aspasia` dialogue
+  zincirinden geçer, `capture_calls` ile `agent_id=aspasia` etiketlenir), hedef
+  URL gerçek scraper host sözleşmesiyle doğrulanır, dispatch `api.py` içindeki
+  `/api/initiate` ile birebir aynı akışı çağırır (rate limit, lifecycle,
+  mission_tasks). Ajan listesi/model/quota niyete yazılamaz — şema reddeder.
+- **Uçlar:** `POST /api/aspasia/command` (komut), `GET /api/aspasia/state`
+  (salt-okur denetim görünümü). `chat()` sözleşmesi (AspasiaResponse, pin,
+  image_data) geriye dönük uyumludur; DENETİM KATMANI bloğu yalnız gerçek
+  içerik varsa prompt'a eklenir.
+- **Amaç (goal) katmanı — TRUE CHIEF LAYER:** sozluk TEK kaynak
+  `CognitiveRouter.GOAL_FOCUS`; `AspasiaIntent.goals` oradan turetilir
+  (ikinci sozluk yok, drift testli). Aim akisi:
+  `Aspasia goals → InitiatePayload.aspasia_goals → input_data["aspasia_goals"]
+  → CognitiveRouter`. Goal yalniz KULLANICI TERCIH bacaklarini daraltir;
+  `autonomous_verifier` (policy bacagi) ve kanit-kapili bacaklar (visual
+  evidence -> authenticity) goal ile EKLENMEZ/SILINMEZ; kanit yoksa honest-skip
+  notu. Goal yoksa/eski istemciyse plan birebir eskisi gibi.
+- **Sonuc dongusu (kanonik):** `MissionResultReader` yalniz
+  `CanonicalMemory.get_task_memory()` okur — yeni store yok. Terminal
+  durumdaki `active_tasks` snapshot'i digest'te `BAYAT-snapshot` olarak
+  etiketlenir; bozuk kanonik kayit "kurtarma gerekir" diye tasinir (sokus
+  edilmez). chat promptu ayrica `SUBSTITUTION DENIED: istenen/donen` ayrintisini
+  mevcut call_log'dan gosterir.
+- **Frontend:** ASPASIA secili serbest metin ONCE `/api/aspasia/command`;
+  `accepted && task_id` varsa gorev kartina baglanir, degilse chat fallback.
+  Yapilandirilmis form (URL/ritual) bilincli olarak `/api/initiate`'te kalir:
+  programatik giris Aspasia'siz olabilir, KULLANICI dogal dili olamaz.
+- **Extension noktasi (simdilik YOK):** cancel/halt intent'leri —
+  lifecycle.terminate'a baglanacak; bu fazda kasten yok.
+
 ## Bilinçli sınırlar
 - Veritabanı yok (JSON bellek) — çoklu kullanıcı/geçmiş sorgulama gerekirse Store soyutlaması eklenecek.
 - **FAZ 9 Karar B:** `rust_core/` experimental/optional'dır. CI'da bağımsız derlenip test edilir; Python ürün yoluna bağlı değildir, Docker'a paketlenmez, aktivasyon bayrağı ve ürün karar etkisi yoktur. `/health` ile `/api/telemetry` bu statüyü raporlar. Tauri masaüstü taslağı release ürünü değildir.

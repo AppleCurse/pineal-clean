@@ -77,7 +77,8 @@ JSON formatında yanıt ver:
                 prompt=prompt,
                 schema=AuthenticityProfile,
                 task="depth",
-                temperature=0.2
+                temperature=0.2,
+                agent_name="authenticity_auditor"
             )
             return result
         except Exception as e:

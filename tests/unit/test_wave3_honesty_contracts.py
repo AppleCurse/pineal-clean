@@ -150,6 +150,9 @@ async def test_llm_path_marks_message_verified():
                 data_confidence=False, fallback_reason="not_verified",
             )
 
+        # F-3 seam: PatternInterrupt artik query_json_chain kullaniyor.
+        query_json_chain = query_json
+
     result = await PatternInterrupt().execute({
         "target_analysis": {"micro_signals": [
             {"signal_type": "defense", "confidence": 0.9, "location": "linguistic",

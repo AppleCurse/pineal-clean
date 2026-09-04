@@ -2,6 +2,87 @@
 
 ## Unreleased (post-rc.2) — 2026-09-05
 
+### ASPASIA TRUE CHIEF LAYER: amaç taşımı + kanonik sonuç döngüsü + UI köprüsü
+- **Goal sözleşmesinin TEK kaynağı** `CognitiveRouter.GOAL_FOCUS` (7 goal id;
+  her biri router'ın GERÇEK uzmanlarına harita — uydurma capability yok).
+  `AspasiaIntent.goals` bu sözlükten türetilen Literal allowlist; drift testli.
+- **Amaç kaybı fix:** `USER → Aspasia(intent+goals) → CommandGateway →
+  InitiatePayload.aspasia_goals → input_data["aspasia_goals"] → CognitiveRouter`.
+  Goal YOKSA plan birebir eski; uydurma goal şemada reddedilir (dispatch doğmaz);
+  `/api/initiate` üzerinden gelen bilinmeyen goal planı değiştiremez (not düşer).
+- **Kanıt kapısı üstünlüğü:** goals yalnız tercih bacaklarını daraltır;
+  `autonomous_verifier` (policy) ve kanıt-kapılı `authenticity_auditor`
+  goal'la eklenmez/silinmez; kanıt yoksa honest-skip notu — sahte yürütme yok.
+- **Sonuç döngüsü (paralel store YOK):** `MissionResultReader` yalnız
+  `CanonicalMemory.get_task_memory` okur; bozuk kayıt "corrupted + kurtarma
+  gerekir" olarak taşınır. `room["active_tasks"]` terminal durumdaysa digest
+  `"BAYAT-snapshot"` etiketler (kanonik = memory).
+- **Model-mismatch görünürlüğü:** DENETİM bloğu artık `SUBSTITUTION DENIED:
+  istenen=X — dönen=Y (provider)` satırını taşır (kaynak: mevcut call_log).
+- **UI köprüsü:** ASPASIA seçiliyken serbest metin ÖNCE `/api/aspasia/command`;
+  `accepted && task_id` → görev kartına bağlanır; değilse chat fallback (mesaj
+  kaybı yok). Yapılandırılmış form `/api/initiate`'te kalır (programatik hat).
+- Cancel/halt: bu fazda YOK (yalnız extension noktası: gateway dispatch şeması).
+- Testler: `tests/unit/test_aspasia_chief_layer.py` 19/19; promosyon 16/16;
+  routing regresyonu (provider-aware+firewall+compliance+policy+aspasia+wiring)
+  92/92.
+
+### ASPASIA-PROMOTION: merkezi doğal-dil arayüzü + komut ağzı (orkestrasyon yetkisi DEĞİL)
+- `agent_core/aspasia/interface.py` (yeni): salt-okur denetçiler
+  (Routing/Telemetry/Quota/Cost/Agent) mevcut SoT'ları okur; Governor'u olmayan
+  gateway'den "HEALTHY" uydurulmaz (`unavailable`), unknown kota asla
+  unlimited sayılmaz.
+- `AspasiaCommandGateway`: doğal dil → `AspasiaIntent` (extra=forbid; model/
+  agent/quota alanları şema düzeyinde reddedilir) → hedef URL doğrulaması →
+  TEK dispatch kanalı `api._aspasia_command_dispatch`, ki bu `/api/initiate`
+  akışının kendisidir (lifecycle + mission_tasks + run_mission; ikinci
+  orchestrator yok). Niyet çıkarımı gerçek `aspasia` dialogue zincirinden
+  geçer ve `capture_calls` ile `agent_id=aspasia` etiketlenir.
+- `AspasiaChief`: `commands`/`executor` bağlama + chat promptuna DENETİM
+  KATMANI digest'i (yalnız gerçek içerik varsa; uydurma blok yok). Sistem
+  promptu persona + SINIR korunarak "merkezi arayüz ve denetim" rolüyle
+  genişletildi.
+- Uçlar: `POST /api/aspasia/command`, `GET /api/aspasia/state`.
+- Gateway gözlemlenebilirlik düzeltmesi: `MODEL_SUBSTITUTION_DENIED` artık
+  call_log'a `requested → returned` detayıyla yazılıyor (detay eski halinde
+  yalnız exception metnindeydi, log'da kayboluyordu).
+- Testler: `tests/unit/test_aspasia_promotion.py` 16/16 (görünürlük, komut
+  akışı, şema güvenliği, dispatch tek kanalı, statik mutasyon-yüzeyi taraması,
+  chat geri dönüşüm uyumu). Tam süit: 749P/32F(env-only)/2S — yeni başarısızlık yok.
+
+### FINAL-SPEC: agent-level bypass kapıları (F-1/F-2/F-3/F-4) + transport-kanıtlı uygunluk
+
+- **F-1 Aspasia:** `AspasiaChief.chat()` artık kimliksiz `query()` yerine
+  `query_chain(task="dialogue", agent_name="aspasia")` yürütüyor →
+  `AGENT_CHAINS["aspasia"]` + provider merdiveni + fallback zinciri devrede.
+  Kullanıcının AÇIK `preferred_model`/`model_override` pini bilinçli olarak
+  korunur (pin = tercih, bypass değil).
+- **F-2:** `authenticity_auditor` ve `depth_analyst` çağrıları
+  `agent_name=None + task fallback` olmaktan çıkarıldı; kendi matrix
+  satırlarına bağlandı (depth zinciriyle BİLİNÇLİ paylaşım, matrix değişimi
+  artık bu iki ajanın davranışını otomatik taşır).
+- **F-3:** `human_behavior`, `mirror_truth`, `pattern_interrupt` tek-model
+  tier-default yolundan zincirli agent-aware yola geçirildi (dönüş sözleşmesi
+  aynı; mock dikişleri güncellendi).
+- **F-4:** `get_agent_chain` zincirin KAYNAĞINI (`agent_matrix` /
+  `env_override` / `task_chain`) her telemetri kaydına `chain_source` olarak
+  yazıyor; RUNBOOK'a precedence sözleşmesi eklendi. ENV override kaldırılmadı
+  — belgeli, testli, işaretli acil durum düğmesi.
+- **Substitution firewall genişletildi (spec #27):** sessiz model ikamesi
+  reddi artık OpenRouter legacy yolunda da geçerli ve hem iç retry'ı hem
+  zincir fallback'ini tetiklemeyen non-retryable politika kararı
+  (`model_substitution_denied` guard marker'ı).
+- **Kota agregasyon hatası düzeltildi:** routed taşıma denemeleri governor'a
+  provider-agrega pencerede (`*`) yazılıyor; `status(provider)` okuması artık
+  gerçek akışta görünebilir (önceki per-model yazım, resolver skip'ini fiilen
+  etkisiz bırakıyordu).
+- **Liste vs effective fiyat:** `GatewayRoute.list_*` alanları + telemetri
+  `route_key / pricing_* / list_pricing_* / discount_pct` backward-compatible
+  alanları; Nous indirimi spend accounting'in TEK fiyat kaynağı (test: OR
+  çağrısı sıfır, $3.20/$1M+0.2M settlement).
+- Yeni: `tests/unit/test_final_spec_compliance.py` (23 test; transport
+  boundary'de HTTP-level provider kanıtı dahil).
+
 ### MP-ROUTING: ajan hattı gerçek çok-sağlayıcılı yürütmeye geçti
 
 - **OpenRouter artık santral değil, havuzun bir üyesi:** `LLMGateway.query()` ve
@@ -167,4 +248,21 @@
 
 - `rust_core/` and the Tauri draft are not product-integrated.
 - X scraping and experimental OSINT/code-execution routes remain disabled or explicit opt-ins.
-- A live third-party OpenRouter credential gate remains operator-triggered; the mandatory hermetic E2E uses the actual HTTP/SDK/runtime path against a deterministic local provider and does not claim external-provider availability.
+- A live third-party OpenRouter credential gate remains operator-triggered; the mandatory hermetic E2E uses the actual HTTP/SDK/runtime path against a deterministic local provider and does not claim external-provider availability.## [Unreleased] - 2026-09-04 (routing-hardening)
+- O-1: substitution denials now carry structured requested_model/actual_model call-log
+  fields in BOTH query() and legacy chat_completion (single-log doctrine kept);
+  ModelSubstitutionDeniedError introduced; Aspasia TelemetryReader reads fields first,
+  regex only as legacy fallback.
+- O-2: bounded transient-only provider health breaker (env-tunable threshold/cooldown);
+  consumed by agent_route_variants; policy denials and auth errors never counted;
+  provider_health() surfaces remaining cooldown, Aspasia digest gains a SAĞLIK line only
+  while blocked.
+- O-3: model ladder filters direct candidates by RouteSpec.capabilities against
+  required_capabilities (single source); quota/api-key isolation unchanged.
+- O-4: guard test asserts ROUTES<->provider_catalog effective-price equality for every
+  dual-priced route (precedence untouched; ROUTES remains SoT).
+- Evidence: targeted 170/170, full suite 809P/0F/0S, ruff clean; proofs use fake transport
+  only (no live/paid calls). CI not verified (session push-disabled). See
+  docs/reports/ROUTING_HARDENING_2026-09-04.md.
+
+

@@ -175,7 +175,10 @@ class HumanBehaviorAnalyzer:
         )
 
         try:
-            result = await llm_gateway.query_json(prompt, DigitalColdReading)
+            # F-3: tek-model tier-default yerine agent kimlikli zincir
+            result = await llm_gateway.query_json_chain(
+                prompt, DigitalColdReading, task="depth", agent_name="human_behavior"
+            )
         except Exception as exc:
             # [022] Yorum katmanı üretilemediyse sahte "Aşil tespiti" YOK:
             # gözlemler (deterministik sinyaller) korunur, yorum alanları

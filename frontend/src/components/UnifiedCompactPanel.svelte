@@ -170,6 +170,30 @@
     isSending = true;
     
     try {
+      // ASPASIA TRUE CHIEF LAYER: ASPASIA seciliyken serbest DOGAL DIL önce
+      // komut kanalindan gecer (intent+goal -> CommandGateway -> orchestrator).
+      // Komut olmayan mesaj chat yoluna duser — mesaj hicbir durumda kaybolmaz.
+      // Structured form (URL/ritual alanlari) bilerek /api/initiate'te kalir:
+      // programatik giris ASPASIA'yı dolanabilir; KULLANICI dogal dili dolamaz.
+      if (activeAgentId === 'ASPASIA' && !currentImage) {
+        try {
+          const cmdRes = await apiFetch(`/api/aspasia/command`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: $clientId, user_message: currentInput })
+          });
+          if (cmdRes.ok) {
+            const cmd = await cmdRes.json();
+            if (cmd.accepted && cmd.task_id) {
+              taskStatus.update(s => ({ ...s, task_id: cmd.task_id, status: 'processing' }));
+              isProcessing.set(true);
+              logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ASPASIA EMRİ [${cmd.command_id}]: ${cmd.intent} → görev ${cmd.task_id}`}]);
+              messages = [...messages, { sender: 'ASPASIA', text: `Emir yürürlükte Mösyö — görev kuyruğa alındı (${cmd.task_id}); sonuç kartını izleyin.` }];
+              return;
+            }
+          }
+        } catch (_) { /* komut kanali ulasilamaz -> chat yola devam; sessiz basari yok */ }
+      }
       const payload: any = { client_id: $clientId, user_message: currentInput };
       if (currentImage) payload.image_data = currentImage;
       const endpoint = activeAgentId === 'ASPASIA' ? '/api/aspasia/chat' : '/api/executor/intervene';

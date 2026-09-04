@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 from collections import defaultdict, deque
 import asyncio
@@ -27,6 +27,7 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from agent_core.aspasia.aspasia_chief import AspasiaChief
+from agent_core.aspasia.interface import AspasiaCommandGateway
 from agent_core.chat.dialogue_manager import DialogueManager
 from agent_core.scraper.instagram_ghost import InstagramGhostScraper
 from agent_core.services import crawl_enricher, socid_enricher
@@ -412,7 +413,17 @@ def get_room(client_id: str) -> dict:
             "vault": vault,
             "websockets": set(),
             "logs": [],
-            "aspasia": AspasiaChief(llm_gateway=executor.llm_gateway) if AspasiaChief else None,
+            # ASPASIA PROMOTION: ayni kisi + denetim arayuzu + tek yazma kanali.
+            # Komut dispatch'i /api/initiate'in kullandigi GERCEK görev akisina
+            # baglidir; ikinci bir orchestrator yoktur.
+            "aspasia": (AspasiaChief(
+                llm_gateway=executor.llm_gateway,
+                command_gateway=AspasiaCommandGateway(
+                    dispatch=_aspasia_command_dispatch,
+                    gateway=executor.llm_gateway,
+                ),
+                executor=executor,
+            ) if AspasiaChief else None),
             "queue": asyncio.Queue(maxsize=2000),
             "sender_task": None,
             "mission_tasks": {},
@@ -1032,6 +1043,10 @@ class InitiatePayload(BaseModel):
     playlist: str
     envies: str
     scraper_type: str = "instagram"
+    # ASPASIA TRUE CHIEF LAYER: kullanicinin AMACI (goal id'leri) görev
+    # verisiyle birlikte tasinir — ama AJAN SECIMI degil; sozlesme tek
+    # kaynagi CognitiveRouter.GOAL_FOCUS. Bos = eski davranis (compat).
+    aspasia_goals: List[str] = []
     # [037] fix: aggressiveness/evidence_th kabul ediliyordu ama HİÇBİR davranışa
     # bağlanmamıştı (ölü API sözleşmesi). Kaldırıldı; eşik ayarı gerekiyorsa
     # DecisionConfig üzerinden gerçek davranışla bağlanmalı. Eski istemcilerin
@@ -1084,7 +1099,10 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                 "playlist": ", ".join(user_playlist),
                 "envies": ", ".join(user_envies),
             },
-            "target_profile": {"bio": "", "posts": [], "post_times": [], "images": []}
+            "target_profile": {"bio": "", "posts": [], "post_times": [], "images": []},
+            # Amaç kaybi fix: Aspasia goal'leri payload'da yasar; router yoksa
+            # eski plani aynen kurar. Gecerlilik/uydurma filtresi router'da.
+            "aspasia_goals": list(req.aspasia_goals or []),
         }
         
         # Otonom Cookie Rotasyonu
@@ -1502,6 +1520,96 @@ class AspasiaChatPayload(BaseModel):
     user_message: str
     model_override: Optional[str] = None
     image_data: Optional[str] = None
+
+
+def _aspasia_command_dispatch(spec: dict) -> "str | None":
+    """ASPASIA PROMOTION — komutların TEK yetkili yazma kanalı.
+
+    /api/initiate ile BİREBİR aynı akış: görev kimliği _new_task_id, yaşam
+    döngüsü TaskLifecycleRegistry, yürütme run_mission, takip mission_tasks.
+    Kota/harcama/routing politikaları içinde bulunduğumuz gerçek gateway
+    yığınındadır; bu fonksiyon hiçbir politika katmanını atlatmaz ve yeni bir
+    planlama beyni kurmaz (ajan planı = executor'ın CognitiveRouter'ı).
+    """
+    client_id = spec["client_id"]
+    room = get_room(client_id)
+    req = InitiatePayload(
+        client_id=client_id,
+        url=spec["target_url"],
+        # [009] doktrini: kullanicidan gelmeyen rituel/sarki/ozlem verisi
+        # ASLA uydurulmaz — Aspasia komutu yalnizca kullaniciya ait alanlari tasir.
+        rituals="",
+        playlist="",
+        envies="",
+        # AMAÇ TAŞIMA (Phase 1): kullanici mesajindaki odak, görev verisiyle
+        # birlikte CognitiveRouter'a kadar gider; burada planlama YAPILMAZ.
+        aspasia_goals=list(spec.get("goals") or []),
+    )
+    task_id = _new_task_id()
+    _lifecycle(room).transition(task_id, "processing")
+    mission = asyncio.create_task(run_mission(req, task_id))
+    room["mission_tasks"][task_id] = mission
+    mission.add_done_callback(lambda _task: room["mission_tasks"].pop(task_id, None))
+    return task_id
+
+
+class AspasiaCommandPayload(BaseModel):
+    client_id: str
+    user_message: str
+
+
+@app.post("/api/aspasia/command")
+async def aspasia_command(payload: AspasiaCommandPayload):
+    """Aspasia: doğal dil niyeti -> yapılandırılmış komut -> gerçek orchestrator.
+
+    Kabul edilen tek yazma eylemi run_profile_analysis'tir ve hedef doğrulama
+    (gerçek scraper host sözleşmesi) + gateway politika yığınını aynen geçer.
+    """
+    if not rate_limit(f"aspasia:{payload.client_id}", "aspasia"):
+        return JSONResponse(
+            {"error": {"code": "RATE_LIMITED", "message": "Aspasia yoğun; kısa bir mola verin."}},
+            status_code=429,
+        )
+    room = get_room(payload.client_id)
+    aspasia = room.get("aspasia") or aspasia_chief
+    if not aspasia or getattr(aspasia, "commands", None) is None:
+        return JSONResponse(
+            {"error": {"code": "COMMANDS_UNAVAILABLE", "message": "Aspasia komut kanalı tanımlı değil"}},
+            status_code=503,
+        )
+    result = await aspasia.commands.submit(payload.user_message, client_id=payload.client_id)
+    if result.accepted and result.task_id:
+        broadcast_log(payload.client_id, "INFO",
+                      f"ASPASIA KOMUT [{result.command_id}] {result.intent} → görev {result.task_id}")
+    return result.model_dump()
+
+
+@app.get("/api/aspasia/state")
+async def aspasia_state(client_id: str = "default"):
+    """Read-only denetim görünümü: registry + görev durumu + bütçe + kota + anomaliler.
+
+    Yeni bir telemetri sistemi DOĞMAZ; hepsi mevcut SoT okuyucularıdır
+    (gateway call_log/budget, QuotaGovernor, executor.agents, lifecycle).
+    """
+    from agent_core.aspasia.interface import (
+        AgentInspector,
+        CostReader,
+        QuotaReader,
+        TelemetryReader,
+    )
+
+    room = get_room(client_id)
+    executor = room.get("executor")
+    gateway = executor.llm_gateway if executor is not None else aspasia_chief.llm
+    inspector = AgentInspector(executor)
+    return {
+        "registry": inspector.registry(),
+        "run": inspector.run_status(room),
+        "budget": CostReader(gateway).snapshot(),
+        "quota": {p: QuotaReader(gateway=gateway).snapshot(p) for p in ("groq", "cerebras")},
+        "anomalies": TelemetryReader(gateway).anomalies(),
+    }
+
 
 @app.post("/api/aspasia/chat")
 async def aspasia_chat(payload: AspasiaChatPayload):
