@@ -57,6 +57,15 @@ testiyle doğrulanmış** bir regresyon testiyle korunuyor (bkz. aşağıda).
   `rate_limit` içinde silmek hiçbir işe yaramıyordu — izin verilen her çağrı
   hemen `append` ile anahtarı geri koyuyordu (mutasyon testi bunu kanıtladı:
   satırı kaldırmak hiçbir testi kızartmadı).
+- **[P0-2 v3] Cache süresi artık satırda saklanıyor** (`widest_window` ikizi
+  burada da vardı). Satır `created_at` tutuyor ama kendi TTL'ini tutmuyordu;
+  süre her okumada güncel `PINEAL_CACHE_TTL`'den yeniden hesaplanıyordu.
+  Ölçülen: TTL 7 gün → 1 sn yapınca **7 günlük kayıt 1.2 sn'de yok oluyordu**;
+  TTL 1 sn → süresiz yapınca **süresi dolmuş kayıt sonsuza dek yaşıyordu**
+  (`prune()` 0 satır). → `expires_at` kolonu + eski db'ler için tek seferlik
+  `ALTER TABLE` + doldurma + `idx_rc_expires`.
+  **Dikkat (davranış değişikliği):** `PINEAL_CACHE_TTL=0` artık mevcut
+  satırları silmez, yalnızca yeni yazılanları anında süresi dolmuş yapar.
 - **[P2-13] Sınırsız büyüyen iki sözlük kapatıldı** (desen üçüncü kez çıktı:
   P0-2 `prune`, P0-5 `_sweep_rate_buckets`, şimdi bu ikisi).
   - `canonical_memory._locks` (`defaultdict(asyncio.Lock)`) — ölçülen: 5.000

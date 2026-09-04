@@ -19,13 +19,14 @@ ilk hâlini belgelemeye devam ediyor.
 | # | Bulgu | Durum | Kapanış ölçümü |
 |---|---|---|---|
 | P0-1 | redact O(N×M) | ✅ KAPATILDI | 67.8 ms → **2.20 ms** / 900 string; 200 mesaj 13.60 s → **0.43 s**; **11/11 çıktı birebir aynı** |
-| P0-2 | cache prune yok | ✅ KAPATILDI (v2) | düşük trafikte 10 satır → **1 satır**, `pruned=10` |
+| P0-2 | cache prune yok | ✅ KAPATILDI (v3) | düşük trafikte 10 satır → **1 satır**, `pruned=10`; süre artık satırda (`expires_at`) — TTL 7gün→1sn'de 7 günlük kayıt **yaşıyor** |
 | P0-3 | dict olmayan vault 500 | ✅ KAPATILDI | 4 varyant (list/null/str/int) → dict |
 | P0-4 | rooms eviction yok | ✅ KAPATILDI | tavan 8 iken 12 istek → `[200×8, 503×4]`, oda sayısı **8** |
 | P0-5 | `_rate_buckets` sızıntısı | ✅ KAPATILDI (v3) | 30.000 tekil anahtar, pencere dolmuş → **30.000 kova / 26.4 MB → 1 kova / 0.9 MB**; tavan doluyken **48-57 ms/istek → 0.53 ms** |
 | P0-6 | senkron SQLite | ✅ KAPATILDI | loop blokesi **28.59 ms → 2.08 ms**; `to_thread` ile medyan **0.59 ms** |
 | P1-8 | `time.sleep` loop'u donduruyor | ✅ KAPATILDI | `iscoroutinefunction` + `await` çağrı noktası |
 | P2-10 | auth fail-open | ✅ KAPATILDI | `PINEAL_ENV` yok + token yok → startup **reddedildi** (`PRODUCTION_AUTH_REQUIRED`) |
+| P2-13 | sınırsız `_locks` + `sessions` | ✅ KAPATILDI | 5.000 merge → **0 kilit girdisi**; tavan 100 iken 5.000 → **100 oturum**; kilit koruması kanıtlandı (kilitsiz **6/8 `FileNotFoundError`**) |
 | P1-6 | `extract_username` | ⛔ AÇIK | — |
 | P1-7 | `evaluate_confidence` ölü kod | ⛔ AÇIK | — |
 | P2-9 | bozuk `learnings.json` 500 | ⛔ AÇIK | — |
@@ -89,7 +90,7 @@ P0-5 zaman tetik           KIZARDI (test gerçek)     1 failed, 1 passed
 P0-5 histerezis            KIZARDI (test gerçek)     1 failed
 P1-8 async delay           KIZARDI (test gerçek)     2 failed
 P2-10 fail-closed          KIZARDI (test gerçek)     2 failed, 4 passed
-SAHTE/UYGULANAMAYAN: 0 / 17
+SAHTE/UYGULANAMAYAN: 0 / 24
 ```
 
 ### ⚑ P0-5 v3 — çapraz denetim bulgusu (ikiz kusur, 2026-09-04)
@@ -130,6 +131,44 @@ monotonik bir son tarih ile eşleştirilmelidir (P0-2 `prune`, P0-5 `_sweep_rate
 **Hâlâ aynı desende AÇIK (P2-13):** `canonical_memory.py:46`
 `self._locks = defaultdict(asyncio.Lock)` ve `dialogue_manager.py:21`
 `self.sessions` — her `task_id` için büyür, hiçbir geri kazanım yok.
+
+### ⚑ P0-2 v3 + P2-13 — üçüncü tur (2026-09-04)
+
+**P0-2 v3 — sürenin kendisi de "en geniş/genel değer" kusuruydu.**
+`widest_window` ikizini cache'te arama isteği doğru çıktı: satır `created_at`
+saklıyor ama **kendi süresini saklamıyordu**; süre her okumada güncel
+`PINEAL_CACHE_TTL`'den yeniden hesaplanıyordu. Ölçülen iki yön:
+
+- TTL 7 gün ile yaz → aynı dosyayı TTL 1 sn ile aç → **7 günlük kayıt 1.2 sn'de yok** (erken silme)
+- TTL 1 sn ile yaz → TTL süresiz ile aç → **süresi dolmuş kayıt sonsuza dek yaşıyor**, `prune()` 0 satır siliyor
+
+Onarım: `expires_at` kolonu (yazım anında sabitlenir) + eski veritabanları
+için tek seferlik `ALTER TABLE` + doldurma + `idx_rc_expires`. Kapanış:
+7 günlük kayıt TTL 1 sn ile açılınca **yaşıyor**, `prune()` **0** siliyor;
+süresi dolmuş kayıt TTL süresiz ile açılınca **canlanmıyor**.
+
+**Bu turun bulduğu beşinci sahte test:** `test_cache_expired_row_still_expires...`
+başlangıçta `get()`'e bakıyordu, ama **açılış budaması satırı zaten sildiği**
+için `_is_expired`'ı config'ten okuyan mutasyon yeşil kaldı. Test artık
+`_is_expired`'ı doğrudan doğruluyor.
+
+**Not — bir testin sözleşmesi düzeltilen kusurun kendisiydi:**
+`test_startup_prune_clears_rows_left_by_previous_process` "yeni süreçte TTL=0
+yap, 25 satır silinsin" diye kurulmuştu; o mekanizma tam olarak yukarıdaki
+kusurdu. Test, asıl iddiasını (açılış budaması) koruyacak şekilde **gerçekten
+süresi dolmuş** satırlarla yeniden kuruldu.
+
+**P2-13 — desenin üçüncü ve dördüncü örneği.** `_locks`
+(`defaultdict(asyncio.Lock)`) ve `sessions`: ikisinde de ölçüldü, ikisi de
+kapatıldı (ölçümler CHANGELOG'da). Kritik olan, sızıntıyı kapatırken kilidin
+bozulmadığının kanıtlanmasıydı: 8 eşzamanlı merge aynı `task_id` → aynı anda
+en fazla 1 içerde, 0/8 hata; kilit no-op yapılırsa **6/8 `FileNotFoundError`**
+(hepsi aynı `.tmp` yoluna yazıyor).
+
+**Genelleşen kural:** bir değerin ömrü/sınırı **kaydın kendisinde** saklanmalı,
+her kullanımda küresel config'ten türetilmemeli. Bu turda dört ayrı yerde
+aynı hata çıktı: `prune` tetikleyicisi, `_sweep_rate_buckets` tetikleyicisi,
+`widest_window`, `PINEAL_CACHE_TTL`.
 
 **Bu tur üç sahte testi ortaya çıkardı ve düzeltti:**
 

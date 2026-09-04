@@ -126,12 +126,37 @@ class ResponseCache:
                     CREATE TABLE IF NOT EXISTS response_cache (
                         key        TEXT PRIMARY KEY,
                         value      TEXT NOT NULL,
-                        created_at REAL NOT NULL
+                        created_at REAL NOT NULL,
+                        expires_at REAL
                     )
                     """
                 )
+                # [AUDIT P0-2 v2] Süre SATIRDA saklanır. Eskiden yalnızca
+                # created_at tutuluyor ve süre her okumada GÜNCEL config'ten
+                # yeniden hesaplanıyordu: PINEAL_CACHE_TTL 7 gün -> 1 sn
+                # yapılınca 7 günlük kayıt 1.2 sn'de yok oluyordu; 1 sn ->
+                # süresiz yapılınca süresi dolmuş kayıt sonsuza dek yaşıyordu.
+                # Mevcut veritabanları için tek seferlik göç + doldurma.
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(response_cache)")
+                }
+                if "expires_at" not in columns:
+                    conn.execute("ALTER TABLE response_cache ADD COLUMN expires_at REAL")
+                    logger.warning(
+                        "ResponseCache göçü: expires_at kolonu eklendi; mevcut satırlar "
+                        "güncel PINEAL_CACHE_TTL (%s) ile dolduruldu.", self.ttl_seconds,
+                    )
+                if self.ttl_seconds is not None:
+                    conn.execute(
+                        "UPDATE response_cache SET expires_at = created_at + ? "
+                        "WHERE expires_at IS NULL",
+                        (self.ttl_seconds,),
+                    )
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_rc_created ON response_cache(created_at)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_rc_expires ON response_cache(expires_at)"
                 )
                 conn.commit()
         except Exception as exc:  # cache asla ana akışı bozmamalı
@@ -184,7 +209,7 @@ class ResponseCache:
         try:
             with self._lock:
                 row = self._connect().execute(
-                    "SELECT value, created_at FROM response_cache WHERE key = ?",
+                    "SELECT value, expires_at FROM response_cache WHERE key = ?",
                     (key,),
                 ).fetchone()
                 if row is not None and self._is_expired(row[1]):
@@ -209,11 +234,13 @@ class ResponseCache:
             self.misses += 1
             return None
 
-    def _is_expired(self, created_at: float) -> bool:
-        # ttl_seconds=None -> süresiz; 0 -> anında süresi dolar (test sözleşmesi).
-        if self.ttl_seconds is None:
+    def _is_expired(self, expires_at: Optional[float]) -> bool:
+        # [AUDIT P0-2 v2] Süre SATIRDAN okunur, config'ten türetilmez.
+        # expires_at IS NULL -> süresiz (ttl_seconds=None yazım sözleşmesi).
+        # ttl_seconds=0 -> expires_at == yazım anı -> anında süresi dolar.
+        if expires_at is None:
             return False
-        return (time.time() - float(created_at)) > self.ttl_seconds
+        return time.time() > float(expires_at)
 
     def put(self, key: str, value: str) -> None:
         if not value:
@@ -221,10 +248,12 @@ class ResponseCache:
         try:
             with self._lock:
                 conn = self._connect()
+                now = time.time()
+                expires_at = None if self.ttl_seconds is None else now + self.ttl_seconds
                 conn.execute(
-                    "INSERT OR REPLACE INTO response_cache (key, value, created_at) "
-                    "VALUES (?, ?, ?)",
-                    (key, value, time.time()),
+                    "INSERT OR REPLACE INTO response_cache "
+                    "(key, value, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                    (key, value, now, expires_at),
                 )
                 conn.commit()
                 self._writes_since_prune += 1
@@ -250,11 +279,14 @@ class ResponseCache:
             with self._lock:
                 conn = self._connect()
                 deleted = 0
-                if self.ttl_seconds is not None:
-                    cutoff = time.time() - self.ttl_seconds
-                    deleted += conn.execute(
-                        "DELETE FROM response_cache WHERE created_at < ?", (cutoff,)
-                    ).rowcount or 0
+                # [AUDIT P0-2 v2] cutoff config'ten değil satırın kendi
+                # expires_at değerinden; böylece TTL değişikliği mevcut
+                # satırların ömrünü yeniden yorumlamaz.
+                deleted += conn.execute(
+                    "DELETE FROM response_cache "
+                    "WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (time.time(),),
+                ).rowcount or 0
                 if self.max_rows:
                     deleted += conn.execute(
                         "DELETE FROM response_cache WHERE key NOT IN ("

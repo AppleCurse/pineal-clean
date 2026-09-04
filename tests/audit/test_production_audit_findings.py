@@ -144,13 +144,19 @@ def test_startup_prune_clears_rows_left_by_previous_process(tmp_path):
     """
     db = tmp_path / "restart.db"
 
-    previous = ResponseCache(db_path=str(db), ttl_seconds=3600)
+    # [AUDIT P0-2 v2] Bu test eskiden "yeni süreçte TTL=0 yap, 25 satır
+    # silinsin" diye kurulmuştu. O mekanizma tam olarak düzeltilen kusurdu:
+    # satırların ömrü GÜNCEL config'ten yeniden hesaplanıyordu. Artık süre
+    # satırda sabit; bu yüzden önceki sürecin satırları GERÇEKTEN süresi
+    # dolmuş yazılır ve test asıl iddiasını (açılış budaması) korur.
+    previous = ResponseCache(db_path=str(db), ttl_seconds=1)
     for i in range(25):
         previous.put(f"eski-{i}", "gövde " * 40)
     previous.close()
 
-    # Yeni süreç: TTL artık 0 -> mevcut 25 satırın hepsi süresi dolmuş sayılır.
-    restarted = ResponseCache(db_path=str(db), ttl_seconds=0)
+    time.sleep(1.2)
+    # Yeni süreç: aynı TTL, satırlar gerçekten süresi dolmuş.
+    restarted = ResponseCache(db_path=str(db), ttl_seconds=1)
 
     with sqlite3.connect(db) as conn:
         rows = conn.execute("SELECT COUNT(*) FROM response_cache").fetchone()[0]
@@ -752,3 +758,91 @@ def test_dialogue_sessions_expire_by_time(monkeypatch):
     assert len(dm.sessions) == 1, (
         f"{len(dm.sessions)} oturum kaldı; TTL dolmuş oturumlar geri kazanılmıyor"
     )
+
+
+# --------------------------------------------------------------------------
+# P0-2 v2  Süre satırda saklanmalı, config'ten yeniden hesaplanmamalı
+# --------------------------------------------------------------------------
+def test_cache_ttl_is_stored_per_row_not_recomputed_from_config(tmp_path):
+    """[AUDIT P0-2 v2] TTL değişikliği mevcut satırların ömrünü değiştirmemeli.
+
+    Ölçülen eski davranış: 7 günlük TTL ile yazılan kayıt, aynı dosya
+    TTL=1 sn ile açılınca 1.2 sn içinde yok oluyordu (erken silme).
+    """
+    from agent_core.services.response_cache import ResponseCache
+
+    db = str(tmp_path / "a.db")
+    a = ResponseCache(db_path=db, ttl_seconds=7 * 24 * 3600)
+    a.put("k1", "v1")
+    a.close()
+
+    b = ResponseCache(db_path=db, ttl_seconds=1)
+    time.sleep(1.2)
+    try:
+        assert b.get("k1") == "v1", (
+            "7 günlük kayıt, TTL=1 sn ile açılınca silindi; süre satırda "
+            "değil config'ten türetiliyor"
+        )
+        assert b.prune() == 0, "erken silme: prune süresi dolmamış satırı sildi"
+    finally:
+        b.close()
+
+
+def test_cache_expired_row_still_expires_after_ttl_raised_to_infinite(tmp_path):
+    """Tersi yön: kısa TTL ile yazılan kayıt, TTL süresiz yapılınca
+    sonsuza dek yaşamamalı (ölçülen eski davranış: yaşıyordu, prune 0 sildi)."""
+    from agent_core.services.response_cache import ResponseCache
+
+    db = str(tmp_path / "b.db")
+    c = ResponseCache(db_path=db, ttl_seconds=1)
+    c.put("k1", "v1")
+    c.close()
+
+    time.sleep(1.2)
+    d = ResponseCache(db_path=db, ttl_seconds=None)
+    try:
+        # Açılış budaması satırı zaten sildiği için get() tek başına ayırt
+        # edici değil (mutasyon testi bunu ortaya çıkardı): süreyi SATIRDAN
+        # okuma kararını doğrudan doğrula.
+        assert d._is_expired(time.time() - 10) is True, (
+            "süresi dolmuş satır, güncel config ttl_seconds=None diye canlı "
+            "sayılıyor; süre satırdan değil config'ten türetiliyor"
+        )
+        assert d._is_expired(None) is False, "expires_at NULL olan satır süresiz sayılmalı"
+        assert d.get("k1") is None, (
+            "süresi dolmuş kayıt TTL=None ile açılınca canlandı; "
+            "satırın kendi expires_at değeri kullanılmıyor"
+        )
+    finally:
+        d.close()
+
+
+def test_cache_schema_migrates_legacy_db_without_expires_at(tmp_path):
+    """expires_at kolonu olmayan eski veritabanı açılabilmeli ve doldurulmalı."""
+    import sqlite3
+
+    from agent_core.services.response_cache import ResponseCache
+
+    db = str(tmp_path / "legacy.db")
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE response_cache "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at REAL NOT NULL)"
+    )
+    con.execute(
+        "INSERT INTO response_cache VALUES ('eski', 'deger', ?)", (time.time() - 10,)
+    )
+    con.commit()
+    con.close()
+
+    cache = ResponseCache(db_path=db, ttl_seconds=3600)
+    try:
+        assert cache.get("eski") == "deger", "göç sonrası eski satır okunamadı"
+        cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(response_cache)")}
+        assert "expires_at" in cols, "göç expires_at kolonunu eklemedi"
+        filled = sqlite3.connect(db).execute(
+            "SELECT expires_at FROM response_cache WHERE key='eski'"
+        ).fetchone()[0]
+        assert filled is not None, "göç mevcut satırların expires_at değerini doldurmadı"
+    finally:
+        cache.close()
