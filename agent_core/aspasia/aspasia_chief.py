@@ -168,14 +168,42 @@ Cevabın kısa ve net olsun: sonuç, sonra gerekiyorsa neden ve tek bir sonraki 
         assessment = "high"
 
         try:
-            raw_response = await self.llm.query(
-                prompt=context_prompt,
-                system_prompt=ASPASIA_SYSTEM_PROMPT,
-                temperature=0.4,
-                tier=1,
-                model=selected_model,
-                images=[image_data] if image_data else None,
-            )
+            if selected_model == "local":
+                # Kullanıcının açık yerel-model tercihi: zincir değil doğrudan
+                # local transport (query, "local" modelinde yerel yolu seçer).
+                raw_response = await self.llm.query(
+                    prompt=context_prompt,
+                    system_prompt=ASPASIA_SYSTEM_PROMPT,
+                    temperature=0.4,
+                    tier=1,
+                    model="local",
+                    images=[image_data] if image_data else None,
+                )
+            elif selected_model:
+                # Açık tek-model seçimi (controller model_override veya
+                # set_preferred_model): kullanıcının bilinçli seçimi olarak
+                # tek modele doğrudan gidilir; zincir atlanmaz-sayılmaz, çünkü
+                # seçim operatör tarafından yapılmıştır.
+                raw_response = await self.llm.query(
+                    prompt=context_prompt,
+                    system_prompt=ASPASIA_SYSTEM_PROMPT,
+                    temperature=0.4,
+                    tier=1,
+                    model=selected_model,
+                    images=[image_data] if image_data else None,
+                )
+            else:
+                # F-1: Aspasia kendi kimliğiyle AGENT_CHAINS["aspasia"]
+                # zincirini ve model@provider merdivenini kullanır; doğrudan
+                # tier-1 tek model seçmez.
+                raw_response = await self.llm.query_chain(
+                    prompt=context_prompt,
+                    task="dialogue",
+                    temperature=0.4,
+                    system_prompt=ASPASIA_SYSTEM_PROMPT,
+                    images=[image_data] if image_data else None,
+                    agent_name="aspasia",
+                )
             final_msg = raw_response.strip()
             assessment = "high"
         except Exception as e:

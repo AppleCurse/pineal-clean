@@ -175,7 +175,12 @@ class HumanBehaviorAnalyzer:
         )
 
         try:
-            result = await llm_gateway.query_json(prompt, DigitalColdReading)
+            result = await llm_gateway.query_json_chain(
+                prompt,
+                DigitalColdReading,
+                task="dialogue",
+                agent_name="human_behavior",
+            )
         except Exception as exc:
             # [022] Yorum katmanı üretilemediyse sahte "Aşil tespiti" YOK:
             # gözlemler (deterministik sinyaller) korunur, yorum alanları

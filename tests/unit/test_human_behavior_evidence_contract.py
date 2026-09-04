@@ -28,12 +28,12 @@ INPUT_WITH_TEXT = {
 
 
 class FailingGateway:
-    async def query_json(self, *a, **k):
+    async def query_json_chain(self, *a, **k):
         raise RuntimeError("REAL_LLM_CALL_NOT_EXECUTED: test")
 
 
 class FakeResultGateway:
-    async def query_json(self, *a, **k):
+    async def query_json_chain(self, *a, **k):
         return DigitalColdReading(
             observations=["Test gözlemi"],
             possible_interpretations=["Test hipotezi"],
@@ -66,7 +66,7 @@ async def test_llm_failure_keeps_observations_but_no_interpretation():
 async def test_no_observations_never_calls_llm():
     analyzer = HumanBehaviorAnalyzer()
     gateway = MagicMock()
-    gateway.query_json = AsyncMock()
+    gateway.query_json_chain = AsyncMock()
 
     result = await analyzer.execute(
         {"target_profile": {"bio": "", "posts": [], "post_times": [], "images": []}},
@@ -74,7 +74,7 @@ async def test_no_observations_never_calls_llm():
         gateway,
     )
 
-    gateway.query_json.assert_not_called()
+    gateway.query_json_chain.assert_not_called()
     assert result.data_confidence is False
     assert result.fallback_reason == "target_evidence_unavailable"
     assert result.micro_signals == []

@@ -65,9 +65,11 @@ class MirrorOfTruth:
         )
 
         try:
-            return await self.llm_gateway.query_json(
+            return await self.llm_gateway.query_json_chain(
                 prompt,
                 MirrorReflection,
+                task="dialogue",
+                agent_name="mirror_truth",
             )
         except Exception as exc:
             log.warning(

@@ -144,10 +144,10 @@ async def test_provider_default_substitution_is_denied(monkeypatch):
             model="fast",
         )
     assert state["calls"] == 1
-    assert any(
-        "MODEL_SUBSTITUTION_DENIED" in (record.get("error") or "")
-        for record in gateway.call_log
-    )
+    denied = [r for r in gateway.call_log if "MODEL_SUBSTITUTION_DENIED" in (r.get("error") or "")]
+    assert denied
+    # O-1: denial telemetry carries the provider-returned model as structured data.
+    assert denied[0]["provider_returned_model"] == "provider-default-model"
 
 
 # --------------------------------------------------------------------------- #

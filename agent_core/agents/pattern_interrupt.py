@@ -80,7 +80,12 @@ class PatternInterrupt:
             f"oranında uyduğunu değerlendir."
         )
         
-        result = await llm_gateway.query_json(prompt, GeneratedMessage)
+        result = await llm_gateway.query_json_chain(
+            prompt,
+            GeneratedMessage,
+            task="dialogue",
+            agent_name="pattern_interrupt",
+        )
         # [022] fix: gerçek LLM yanıtı ayrıştırıldı -> doğrulandı olarak işaretle.
         # Model default'u fail-closed; burası üretim yolunun TE doğrulama noktası.
         result.data_confidence = True

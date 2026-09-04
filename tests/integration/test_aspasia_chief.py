@@ -7,7 +7,11 @@ from agent_core.domain.memory_models import TaskSnapshot
 @pytest.fixture
 def mock_llm_gateway():
     gateway = MagicMock(spec=LLMGateway)
+    # Default chat path goes through the agent chain (query_chain); explicit
+    # overrides go direct (query). Both are stubbed so fixtures do not depend
+    # on which seam the chief's routing policy selects.
     gateway.query = AsyncMock(return_value="Mocked Socratic response")
+    gateway.query_chain = AsyncMock(return_value="Mocked Socratic response")
     return gateway
 
 @pytest.fixture

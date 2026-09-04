@@ -142,7 +142,7 @@ async def test_execute():
 
     from agent_core.agents.human_behavior import DigitalColdReading
     mock_llm = MagicMock()
-    mock_llm.query_json = AsyncMock(return_value=DigitalColdReading(
+    mock_llm.query_json_chain = AsyncMock(return_value=DigitalColdReading(
         observations=["Test gözlemi"],
         possible_interpretations=["Test hipotezi"],
         alternative_interpretations=[],
@@ -157,7 +157,7 @@ async def test_execute():
     assert isinstance(res, DigitalColdReading)
     assert res.data_confidence is True
     assert res.fallback_reason is None
-    mock_llm.query_json.assert_called_once()
+    mock_llm.query_json_chain.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_execute_non_model_output_is_typed_error():
     """Model dışı LLM çıktısı sessizce geçirilmez; TypeError fırlar."""
     analyzer = HumanBehaviorAnalyzer()
     mock_llm = MagicMock()
-    mock_llm.query_json = AsyncMock(return_value="mock_result")
+    mock_llm.query_json_chain = AsyncMock(return_value="mock_result")
     with pytest.raises(TypeError):
         await analyzer.execute(
             {"target_profile": {"bio": "test", "posts": []}}, None, mock_llm

@@ -93,7 +93,7 @@ class _PromptCapturingGateway:
     def __init__(self):
         self.prompt = None
 
-    async def query_json(self, prompt, schema, **kwargs):
+    async def query_json_chain(self, prompt, schema, **kwargs):
         self.prompt = prompt
         from agent_core.agents.pattern_interrupt import GeneratedMessage
         return GeneratedMessage(

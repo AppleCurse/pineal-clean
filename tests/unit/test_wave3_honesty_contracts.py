@@ -143,7 +143,7 @@ def test_generated_message_fail_closed_defaults():
 @pytest.mark.asyncio
 async def test_llm_path_marks_message_verified():
     class _Gateway:
-        async def query_json(self, prompt, schema, **kwargs):
+        async def query_json_chain(self, prompt, schema, **kwargs):
             return GeneratedMessage(
                 message="gözleme dayalı", strategy="observation",
                 confidence=0.8, compliance_score=100.0, dialogue_tree=[],

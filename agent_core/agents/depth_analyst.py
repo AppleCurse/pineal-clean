@@ -60,7 +60,9 @@ class DepthAnalyst:
         )
 
         try:
-            report: DepthReport = await self.llm_gateway.query_json_chain(prompt, DepthReport, task="depth")
+            report: DepthReport = await self.llm_gateway.query_json_chain(
+                prompt, DepthReport, task="depth", agent_name="depth_analyst"
+            )
             # QuoteGuard ile alıntı kontrolü ve sahte tespit temizliği
             from agent_core.services.quote_guard import guard_report
             rep_dict = report.model_dump()
