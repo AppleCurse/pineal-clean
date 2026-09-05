@@ -201,34 +201,6 @@
     <UnifiedCompactPanel />
   </main>
 
-  <!-- TELEMETRY & TASKS DEBUG -->
-  <div style="border-top: 1px solid var(--brass-border); padding: 12px; margin-top: 10px;">
-    <div style="display:flex; gap:10px; margin-bottom: 10px;">
-      <button class="btn-dark" on:click={fetchTelemetry}>[ GET TELEMETRY ]</button>
-      <button class="btn-dark" on:click={fetchTasks}>[ GET TASKS ]</button>
-    </div>
-    
-    <!-- Şeffaf Su Borusu (Neural Fluid Pipeline) HER ZAMAN GÖRÜNÜR -->
-    <div style="margin-bottom: 20px;">
-      <NeuralTelemetryBoard telemetry={telemetryData} />
-    </div>
-
-    {#if tasksData}
-      <div style="background: #111; padding:10px; border-radius: 4px; border: 1px solid #333; font-size: 11px; margin-top: 10px;">
-        <h4 style="margin: 0 0 5px 0; color:var(--gold);">TASKS (RETENTION):</h4>
-        {#each (tasksData.tasks ?? []) as task}
-           <div style="display:flex; gap:10px; margin-bottom:5px; align-items:center;">
-              <span>{task.task_id} ({task.evidence_count} evidence)</span>
-              <button class="btn-dark" style="color:red; border: 1px solid red; padding: 2px 6px;" on:click={() => deleteTask(task.task_id)}>DELETE</button>
-           </div>
-        {/each}
-        {#if (tasksData.tasks ?? []).length === 0}
-          <p style="margin:0; color:#ccc;">No tasks found.</p>
-        {/if}
-      </div>
-    {/if}
-  </div>
-
 
   <!-- FOOTER -->
   <footer style="margin-top: 20px; text-align: center; border-top: 1px solid var(--brass-border); padding-top: 12px;">

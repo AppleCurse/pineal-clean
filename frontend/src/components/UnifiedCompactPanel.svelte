@@ -1,61 +1,234 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
-  import { clientId, apiFetch, apiToken, setApiToken, currentApiToken, isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents, armEngaged, sigintEngaged, recordEngaged, keyUnlocked } from '../store';
+  import { 
+    clientId, apiFetch, apiToken, setApiToken, currentApiToken, 
+    isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents, 
+    armEngaged, sigintEngaged, recordEngaged, keyUnlocked 
+  } from '../store';
   import { currentLang, t } from '../i18n';
-  import { playClick, playRunningTone, playHaltAlarm, playLever } from '../lib/consoleAudio';
-  import PillarFeed from './PillarFeed.svelte';
-  
+  import { playClick, playRunning, playHalt, playToggle } from '../lib/consoleAudio';
+
   // ==========================================
-  // TARGET & ENGINE TELEMETRY
+  // ANALOG ŞALTER & DÜĞME FONKSİYONLARI (USER CODE)
+  // ==========================================
+  function toggleArm() {
+    armEngaged.update(v => {
+      const next = !v;
+      playToggle(next);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: next ? 'ARM: ENGAGED' : 'ARM: SAFE' }]);
+      return next;
+    });
+  }
+
+  function toggleSigint() {
+    sigintEngaged.update(v => {
+      const next = !v;
+      playToggle(next);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: next ? 'SIGINT: OPEN' : 'SIGINT: CLOSED' }]);
+      if (next && $isProcessing) {
+        cancelAnalysis();
+      }
+      return next;
+    });
+  }
+
+  function toggleRecord() {
+    recordEngaged.update(v => {
+      const next = !v;
+      playToggle(next);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: next ? 'RECORD: ON' : 'RECORD: OFF' }]);
+      return next;
+    });
+  }
+
+  function toggleKey() {
+    keyUnlocked.update(v => {
+      const next = !v;
+      playClick(next ? 280 : 120, 70);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: next ? 'KEY LOCK: UNLOCKED' : 'KEY LOCK: LOCKED' }]);
+      return next;
+    });
+  }
+
+  // Knobs: THROTTLE, MIXTURE, PROP
+  let throttleAngle = 45;
+  let mixtureAngle = 120;
+  let propAngle = 210;
+
+  function rotateKnob(knob: 'throttle' | 'mixture' | 'prop') {
+    playClick(240, 30);
+    if (knob === 'throttle') throttleAngle = (throttleAngle + 45) % 360;
+    if (knob === 'mixture') mixtureAngle = (mixtureAngle + 45) % 360;
+    if (knob === 'prop') propAngle = (propAngle + 45) % 360;
+  }
+
+  // Odometer (REC 00087)
+  let odometer = 87;
+  $: if ($logs.length > 0) {
+    odometer = 87 + $logs.length;
+  }
+
+  // ==========================================
+  // 13 AJAN LİSTESİ (KULLANICININ VERDİĞİ LİSTE)
+  // ==========================================
+  const agentList = [
+    { id: "mirror_truth",          name: "MIRROR TRUTH",          color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "openrouter", capability: "strong_reasoning", glyph: "🪞" },
+    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "deepseek-v4-flash",   backupModel: "claude-sonnet-5",   via: "openrouter", capability: "extract+judgment", glyph: "⚖️" },
+    { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "openrouter", capability: "strong_reasoning", glyph: "👤" },
+    { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "openrouter", capability: "strong_reasoning", glyph: "✨" },
+    { id: "friction_detector",     name: "FRICTION & BOUNDS",     color: "#ef4444", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "openrouter", capability: "strong_reasoning", glyph: "🛡️" },
+    { id: "cognitive_profiler",    name: "COGNITIVE PROFILER",    color: "#06b6d4", primaryModel: "claude-sonnet-5",     backupModel: "grok-4.6",          via: "openrouter", capability: "strong_reasoning", glyph: "🧠" },
+    { id: "resonance_calc",        name: "RESONANCE CALCULATOR",  color: "#3b82f6", primaryModel: "local-numpy",         backupModel: "—",                 via: "local",      capability: "calc",             glyph: "📐" },
+    { id: "pattern_interrupt",     name: "PATTERN INTERRUPT",     color: "#dc2626", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-flash", via: "openrouter", capability: "strong_reasoning", glyph: "⚡" },
+    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE",      color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "openrouter", capability: "synthesis",        glyph: "🌿" },
+    { id: "vision_analyzer",       name: "VISION ANALYZER",       color: "#38bdf8", primaryModel: "gemini-3.7-flash",    backupModel: "grok-4.6",          via: "openrouter", capability: "vision",           glyph: "👁️" },
+    { id: "osint_investigator",    name: "OSINT INVESTIGATOR",    color: "#f97316", primaryModel: "grok-4.6",            backupModel: "deepseek-v4-pro",   via: "xai/tools",  capability: "osint_synthesis",  glyph: "🌐" },
+    { id: "authenticity_auditor",  name: "AUTHENTICITY AUDITOR",  color: "#eab308", primaryModel: "gemini-3.7-flash",    backupModel: "claude-sonnet-5",   via: "openrouter", capability: "vision+verify",   glyph: "🔍" },
+    { id: "depth_analyst",         name: "DEPTH ANALYST",         color: "#8b5cf6", primaryModel: "deepseek-v4-pro",     backupModel: "claude-sonnet-5",   via: "openrouter", capability: "strong_reasoning", glyph: "💎" },
+  ];
+
+  // ==========================================
+  // STATE & TELEMETRY
   // ==========================================
   export let targetUrl = "";
   export let userRituals = "";
   export let userPlaylist = "";
   export let userEnvies = "";
-  let localModelActive = false;
-  let isSettingModel = false;
-  let selectedLocalModel = "dolphin-llama3";
+  let runs: Record<string, any> = {};
+  let currentAgent = "";
+  let taskState = "IDLE";
+  let taskId = "";
+  let overallConfidence = 0;
+  let haltedReason: string | null = null;
+  let holisticProfile: any = null;
+  let followerAudit: any = null;
+  let timingForensics: any = null;
+  let depthReport: any = null;
+  let visualEvidence: any = null;
+  let shadowProfile: any = null;
+  let osintFootprint: any = null;
 
-  async function toggleLocalModel() {
-    isSettingModel = true;
-    localModelActive = !localModelActive;
+  // Active Tab: ASPASIA, VISION, OSINT, FRICTION, VERIFY
+  let activeTab = 'ASPASIA';
+
+  // Active Forensic Drawer / Modal: FOLLOWER, TIMING, DEPTH, VISUAL, SHADOW, OSINT
+  let activeForensicModal: string | null = null;
+
+  function toggleForensic(name: string) {
+    playClick(350, 40);
+    activeForensicModal = activeForensicModal === name ? null : name;
+  }
+
+  // Audio reactivity
+  let prevAgent = '';
+  let prevState = '';
+
+  $: {
+    if ($taskStatus?.current_agent && $taskStatus.current_agent !== prevAgent && $taskStatus.status === 'processing') {
+      playRunning();
+      prevAgent = $taskStatus.current_agent;
+    }
+    if ($taskStatus?.status && $taskStatus.status !== prevState) {
+      if (String($taskStatus.status).startsWith('halted') || $taskStatus.status === 'failed') playHalt();
+      prevState = $taskStatus.status;
+    }
+  }
+
+  $: {
+    if ($taskStatus) {
+      if ($taskStatus.task_id) taskId = $taskStatus.task_id;
+      if ($taskStatus.status) taskState = $taskStatus.status;
+      if ($taskStatus.halted_reason !== undefined) haltedReason = $taskStatus.halted_reason;
+      if ($taskStatus.current_agent) currentAgent = $taskStatus.current_agent;
+      if ($taskStatus.runs) runs = $taskStatus.runs;
+      if ($taskStatus.holistic_profile) holisticProfile = $taskStatus.holistic_profile;
+      if ($taskStatus.follower_audit) followerAudit = $taskStatus.follower_audit;
+      if ($taskStatus.timing_forensics) timingForensics = $taskStatus.timing_forensics;
+      if ($taskStatus.depth_report) depthReport = $taskStatus.depth_report;
+      if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
+      if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
+      if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
+      overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
+    }
+  }
+
+  // ==========================================
+  // ASPASIA CHAT & SPEECH
+  // ==========================================
+  let messages: {sender: string, text: string, time: string}[] = [
+    { sender: 'ASPASIA', text: 'Provide a discreet OSINT sweep on recent financial flows into Aegean shell entities.', time: '14:32:11' },
+    { sender: 'ASPASIA', text: 'Sweep initialized. 7 entities flagged. Flows routed through Cyprus → Luxembourg → BVI. Risk score: 0.78. Source confidence: high.', time: '14:32:47' },
+    { sender: 'ASPASIA', text: 'Cross-reference with maritime tracking and flag-state anomalies.', time: '14:33:02' },
+    { sender: 'ASPASIA', text: 'Cross-ref complete. 3 vessels flagged under flags of convenience. AIS spoofing detected on 2. Raw packet samples attached.', time: '14:33:41' }
+  ];
+  let inputMessage = "";
+  let chatContainer: HTMLElement;
+  let isSending = false;
+  let attachedImage: string | null = null;
+  let fileInput: HTMLInputElement;
+
+  function handleImageUpload(e: Event) {
+    const target = e.target as HTMLInputElement;
+    if (target.files && target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (ev) => { attachedImage = ev.target?.result as string; };
+      reader.readAsDataURL(target.files[0]);
+    }
+  }
+
+  async function sendMessage() {
+    if ((!inputMessage.trim() && !attachedImage) || isSending) return;
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const displayMsg = attachedImage ? `[GÖRSEL] ${inputMessage}` : inputMessage;
+    messages = [...messages, { sender: 'SİZ', text: displayMsg, time: nowTime }];
+    
+    let currentInput = inputMessage;
+    let currentImage = attachedImage;
+    inputMessage = ""; 
+    attachedImage = null; 
+    isSending = true;
+    playClick(280, 50);
+
     try {
-      const res = await apiFetch(`/api/vault`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: $clientId, use_local: localModelActive, local_model: selectedLocalModel })
+      const payload: any = { client_id: $clientId, user_message: currentInput };
+      if (currentImage) payload.image_data = currentImage;
+      const res = await apiFetch(`/api/aspasia/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN) — Kasa'dan token girin" : "Ağ hatası");
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `LOKAL MODEL: ${localModelActive ? 'AKTİF ('+selectedLocalModel+')' : 'PASİF'}`}]);
-    } catch(err: any) {
-      localModelActive = !localModelActive;
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `MODEL SEÇİM HATASI: ${err.message}`}]);
+      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN)" : "Ağ geçidi yanıt vermedi");
+      const data = await res.json();
+      const reply = data.message || data.error?.message || "Yanıt alındı.";
+      const resTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      messages = [...messages, { sender: 'ASPASIA', text: reply, time: resTime }];
+
+      // Ses + yazı birlikte (Kullanıcının verdiği TTS kodu)
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(reply);
+        u.lang = $currentLang === 'tr' ? 'tr-TR' : 'en-US';
+        u.rate = 1.0;
+        window.speechSynthesis.speak(u);
+      }
+    } catch (error: any) {
+      messages = [...messages, { sender: 'SİSTEM', text: `HATA: ${error.message}`, time: nowTime }];
     } finally {
-      isSettingModel = false;
+      isSending = false;
     }
   }
 
-  async function updateLocalModelOnly() {
-    try {
-      await apiFetch(`/api/vault`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: $clientId, use_local: localModelActive, local_model: selectedLocalModel })
-      });
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `YEREL MODEL: ${selectedLocalModel}`}]);
-    } catch(err: any) {
-      console.error("Model güncellenemedi", err);
-    }
-  }
+  function handleKeydown(e: KeyboardEvent) { if (e.key === 'Enter') sendMessage(); }
 
   export async function triggerAnalysis() {
     if (!targetUrl) return;
     if (!$armEngaged) {
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "WARNING", msg: "[EMNİYET] ARM anahtarı kapalı! Konsoldan ARM'ı aktif edin."}]);
-      playHaltAlarm();
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'WARNING', msg: 'ARM kapalı — önce ARM engagé et' }]);
+      playHalt();
       return;
     }
     isProcessing.set(true);
+    playRunning();
     try {
       const res = await apiFetch(`/api/initiate`, {
         method: "POST",
@@ -67,15 +240,14 @@
           rituals: userRituals,
           playlist: userPlaylist,
           envies: userEnvies,
-
         })
       });
       if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN)" : "API hatası: " + res.statusText);
       const started = await res.json();
       if (started.task_id) taskStatus.update(s => ({ ...s, task_id: started.task_id, status: 'processing' }));
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ANALİZ EMRİ GÖNDERİLDİ: ${targetUrl}`}]);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ANALİZ EMRİ VERİLDİ: ${targetUrl}` }]);
     } catch (e: any) {
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `HATA: ${e.message}`}]);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `HATA: ${e.message}` }]);
       isProcessing.set(false);
     }
   }
@@ -83,1078 +255,1255 @@
   async function cancelAnalysis() {
     const activeTaskId = $taskStatus?.task_id;
     if (!activeTaskId) return;
-    const res = await apiFetch(`/api/tasks/${activeTaskId}/cancel?client_id=${$clientId}`, {
-      method: 'POST'
-    });
-    if (!res.ok) {
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `İPTAL HATASI: ${res.status}`}]);
-    }
+    playHalt();
+    await apiFetch(`/api/tasks/${activeTaskId}/cancel?client_id=${$clientId}`, { method: 'POST' });
   }
-
-  // ==========================================
-  // VAULT (KEYSTORE)
-  // ==========================================
-  let apiKey = "";
-  let cookie = "";
-  let isSealing = false;
-  let vaultStatusKey = "vaultReady";
-
-  // PINEAL_TOKEN (API erişim anahtarı) — çalışma zamanı girişi.
-  // Backend'de PINEAL_TOKEN tanımlıysa tüm /api/* ve WS kimlik ister; UI bu anahtarı
-  // derleme zamanında (VITE_PINEAL_TOKEN) bilmiyorsa 401/1008 alır. Bu alan, kullanıcının
-  // anahtarı yeniden derleme olmadan girmesini sağlar.
-  let pinealTokenInput = "";
-  $: pinealTokenSaved = ($apiToken || '').trim().length > 0;
-
-  function savePinealToken() {
-    setApiToken(pinealTokenInput);
-    const saved = currentApiToken();
-    if (saved) {
-      pinealTokenInput = "";
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "TOKEN KAYDEDİLDİ — bağlantı yeniden kuruluyor"}]);
-    } else {
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: "TOKEN TEMİZLENDİ"}]);
-    }
-  }
-
-  async function sealCredentials() {
-    isSealing = true;
-    vaultStatusKey = "vaultSaving";
-    try {
-      const payload: any = { client_id: $clientId };
-      if (apiKey) payload.api_key = apiKey;
-      if (cookie) payload.x_cookie = cookie;
-      const res = await apiFetch(`/api/vault`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN)" : "Connection error");
-      vaultStatusKey = "vaultActive";
-      apiKey = "";
-      cookie = "";
-    } catch(err: any) {
-      vaultStatusKey = "vaultError";
-      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "ERROR", msg: `KASA HATASI: ${err.message}`}]);
-    } finally {
-      isSealing = false;
-    }
-  }
-
-  // ==========================================
-  // ASPASIA CHAT & DIALOGUE
-  // ==========================================
-  let messages: {sender: string, text: string}[] = [
-    { sender: 'ASPASIA', text: 'Sistem çevrimiçi. Hedef verilerini ve telemetriyi incelemeye hazırım.' }
-  ];
-  let inputMessage = "";
-  let chatContainer: HTMLElement;
-  let isSending = false;
-  let isListening = false;
-  let attachedImage: string | null = null;
-  let fileInput: HTMLInputElement;
-  let activeAgentId = 'ASPASIA';
-
-  function handleImageUpload(e: Event) {
-    const target = e.target as HTMLInputElement;
-    if (target.files && target.files[0]) {
-      const reader = new FileReader();
-      reader.onload = (ev) => { attachedImage = ev.target?.result as string; };
-      reader.readAsDataURL(target.files[0]);
-    }
-  }
-
-  function speakAspasia(text: string) {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = $currentLang === 'tr' ? 'tr-TR' : 'en-US';
-      utter.rate = 1.05;
-      utter.pitch = 0.95;
-      window.speechSynthesis.speak(utter);
-    } catch (_) {}
-  }
-
-  async function sendMessage() {
-    if ((!inputMessage.trim() && !attachedImage) || isSending) return;
-    const displayMsg = attachedImage ? `[GÖRSEL] ${inputMessage}` : inputMessage;
-    messages = [...messages, { sender: 'SİZ', text: displayMsg }];
-    
-    let currentInput = inputMessage;
-    let currentImage = attachedImage;
-    inputMessage = ""; 
-    attachedImage = null; 
-    isSending = true;
-    
-    try {
-      // ASPASIA TRUE CHIEF LAYER: ASPASIA seciliyken serbest DOGAL DIL önce
-      // komut kanalindan gecer (intent+goal -> CommandGateway -> orchestrator).
-      // Komut olmayan mesaj chat yoluna duser — mesaj hicbir durumda kaybolmaz.
-      // Structured form (URL/ritual alanlari) bilerek /api/initiate'te kalir:
-      // programatik giris ASPASIA'yı dolanabilir; KULLANICI dogal dili dolamaz.
-      if (activeAgentId === 'ASPASIA' && !currentImage) {
-        try {
-          const cmdRes = await apiFetch(`/api/aspasia/command`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ client_id: $clientId, user_message: currentInput })
-          });
-          if (cmdRes.ok) {
-            const cmd = await cmdRes.json();
-            if (cmd.accepted && cmd.task_id) {
-              taskStatus.update(s => ({ ...s, task_id: cmd.task_id, status: 'processing' }));
-              isProcessing.set(true);
-              logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ASPASIA EMRİ [${cmd.command_id}]: ${cmd.intent} → görev ${cmd.task_id}`}]);
-              const replyText = `Emir yürürlükte Mösyö — görev kuyruğa alındı (${cmd.task_id}); sonuç kartını izleyin.`;
-              messages = [...messages, { sender: 'ASPASIA', text: replyText }];
-              speakAspasia(replyText);
-              return;
-            }
-          }
-        } catch (_) { /* komut kanali ulasilamaz -> chat yola devam; sessiz basari yok */ }
-      }
-      const payload: any = { client_id: $clientId, user_message: currentInput };
-      if (currentImage) payload.image_data = currentImage;
-      const endpoint = activeAgentId === 'ASPASIA' ? '/api/aspasia/chat' : '/api/executor/intervene';
-      if (activeAgentId !== 'ASPASIA') payload.action_type = `DIRECT_CMD_${activeAgentId}`;
-
-      const res = await apiFetch(`${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN) — Kasa'dan token girin" : "Ağ geçidi yanıt vermedi");
-      const data = await res.json();
-      const reply = data.message || data.error?.message || "Yanıt alındı.";
-      messages = [...messages, { sender: activeAgentId, text: reply }];
-      if (activeAgentId === 'ASPASIA') {
-        speakAspasia(reply);
-      }
-    } catch (error: any) {
-      messages = [...messages, { sender: 'SİSTEM', text: `HATA: ${error.message}` }];
-    } finally {
-      isSending = false;
-    }
-  }
-
-  function explainState() {
-    activeAgentId = 'ASPASIA';
-    inputMessage = $currentLang === 'tr' 
-      ? 'Şu anki telemetri ve analiz durumunu özetler misin? Hangi aşamadayız?' 
-      : 'Can you summarize the current telemetry and analysis state? Where are we?';
-    sendMessage();
-  }
-
-  function handleKeydown(e: KeyboardEvent) { if (e.key === 'Enter') sendMessage(); }
-
-  // ==========================================
-  // TELEMETRY METRICS & AGENT CHAIN
-  // ==========================================
-  let resonanceScore = 0;
-  let resonanceApproach = '';
-  let redFlags: string[] = [];
-
-  const agentList = [
-    { id: "mirror_truth",          name: "MIRROR TRUTH",          color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/openrouter", capability: "unfiltered_reality" },
-    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-flash", via: "nous/deepseek",   capability: "extract+judgment" },
-    { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "deep_psychology" },
-    { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "gemini-3.7-flash",    backupModel: "deepseek-v4-flash", via: "google-direct",  capability: "zero_cost_classify" },
-    { id: "friction_detector",     name: "FRICTION & BOUNDS",     color: "#ef4444", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "boundary_detect" },
-    { id: "cognitive_profiler",    name: "COGNITIVE PROFILER",    color: "#06b6d4", primaryModel: "gemini-3.7-flash",    backupModel: "deepseek-v4-flash", via: "google-direct",  capability: "zero_cost_lexicon" },
-    { id: "resonance_calc",        name: "RESONANCE CALCULATOR",  color: "#3b82f6", primaryModel: "local-numpy",         backupModel: "none",              via: "local",           capability: "deterministic_math" },
-    { id: "pattern_interrupt",     name: "PATTERN INTERRUPT",     color: "#dc2626", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "nous/google",     capability: "hook_generation" },
-    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE",      color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "rapport_synthesis" },
-    { id: "follower_audit",        name: "FOLLOWER AUDIT",        color: "#8b5cf6", primaryModel: "deterministic-math",  backupModel: "none",              via: "local",           capability: "heuristic_scoring" },
-    { id: "timing_forensics",      name: "TIMING FORENSICS",      color: "#ec4899", primaryModel: "circadian-analysis",  backupModel: "none",              via: "local",           capability: "fourier_spectral" },
-    { id: "depth_forensics",       name: "DEPTH FORENSICS",       color: "#14b8a6", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "quote_grounding" },
-    { id: "shadow_agent",          name: "SHADOW PROFILER",       color: "#6366f1", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "dark_triad_detect" }
-  ];
-
-  let runs: Record<string, any> = {};
-  let currentAgent = "";
-  let overallConfidence = 0;
-  let haltedReason: string | null = null;
-  let taskState = "IDLE";
-  let taskId = "";
-  let prevAgent = "";
-  let prevTaskState = "";
-  let holisticProfile: any = null;
-  let followerAudit: any = null;
-  let timingForensics: any = null;
-  let depthReport: any = null;
-  let visualEvidence: any = null;
-  let shadowProfile: any = null;
-  let osintFootprint: any = null;
-  let telemetry: any = null;
-  let frequencyMap: any = null;
-  let seismosEvents: any = null;
-  let voidMap: any = null;
-  let strataMap: any = null;
-  let gravityMap: any = null;
-  let pulseMap: any = null;
-  let keyMatrix: any = null;
-  let copyFeedback = false;
-
-  function copyMessage(text: string) {
-    if (!text) return;
-    navigator.clipboard.writeText(text);
-    copyFeedback = true;
-    setTimeout(() => { copyFeedback = false; }, 2000);
-  }
-
-  $: {
-    if ($taskStatus) {
-      if ($taskStatus.task_id) taskId = $taskStatus.task_id;
-      if ($taskStatus.status) taskState = $taskStatus.status;
-      if ($taskStatus.halted_reason !== undefined) haltedReason = $taskStatus.halted_reason;
-      if ($taskStatus.holistic_profile) holisticProfile = $taskStatus.holistic_profile;
-      if ($taskStatus.follower_audit) followerAudit = $taskStatus.follower_audit;
-      if ($taskStatus.timing_forensics) timingForensics = $taskStatus.timing_forensics;
-      if ($taskStatus.depth_report) depthReport = $taskStatus.depth_report;
-      if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
-      if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
-      if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
-      if ($taskStatus.telemetry) telemetry = $taskStatus.telemetry;
-      frequencyMap = $taskStatus.frequency_map ?? null;
-      seismosEvents = $taskStatus.seismos_events ?? null;
-      voidMap = $taskStatus.void_map ?? null;
-      strataMap = $taskStatus.strata_map ?? null;
-      gravityMap = $taskStatus.gravity_map ?? null;
-      pulseMap = $taskStatus.pulse_map ?? null;
-      keyMatrix = $taskStatus.key_matrix ?? null;
-
-      if ($taskStatus.reso) {
-        // W3: yalniz ResonanceProfile'da GERCEKTEN bulunan alanlar okunur.
-        resonanceScore = ($taskStatus.reso.compatibility_score ?? 0) * 100;
-        resonanceApproach = $taskStatus.reso.recommended_approach ?? '';
-        redFlags = $taskStatus.reso.red_flags ?? [];
-      }
-      if ($taskStatus.runs) {
-        runs = $taskStatus.runs;
-      }
-      // [038] fix: "TOPLAM SİSTEM GÜVENİ" artık backend'in gerçek toplamıdır
-      // (holistic_profile.overall_confidence = profile ajanlarının dürüst
-      // ortalaması). Nesne sırasına göre 'son ajanın confidence'ı' gösterilmez.
-      overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
-      if ($taskStatus.current_agent) currentAgent = $taskStatus.current_agent;
-    }
-  }
-
-  // Ses olayları: durum değişimlerinde spam yapmayan ses tetikleyicileri
-  $: {
-    if (currentAgent && currentAgent !== prevAgent && taskState === 'processing') {
-      playRunningTone();
-      prevAgent = currentAgent;
-    }
-    if ((taskState === 'failed' || taskState.startsWith('halted')) && prevTaskState !== taskState) {
-      playHaltAlarm();
-      prevTaskState = taskState;
-    } else if (taskState !== prevTaskState) {
-      prevTaskState = taskState;
-    }
-  }
-
-  // SIGINT Acil Durdurma kancası
-  $: if ($sigintEngaged && $isProcessing && $taskStatus?.task_id) {
-    cancelAnalysis();
-  }
-
-  let logContainer: HTMLElement;
-  $: displayLogs = $logs.slice(-25);
 
   afterUpdate(() => {
     if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
-    if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
   });
 </script>
 
-<div class="cockpit-grid">
-  <!-- ==================== SOL PANEL: TELEMETRİ VE KASA ==================== -->
-  <aside style="display: flex; flex-direction: column; gap: 14px;">
-    
-    <!-- POWER · SIGINT Kontrol Plakası -->
-    <div class="brass-plate" style="display: flex; flex-direction: column; gap: 8px;">
-      <div class="font-cinzel" style="font-size: 10px; font-weight: 800; color: var(--gold); letter-spacing: 1px;">
-        POWER · SIGINT
-      </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
-        <button
-          class="btn-dark"
-          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$armEngaged ? '#10b981' : '#3d2b17'}; color: {$armEngaged ? '#10b981' : 'var(--text-muted)'}; background: {$armEngaged ? 'rgba(16,185,129,0.1)' : '#17110c'};"
-          on:click={() => { $armEngaged = !$armEngaged; playClick(); }}
-        >
-          ARM {$armEngaged ? '● ON' : '○ OFF'}
-        </button>
-        <button
-          class="btn-dark"
-          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$sigintEngaged ? '#ef4444' : '#3d2b17'}; color: {$sigintEngaged ? '#ef4444' : 'var(--text-muted)'}; background: {$sigintEngaged ? 'rgba(239,68,68,0.1)' : '#17110c'};"
-          on:click={() => { $sigintEngaged = !$sigintEngaged; playLever(); }}
-        >
-          SIGINT {$sigintEngaged ? '● HALT' : '○ NORM'}
-        </button>
-        <button
-          class="btn-dark"
-          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$recordEngaged ? '#f59e0b' : '#3d2b17'}; color: {$recordEngaged ? '#f59e0b' : 'var(--text-muted)'}; background: {$recordEngaged ? 'rgba(245,158,11,0.1)' : '#17110c'};"
-          on:click={() => { $recordEngaged = !$recordEngaged; playLever(); }}
-        >
-          REC {$recordEngaged ? '● REC' : '○ STBY'}
-        </button>
-        <button
-          class="btn-dark"
-          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$keyUnlocked ? 'var(--gold)' : '#3d2b17'}; color: {$keyUnlocked ? 'var(--gold)' : 'var(--text-muted)'}; background: {$keyUnlocked ? 'rgba(212,175,55,0.1)' : '#17110c'};"
-          on:click={() => { $keyUnlocked = !$keyUnlocked; playLever(); }}
-        >
-          KEY {$keyUnlocked ? '🔓 LIVE' : '🔒 SAFE'}
-        </button>
-      </div>
-    </div>
-
-    <!-- Göstergeler (Telemetry) -->
-    <div class="brass-plate">
-      <div class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-        <span>{t[$currentLang].engineTelemetry}</span>
-        <span style="font-size: 9px; color: var(--accent-green); font-family: 'JetBrains Mono', monospace;">● {t[$currentLang].active}</span>
-      </div>
-
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-        <div class="screen-card" style="padding: 8px 10px;">
-          <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-bottom: 4px;">
-            <span>{t[$currentLang].resonanceScoreLabel}</span>
-            <strong style="color: var(--text-main); font-size: 11px;">%{resonanceScore.toFixed(0)}</strong>
+<div class="steampunk-console">
+  <!-- ==================== ÜST SIRA: 3 ANALOG DAİRESEL GÖSTERGE ==================== -->
+  <div class="top-dials-row">
+    <!-- 1. LLM GATEWAY DIAL -->
+    <div class="gauge-enclosure">
+      <div class="gauge-outer-ring red-glow">
+        <div class="gauge-glass">
+          <div class="gauge-cage"></div>
+          <div class="gauge-spokes"></div>
+          <div class="gauge-face-marble">
+            <span class="gauge-bust">🏛️</span>
           </div>
-          <div style="height: 6px; background: #1f140e; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17;">
-            <div style="height: 100%; width: {Math.max(5, resonanceScore)}%; background: #10b981; transition: width 0.4s ease;"></div>
-          </div>
-          {#if resonanceApproach}
-            <div style="font-size: 9px; color: var(--text-muted); margin-top: 6px; line-height: 1.35;">
-              <b style="color: var(--text-dim);">{t[$currentLang].approachLabel}:</b> {resonanceApproach}
-            </div>
-          {/if}
-          {#if redFlags.length}
-            <div style="font-size: 8px; color: #f87171; margin-top: 5px; line-height: 1.4;">
-              <b>{t[$currentLang].redFlagsLabel}:</b>
-              {#each redFlags as flag}
-                <span style="display: inline-block; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); padding: 1px 5px; border-radius: 3px; margin: 2px 3px 0 0;">{flag}</span>
-              {/each}
-            </div>
-          {/if}
+          <div class="gauge-needle" style="transform: rotate({$isProcessing ? '65deg' : '-45deg'});"></div>
         </div>
       </div>
+      <div class="gauge-label-brass">LLM GATEWAY</div>
     </div>
 
-    <!-- Canlı Log Terminali -->
-    <div class="screen-card" style="display: flex; flex-direction: column; height: 260px; padding: 10px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a1e12; padding-bottom: 6px; margin-bottom: 6px;">
-        <span class="font-cinzel" style="font-size: 10px; color: var(--gold); font-weight: 700;">{t[$currentLang].sigintFeed}</span>
-        <span style="font-size: 9px; color: var(--text-muted);">WS:8000</span>
-      </div>
-      <div style="flex: 1; overflow-y: auto; font-size: 10px; line-height: 1.4; color: #a3e635;" bind:this={logContainer}>
-        {#each displayLogs as log}
-          <div style="margin-bottom: 3px; {log.level === 'ERROR' ? 'color: #f87171;' : log.level === 'WARNING' ? 'color: #fbbf24;' : ''}">
-            <span style="color: #65a30d; font-size: 9px;">[{log.ts}]</span> {log.msg}
-          </div>
-        {/each}
-      </div>
-    </div>
-
-    <!-- Güvenli Kasa (Vault) -->
-    <div class="brass-plate">
-      <div class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold); margin-bottom: 6px;">
-        {t[$currentLang].vaultTitle}
-      </div>
-      <p style="font-size: 10px; color: var(--text-muted); margin-bottom: 10px;">
-        {t[$currentLang].vaultDesc}
-      </p>
-
-      <!-- PINEAL_TOKEN (API erişim anahtarı) — çalışma zamanı girişi -->
-      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;">
-        <label for="pinealTokenInput" style="font-size: 10px; color: var(--text-muted); font-weight: 600;">
-          {t[$currentLang].pinealTokenLabel}
-        </label>
-        <input 
-          id="pinealTokenInput"
-          type="password" 
-          bind:value={pinealTokenInput} 
-          placeholder={t[$currentLang].pinealTokenPlaceholder} 
-        />
-        <button class="btn-dark" style="width: 100%; font-size: 11px; padding: 6px;" on:click={savePinealToken}>
-          {t[$currentLang].saveTokenBtn}
-        </button>
-        <span style="font-size: 9px; color: {pinealTokenSaved ? 'var(--accent-green)' : '#fbbf24'};">
-          {pinealTokenSaved ? t[$currentLang].tokenActiveBadge : t[$currentLang].tokenInactiveBadge}
-        </span>
-      </div>
-
-      <div style="display: flex; flex-direction: column; gap: 8px;">
-        <input 
-          type="password" 
-          bind:value={apiKey} 
-          placeholder={t[$currentLang].apiKeyPlaceholder} 
-          disabled={isSealing}
-        />
-        <input 
-          type="password" 
-          bind:value={cookie} 
-          placeholder={t[$currentLang].cookiePlaceholder} 
-          disabled={isSealing}
-        />
-        <button class="btn-brass" style="width: 100%; font-size: 11px; padding: 8px;" on:click={sealCredentials} disabled={isSealing || (!apiKey && !cookie)}>
-          🔑 {t[$currentLang].sealBtn}
-        </button>
-      </div>
-    </div>
-
-  </aside>
-
-  <!-- ==================== ORTA PANEL: HEDEF GİRİŞİ, ASPASIA & 360° HARİTA ==================== -->
-  <section style="display: flex; flex-direction: column; gap: 14px;">
-    
-    <!-- Hedef Giriş Kartı -->
-    <div class="brass-plate">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
-          🎯 {t[$currentLang].targetHeader}
-        </span>
-        <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
-          ● {t[$currentLang].liveStatus}
-        </span>
-      </div>
-
-      <div style="display: flex; flex-direction: column; gap: 10px;">
-        <div>
-          <label for="targetUrlInput" style="display: block; font-size: 10px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;">
-            {t[$currentLang].targetUrlLabel}
-          </label>
-          <input 
-            id="targetUrlInput"
-            style="font-size: 13px; font-weight: 600; padding: 8px 12px;" 
-            bind:value={targetUrl} 
-            placeholder={t[$currentLang].targetUrlPlaceholder} 
-            disabled={$isProcessing}
-          />
+    <!-- 2. SCRAPER NODE DIAL -->
+    <div class="gauge-enclosure">
+      <div class="gauge-outer-ring gold-glow">
+        <div class="gauge-glass">
+          <div class="gauge-gear {$isProcessing ? 'spinning' : ''}"></div>
+          <div class="gauge-hub"></div>
         </div>
+      </div>
+      <div class="gauge-label-brass">SCRAPER NODE</div>
+    </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-          <div>
-            <label for="userRitualsInput" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].ritualsLabel}</label>
-            <input id="userRitualsInput" bind:value={userRituals} placeholder={t[$currentLang].ritualsPlaceholder} disabled={$isProcessing} />
-          </div>
-          <div>
-            <label for="userPlaylistInput" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].playlistLabel}</label>
-            <input id="userPlaylistInput" bind:value={userPlaylist} placeholder={t[$currentLang].playlistPlaceholder} disabled={$isProcessing} />
-          </div>
-          <div>
-            <label for="userEnviesInput" style="display: block; font-size: 9px; color: var(--text-muted); margin-bottom: 2px;">{t[$currentLang].enviesLabel}</label>
-            <input id="userEnviesInput" bind:value={userEnvies} placeholder={t[$currentLang].enviesPlaceholder} disabled={$isProcessing} />
+    <!-- 3. CORE ENGINE DIAL -->
+    <div class="gauge-enclosure">
+      <div class="gauge-outer-ring white-glow">
+        <div class="gauge-glass">
+          <div class="gauge-sun-rays"></div>
+          <div class="gauge-face-classical">
+            <span class="gauge-bust">🗿</span>
           </div>
         </div>
+      </div>
+      <div class="gauge-label-brass">CORE ENGINE</div>
+    </div>
+  </div>
 
-        <!-- Model ve Başlat Butonu Barı -->
-        <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
-          <select style="width: auto; flex: 1; min-width: 140px;" bind:value={selectedLocalModel} on:change={updateLocalModelOnly} disabled={isSettingModel || $isProcessing || localModelActive}>
-            <option value="dolphin-llama3">Dolphin Llama-3 (Abliterated)</option>
-            <option value="qwen2.5-coder:latest">Qwen 2.5 7B</option>
-            <option value="llama3.3:70b">Llama 3.3 70B</option>
-          </select>
+  <!-- ==================== ANA KOKPİT GÖVDESİ (3 SÜTUN) ==================== -->
+  <div class="main-cockpit-grid">
 
-          <button 
-            class="btn-dark" 
-            style="{localModelActive ? 'background: var(--gold); color: #120b04; font-weight: 700;' : ''}" 
-            on:click={toggleLocalModel} 
-            disabled={isSettingModel || $isProcessing}
-          >
-            {t[$currentLang].localBtn}
-          </button>
-          
-          <button 
-            class="btn-dark" 
-            style="{!localModelActive ? 'background: var(--gold); color: #120b04; font-weight: 700;' : ''}" 
-            on:click={toggleLocalModel} 
-            disabled={isSettingModel || $isProcessing}
-          >
-            {t[$currentLang].apiBtn}
-          </button>
+    <!-- SOL PANEL: DONANIM VE ŞALTERLER -->
+    <aside class="left-hardware-rack">
+      <!-- 1. VAULT KEY LOCK -->
+      <div class="hardware-module keylock-module">
+        <div class="module-title">VAULT KEY LOCK</div>
+        <button class="brass-keyhole-disc {$keyUnlocked ? 'unlocked' : ''}" on:click={toggleKey} title="Click to insert & turn key">
+          <div class="keyhole-slot"></div>
+        </button>
+      </div>
 
-          <button 
-            class="btn-brass" 
-            style="padding: 8px 24px; font-size: 12px;" 
-            on:click={triggerAnalysis} 
-            disabled={$isProcessing || !targetUrl}
-          >
-            {$isProcessing ? t[$currentLang].runningBtn : t[$currentLang].initiateBtn}
-          </button>
-          {#if $isProcessing && $taskStatus?.task_id}
-            <button class="btn-dark" style="padding: 8px 14px; font-size: 11px; color: #fca5a5;" on:click={cancelAnalysis}>
-              İPTAL
+      <!-- 2. THROTTLE · MIXTURE · PROP -->
+      <div class="hardware-module knobs-module">
+        <div class="module-title">THROTTLE &bull; MIXTURE &bull; PROP</div>
+        <div class="knobs-row">
+          <div class="knob-col">
+            <button class="knurled-knob" aria-label="Throttle knob" style="transform: rotate({throttleAngle}deg);" on:click={() => rotateKnob('throttle')}>
+              <div class="knob-notch"></div>
             </button>
-          {/if}
-        </div>
-      </div>
-    </div>
-
-    <!-- Aspasia Sokratik Kokpit Şefi & Sohbet -->
-    <div class="brass-plate" style="display: flex; flex-direction: column; flex: 1;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-        <div>
-          <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
-            🏛️ {t[$currentLang].agentDeckTitle}
-          </span>
-          <span style="font-size: 10px; color: var(--text-dim); margin-left: 6px;">({t[$currentLang].aspasiaRole})</span>
-        </div>
-        <button class="btn-dark" style="font-size: 10px; padding: 4px 10px;" on:click={explainState}>
-          💡 {t[$currentLang].explainStateBtn}
-        </button>
-      </div>
-
-      <!-- ASPASIA ROUTE İNDİKATÖRÜ -->
-      <div style="display: flex; gap: 8px; align-items: center; padding: 4px 10px; background: #120c07; border: 1px solid #2a1e12; border-radius: 4px; margin-bottom: 8px; font-size: 8px; font-family: 'JetBrains Mono', monospace;">
-        <span style="color: var(--gold);">ASPASIA ROUTE:</span>
-        <span style="color: #60a5fa;">{localModelActive ? `LOCAL (${selectedLocalModel})` : 'CLAUDE-SONNET-5 / PRO'}</span>
-        <span style="color: var(--text-muted);">|</span>
-        <span style="color: #a1a1aa;">REASONING: STRONG</span>
-        <span style="color: var(--text-muted);">|</span>
-        <span style="color: {localModelActive ? '#3b82f6' : 'var(--gold)'};">{localModelActive ? 'OLLAMA' : 'OPENROUTER'}</span>
-      </div>
-
-      <!-- Sohbet Akışı -->
-      <div class="screen-card" style="height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px;" bind:this={chatContainer}>
-        {#each messages as msg}
-          <div style="font-size: 11px; line-height: 1.5;">
-            {#if msg.sender === 'SİZ'}
-              <div style="text-align: right;">
-                <span style="background: #2a1e12; border: 1px solid var(--brass-border); color: var(--text-main); padding: 5px 10px; border-radius: 6px; display: inline-block; max-width: 85%;">
-                  <b>{t[$currentLang].you}:</b> {msg.text}
-                </span>
-              </div>
-            {:else if msg.sender === 'SİSTEM'}
-              <div style="text-align: center;">
-                <span style="background: rgba(212,175,55,0.15); border: 1px solid var(--gold); color: var(--gold-light); padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700;">
-                  ⚙️ {msg.text}
-                </span>
-              </div>
-            {:else}
-              <div style="text-align: left;">
-                <span style="background: #17110c; border: 1px solid #4a341e; color: var(--gold-light); padding: 6px 12px; border-radius: 6px; display: inline-block; max-width: 90%;">
-                  <b style="color: var(--gold);">{msg.sender}:</b> {msg.text}
-                </span>
-              </div>
-            {/if}
+            <span class="knob-label">THROTTLE</span>
           </div>
-        {/each}
-      </div>
-
-      <!-- Mesaj Girişi & Araçlar -->
-      <div style="display: flex; gap: 6px; align-items: center;">
-        <input 
-          style="flex: 1; font-size: 12px; padding: 8px 12px;" 
-          bind:value={inputMessage} 
-          on:keydown={handleKeydown} 
-          placeholder={t[$currentLang].chatPlaceholder} 
-          disabled={isSending}
-        />
-        <input type="file" accept="image/*" bind:this={fileInput} on:change={handleImageUpload} style="display: none;">
-        <button class="btn-dark" title="Görsel Yükle" on:click={() => fileInput.click()} disabled={isSending}>
-          📷
-        </button>
-        <button class="btn-brass" style="font-size: 11px; padding: 8px 16px;" on:click={sendMessage} disabled={isSending || (!inputMessage.trim() && !attachedImage)}>
-          {t[$currentLang].sendBtn}
-        </button>
-      </div>
-    </div>
-
-    <!-- 360° BÜTÜNCÜL İNSAN ÇÖZÜMLEMESİ (Holistic Profile Card) -->
-    {#if holisticProfile}
-    <div class="brass-plate" style="border: 2px solid var(--accent-green);">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid #2a1e12; padding-bottom: 8px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span class="font-cinzel" style="font-size: 13px; font-weight: 800; color: var(--accent-green);">
-            🧠 {t[$currentLang].holisticTitle}
-          </span>
-          <span style="font-size: 9px; font-weight: 800; background: var(--accent-green); color: #0a0502; padding: 2px 6px; border-radius: 4px;">
-            {t[$currentLang].fullMap}
-          </span>
-        </div>
-        <span style="font-size: 11px; color: var(--gold); font-weight: 700;">
-          @{holisticProfile.username || 'target'}
-        </span>
-      </div>
-
-      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px;">
-        <!-- Tutkular -->
-        <div class="screen-card" style="border-color: rgba(245,158,11,0.4);">
-          <div style="font-size: 10px; font-weight: 700; color: var(--accent-amber); margin-bottom: 6px;">
-            {t[$currentLang].passionsTitle}
-            {#if holisticProfile.passions?.data_confidence === false}
-              <span style="font-size: 8px; font-weight: 800; background: #ef4444; color: #fff; padding: 1px 4px; border-radius: 3px; margin-left: 4px;" title="{holisticProfile.passions.fallback_reason || ''}">[FALLBACK]</span>
-            {/if}
+          <div class="knob-col">
+            <button class="knurled-knob" aria-label="Mixture knob" style="transform: rotate({mixtureAngle}deg);" on:click={() => rotateKnob('mixture')}>
+              <div class="knob-notch"></div>
+            </button>
+            <span class="knob-label">MIXTURE</span>
           </div>
-          {#if holisticProfile.passions?.core_passions?.length}
-            <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
-              {#each holisticProfile.passions.core_passions as p}
-                <span style="background: rgba(245,158,11,0.2); color: #fde68a; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(245,158,11,0.3);">
-                  {p}
-                </span>
+          <div class="knob-col">
+            <button class="knurled-knob" aria-label="Prop knob" style="transform: rotate({propAngle}deg);" on:click={() => rotateKnob('prop')}>
+              <div class="knob-notch"></div>
+            </button>
+            <span class="knob-label">PROP</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. POWER SWITCHES (ARM, RECORD, SIGINT) -->
+      <div class="hardware-module switches-module">
+        <div class="module-title">POWER</div>
+        <div class="switches-row">
+          <div class="switch-col">
+            <div class="jewel-led {$armEngaged ? 'led-on-green' : 'led-off'}"></div>
+            <button class="brass-lever {$armEngaged ? 'lever-up' : 'lever-down'}" aria-label="ARM switch" on:click={toggleArm}>
+              <div class="lever-handle"></div>
+            </button>
+            <span class="switch-label">ARM</span>
+          </div>
+          <div class="switch-col">
+            <div class="jewel-led {$recordEngaged ? 'led-on-green' : 'led-off'}"></div>
+            <button class="brass-lever {$recordEngaged ? 'lever-up' : 'lever-down'}" aria-label="RECORD switch" on:click={toggleRecord}>
+              <div class="lever-handle"></div>
+            </button>
+            <span class="switch-label">RECORD</span>
+          </div>
+          <div class="switch-col">
+            <div class="jewel-led {$sigintEngaged ? 'led-on-red' : 'led-off'}"></div>
+            <button class="brass-lever {$sigintEngaged ? 'lever-up' : 'lever-down'}" aria-label="SIGINT switch" on:click={toggleSigint}>
+              <div class="lever-handle"></div>
+            </button>
+            <span class="switch-label">SIGINT</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. REC ODOMETER COUNTER (00087) -->
+      <div class="hardware-module odometer-module">
+        <span class="counter-tag">REC</span>
+        <div class="odometer-bezel">
+          <div class="odometer-digits">
+            {#each String(odometer).padStart(5, '0').split('') as digit}
+              <span class="odo-digit">{digit}</span>
+            {/each}
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. STATUS ACTIVE LAMP -->
+      <div class="hardware-module status-module">
+        <span class="status-title">STATUS<br>ACTIVE</span>
+        <div class="big-jewel-lamp {$isProcessing ? 'lamp-pulse' : 'lamp-steady'}"></div>
+      </div>
+
+      <!-- 6. PINEAL TOKEN PLAQUE -->
+      <div class="hardware-module token-plaque">
+        <div class="plaque-screw top-left"></div>
+        <div class="plaque-screw top-right"></div>
+        <div class="plaque-screw btm-left"></div>
+        <div class="plaque-screw btm-right"></div>
+        <div class="plaque-header">PINEAL TOKEN</div>
+        <div class="plaque-code">PH-v4.0-7F3X9K2</div>
+      </div>
+    </aside>
+
+    <!-- ORTA PANEL: AGENT DECK • ASPASIA OBSERVER -->
+    <main class="center-monitor-chassis">
+      <div class="crt-screen-bezel">
+        <div class="crt-screen-inner">
+          <!-- Monitor Header -->
+          <div class="crt-header">
+            <div class="header-title-group">
+              <span class="font-cinzel deck-title">AGENT DECK &bull; ASPASIA OBSERVER</span>
+              <span class="sound-wave-icon {$isSending ? 'wave-active' : ''}">)))</span>
+            </div>
+
+            <!-- Tabs: ASPASIA, VISION, OSINT, FRICTION, VERIFY -->
+            <div class="monitor-tabs-bar">
+              {#each ['ASPASIA', 'VISION', 'OSINT', 'FRICTION', 'VERIFY'] as tab}
+                <button 
+                  class="monitor-tab-btn {activeTab === tab ? 'tab-selected' : ''}" 
+                  on:click={() => { activeTab = tab; playClick(300, 30); }}
+                >
+                  {tab}
+                </button>
               {/each}
             </div>
-          {:else}
-            <p style="font-size: 9px; color: var(--text-muted); font-style: italic;">{t[$currentLang].noPassions}</p>
-          {/if}
-          {#if holisticProfile.passions?.energizing_topics?.length}
-            <div style="font-size: 9px; color: var(--text-dim); margin-top: 4px;">
-              <b>{t[$currentLang].energizingLabel}</b> {holisticProfile.passions.energizing_topics.join(', ')}
+          </div>
+
+          <!-- Active Route Bar (Kullanıcının Verdiği Kod) -->
+          <div class="active-route-subbar">
+            <div class="route-text">
+              <b style="color: var(--gold);">ACTIVE:</b> {currentAgent || 'friction_detector'}
+              &bull; <b style="color: var(--gold);">MODEL:</b> {runs[currentAgent]?.model || agentList.find(a => a.id === currentAgent)?.primaryModel || 'claude-sonnet-5'}
+              &bull; <b style="color: var(--gold);">VIA:</b> {runs[currentAgent]?.via || agentList.find(a => a.id === currentAgent)?.via || 'openrouter'}
             </div>
-          {/if}
-        </div>
-
-        <!-- Sınırlar -->
-        <div class="screen-card" style="border-color: rgba(239,68,68,0.4);">
-          <div style="font-size: 10px; font-weight: 700; color: var(--accent-red); margin-bottom: 6px;">
-            {t[$currentLang].frictionsTitle}
-            {#if holisticProfile.frictions?.data_confidence === false}
-              <span style="font-size: 8px; font-weight: 800; background: #ef4444; color: #fff; padding: 1px 4px; border-radius: 3px; margin-left: 4px;" title="{holisticProfile.frictions.fallback_reason || ''}">[FALLBACK]</span>
-            {/if}
-          </div>
-          {#if holisticProfile.frictions?.sensitivities?.length}
-            <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;">
-              {#each holisticProfile.frictions.sensitivities as s}
-                <span style="background: rgba(239,68,68,0.2); color: #fca5a5; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(239,68,68,0.3);">
-                  {s}
-                </span>
-              {/each}
+            <div class="route-dots">
+              <span class="dot-led dot-green"></span>
+              <span class="dot-led dot-amber"></span>
             </div>
-          {:else}
-            <p style="font-size: 9px; color: var(--text-muted); font-style: italic;">{t[$currentLang].noFrictions}</p>
-          {/if}
-          {#if holisticProfile.frictions?.boundary_signals?.length}
-            <div style="font-size: 9px; color: #fca5a5; margin-top: 4px;">
-              <b>{t[$currentLang].boundariesLabel}</b> {holisticProfile.frictions.boundary_signals.join(', ')}
-            </div>
-          {/if}
-        </div>
-
-        <!-- Bilişsel Ton -->
-        <div class="screen-card" style="border-color: rgba(6,182,212,0.4);">
-          <div style="font-size: 10px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 6px;">
-            {t[$currentLang].cognitiveTitle}
-            {#if holisticProfile.cognitive?.data_confidence === false}
-              <span style="font-size: 8px; font-weight: 800; background: #ef4444; color: #fff; padding: 1px 4px; border-radius: 3px; margin-left: 4px;" title="{holisticProfile.cognitive.fallback_reason || ''}">[FALLBACK]</span>
-            {/if}
-          </div>
-          <div style="font-size: 9px; color: var(--text-main); display: flex; flex-direction: column; gap: 3px;">
-            <div>{t[$currentLang].toneLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.communication_tone || 'Dengeli'}</b></div>
-            <div>{t[$currentLang].complexityLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.complexity_level || 'Orta'}</b></div>
-            <div>{t[$currentLang].socialLabel} <b style="color: #67e8f9;">{holisticProfile.cognitive?.social_orientation || 'Bağımsız'}</b></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Sahici Diyalog Köprüsü -->
-      {#if holisticProfile.bridge}
-        <div class="screen-card" style="border: 2px solid var(--accent-green); background: #0c140d;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--accent-green);">
-              {t[$currentLang].bridgeTitle}
-              <!-- P1-6: model tahmini mi, yoksa fallback mi — gizlenemez -->
-              {#if holisticProfile.bridge.data_confidence === false || holisticProfile.bridge.fallback_reason}
-                <span style="font-size: 9px; font-weight: 800; background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 6px;" title="{holisticProfile.bridge.fallback_reason || 'data_confidence=false'}">
-                  [FALLBACK — KANIT DEĞİL: {holisticProfile.bridge.fallback_reason || 'düşük güven'}]
-                </span>
-              {/if}
-            </span>
-            <span style="font-size: 10px; color: var(--gold); font-weight: 700;">
-              %{ (holisticProfile.bridge.resonance_score * 100).toFixed(0) } {t[$currentLang].resonanceScore}
-            </span>
           </div>
 
-          <div style="font-size: 10px; color: var(--text-dim); margin-bottom: 6px;">
-            <b>{t[$currentLang].openingTopic}</b> {holisticProfile.bridge.authentic_opening_topic}
-          </div>
-
-          <div style="background: #060907; border: 1px solid #1f3823; border-radius: 5px; padding: 10px; font-size: 12px; color: #f5f1e8; line-height: 1.5; margin-bottom: 8px; user-select: all;">
-            "{holisticProfile.bridge.suggested_opening_message}"
-          </div>
-
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-size: 9px; color: var(--text-muted); font-style: italic; flex: 1; margin-right: 8px;">
-              {holisticProfile.bridge.conversation_starter_rationale}
-            </span>
-            <button class="btn-brass" style="font-size: 10px; padding: 6px 14px;" on:click={() => copyMessage(holisticProfile.bridge.suggested_opening_message)}>
-              {copyFeedback ? t[$currentLang].copiedBtn : t[$currentLang].copyBtn}
+          <!-- Hedef Profil Girişi (Kompakt Çubuk) -->
+          <div class="quick-target-strip">
+            <input 
+              type="text" 
+              bind:value={targetUrl} 
+              placeholder="Hedef kullanıcı adı veya URL girin (@kullanici)..." 
+              disabled={$isProcessing} 
+            />
+            <button 
+              class="launch-btn {$armEngaged ? 'btn-armed' : 'btn-unarmed'}" 
+              on:click={triggerAnalysis} 
+              disabled={$isProcessing || !targetUrl}
+            >
+              {$isProcessing ? 'İŞLENİYOR...' : 'BAŞLAT'}
             </button>
           </div>
-        </div>
-      {/if}
-    </div>
-    {/if}
 
-    <!-- ==================== 4 FORENSİK DAMGA VE DERİNLİK RAPORU ==================== -->
-    {#if followerAudit || timingForensics || depthReport}
-    <div class="brass-plate" style="border: 1px solid var(--gold); display: flex; flex-direction: column; gap: 10px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a1e12; padding-bottom: 6px;">
-        <span class="font-cinzel" style="font-size: 12px; font-weight: 800; color: var(--gold);">
-          🏛️ 6 DAMGA FORENSİK KONTROLÜ
-        </span>
-        <span style="font-size: 9px; font-weight: 700; color: var(--accent-green); background: rgba(16,185,129,0.15); border: 1px solid var(--accent-green); padding: 2px 8px; border-radius: 4px;">
-          ● {(followerAudit ? 1 : 0) + (timingForensics ? 1 : 0) + (depthReport ? 1 : 0) + (visualEvidence ? 1 : 0) + (shadowProfile ? 1 : 0) + (osintFootprint ? 1 : 0)} DOĞRULANMIŞ DAMGA
-        </span>
-      </div>
-
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-        <!-- 1. 🔍 TAKİPÇİ VE BOT DENETİMİ -->
-        {#if followerAudit}
-          <div class="screen-card" style="border-color: {followerAudit.verdict_code === 'healthy' ? 'rgba(16,185,129,0.5)' : followerAudit.verdict_code === 'inflated' ? 'rgba(239,68,68,0.5)' : 'rgba(245,158,11,0.5)'};">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <span class="font-cinzel" style="font-size: 10px; font-weight: 700; color: var(--gold);">
-                {t[$currentLang].followerAuditTitle}
-              </span>
-              <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {followerAudit.verdict_code === 'healthy' ? 'background: #10b981; color: #000;' : followerAudit.verdict_code === 'inflated' ? 'background: #ef4444; color: #fff;' : 'background: #f59e0b; color: #000;'}">
-                {followerAudit.verdict_code === 'healthy' ? t[$currentLang].verdictHealthy : followerAudit.verdict_code === 'inflated' ? t[$currentLang].verdictInflated : followerAudit.verdict_code === 'suspicious' ? t[$currentLang].verdictSuspicious : t[$currentLang].verdictInsufficient}
-              </span>
-            </div>
-            <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">
-              <b>{t[$currentLang].engagementRateLabel}:</b> %{followerAudit.engagement_rate !== undefined && followerAudit.engagement_rate !== null ? followerAudit.engagement_rate : '--'} ({followerAudit.expected_rate_range || 'N/A'}) | 
-              <b>Takipçi:</b> {followerAudit.follower_count || 0}
-            </div>
-            {#if followerAudit.evidence?.length}
-              <div style="font-size: 8px; color: var(--text-muted); line-height: 1.3; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 4px;">
-                {#each followerAudit.evidence.slice(0, 2) as ev}
-                  <div>• {ev}</div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- 2. ⏰ ZAMAN FORENSİĞİ -->
-        {#if timingForensics}
-          <div class="screen-card" style="border-color: rgba(6,182,212,0.5);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <span class="font-cinzel" style="font-size: 10px; font-weight: 700; color: var(--accent-cyan);">
-                {t[$currentLang].timingForensicsTitle}
-              </span>
-              <span style="font-size: 9px; font-weight: 700; color: #67e8f9;">
-                UTC {timingForensics.peak_hour ?? '--'}
-              </span>
-            </div>
-            <div style="font-size: 9px; color: var(--text-dim); margin-bottom: 3px;">
-              <b>{t[$currentLang].nightOwlScoreLabel}:</b> %{((timingForensics.night_share || 0) * 100).toFixed(0)} | 
-              <b>{t[$currentLang].tzShiftLabel}:</b> {timingForensics.median_drift_hours >= 0 ? '+' : ''}{timingForensics.median_drift_hours ?? 0}sa
-            </div>
-            {#if timingForensics.machine_note}
-              <div style="font-size: 8px; color: var(--text-muted); line-height: 1.3; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 4px;">
-                ⏱️ {timingForensics.machine_note}
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
-      <!-- 3. 🧠 DERİNLİK VE GERÇEKLİK RAPORU + 4. 🛡️ ALINTI KALKANI -->
-      {#if depthReport}
-        <div class="screen-card" style="border-color: rgba(16,185,129,0.6); background: #0c140d;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--accent-green);">
-                {t[$currentLang].depthReportTitle}
-              </span>
-              <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
-                {t[$currentLang].realityIndexLabel}: %{((depthReport.reality_index || 0) * 100).toFixed(0)}
-              </span>
-            </div>
-
-            <!-- 4. 🛡️ KALKAN ROZETİ -->
-            {#if depthReport.quote_guard}
-              <span style="font-size: 9px; font-weight: 700; background: rgba(16,185,129,0.2); border: 1px solid var(--accent-green); color: #86efac; padding: 2px 6px; border-radius: 4px;">
-                🛡️ {depthReport.quote_guard.kept || depthReport.reality_findings?.length || 0} {t[$currentLang].kalkanAyakta} ({depthReport.quote_guard.dropped_fake_quote || 0} {t[$currentLang].kalkanElenen})
-              </span>
-            {/if}
-          </div>
-
-          <!-- Gerçeklik Endeksi Çubuğu -->
-          <div style="height: 6px; background: #1a120b; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17; margin-bottom: 6px;">
-            <div style="height: 100%; width: {Math.max(5, (depthReport.reality_index || 0) * 100)}%; background: linear-gradient(90deg, #ef4444 0%, #f59e0b 50%, #10b981 100%); transition: width 0.4s ease;"></div>
-          </div>
-
-          {#if depthReport.essence_one_liner}
-            <div style="font-size: 10px; color: var(--text-main); font-weight: 600; margin-bottom: 6px; font-style: italic;">
-              "{depthReport.essence_one_liner}"
-            </div>
-          {/if}
-
-          <!-- Bulgular ve Çelişkiler -->
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
-            {#if depthReport.reality_findings?.length}
-              <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(16,185,129,0.3);">
-                <div style="font-size: 9px; font-weight: 700; color: var(--accent-green); margin-bottom: 3px;">
-                  ✓ {t[$currentLang].findingsTitle}
-                </div>
-                {#each depthReport.reality_findings.slice(0, 3) as f}
-                  <div style="font-size: 8px; color: var(--text-dim); margin-bottom: 2px;">
-                    <b style="color: #86efac;">{f.topic}:</b> {f.observation}
-                    {#if f.evidence_quotes?.length}
-                      <span style="color: #65a30d; font-style: italic;">("{f.evidence_quotes[0]}")</span>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            {#if depthReport.contradictions?.length}
-              <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(239,68,68,0.3);">
-                <div style="font-size: 9px; font-weight: 700; color: var(--accent-red); margin-bottom: 3px;">
-                  ⚠️ {t[$currentLang].contradictionsTitle}
-                </div>
-                {#each depthReport.contradictions.slice(0, 3) as c}
-                  <div style="font-size: 8px; color: #fca5a5; margin-bottom: 2px;">
-                    <b style="color: #f87171;">{c.topic}:</b> {c.observation}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        </div>
-      {/if}
-
-    <!-- ==================== TELEMETRİ / ZEKÂ PANELİ ==================== -->
-    {#if telemetry}
-      <div class="screen-card" style="border-color: rgba(71, 85, 105, 0.4); background: #000000; box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 0 10px rgba(255,255,255,0.02); margin-top: 10px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 6px; margin-bottom: 8px;">
-          <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #94a3b8; text-shadow: 0 0 5px rgba(148, 163, 184, 0.3);">
-            📡 ZEKÂ PANELİ (TELEMETRİ)
-          </span>
-          <span style="font-size: 9px; font-weight: 700; color: #64748b;">
-            CANLI VERİ
-          </span>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-          <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
-            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">CACHE HİT ORANI</div>
-            <div style="font-size: 12px; color: #38bdf8; font-weight: 800;">{telemetry.cache_hit_rate || '0.0%'}</div>
-          </div>
-          <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
-            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">CACHE HIT</div>
-            <div style="font-size: 12px; color: #4ade80; font-weight: 800;">{telemetry.cache_hits ?? 0}</div>
-          </div>
-          <div style="background: rgba(15,23,42,0.4); padding: 6px; border-radius: 4px; border: 1px solid rgba(51,65,85,0.4);">
-            <div style="font-size: 8px; color: #64748b; margin-bottom: 2px; font-weight: 700;">GÖZLENEN LLM ÇAĞRISI</div>
-            <div style="font-size: 12px; color: #a78bfa; font-weight: 800;">{telemetry.llm_calls_observed ?? 0}</div>
-          </div>
-        </div>
-      </div>
-    {/if}
-
-      <!-- 6. 📸 GÖRSEL KANIT -->
-      {#if visualEvidence}
-        <div class="screen-card" style="border-color: rgba(236, 72, 153, 0.6); background: #1a0b16;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #f472b6;">
-                📸 GÖRSEL KANIT (6. DAMGA)
-              </span>
-            </div>
-          </div>
-          <div style="font-size: 10px; color: #fbcfe8; font-weight: 600; margin-bottom: 4px;">
-            Stil: {visualEvidence.aesthetic_style || 'Bilinmiyor'}
-          </div>
-          <div style="font-size: 8px; color: #f9a8d4; line-height: 1.3;">
-            {visualEvidence.visual_evidence_summary || 'Özet bulunamadı.'}
-          </div>
-        </div>
-      {/if}
-    </div>
-    {/if}
-
-    <!-- ==================== 5. VE 6. DAMGALAR (YENİ) ==================== -->
-    {#if shadowProfile}
-      <div class="screen-card" style="border-color: rgba(139, 92, 246, 0.6); background: #1a1025; margin-top: 10px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #a78bfa;">
-              🕳️ 5. DAMGA: GÖLGE PROFİLİ
-              <!-- P1-6/P2-9: fallback veya güvensiz çıktı açıkça işaretlenir -->
-              {#if shadowProfile.data_confidence === false || shadowProfile.fallback_reason}
-                <span style="font-size: 9px; font-weight: 800; background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 6px;" title="{shadowProfile.fallback_reason || 'data_confidence=false'}">
-                  [FALLBACK — KANIT DEĞİL]
-                </span>
-              {:else if shadowProfile._provenance?.source === 'llm' || shadowProfile._provenance?.source === 'llm_cache'}
-                <span style="font-size: 9px; font-weight: 800; background: rgba(16,185,129,0.25); border: 1px solid #10b981; color: #6ee7b7; padding: 2px 6px; border-radius: 4px; margin-left: 6px;" title="LLM: {shadowProfile._provenance.model}">
-                  [LLM: {shadowProfile._provenance.model?.split('/').pop()}]
-                </span>
-              {/if}
-            </span>
-            <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
-              Manipülasyon Skoru: %{((shadowProfile.dark_profile?.narcissism || 0) * 100).toFixed(0)}
-            </span>
-          </div>
-        </div>
-        
-        <div style="font-size: 10px; color: #e9d5ff; font-style: italic; margin-bottom: 6px;">
-          "{shadowProfile.message || 'Gölge dizisi oluşturulamadı'}"
-        </div>
-        
-        <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(139,92,246,0.3);">
-          <div style="font-size: 9px; font-weight: 700; color: #c4b5fd; margin-bottom: 3px;">
-            🧠 NLP & Strateji
-          </div>
-          <div style="font-size: 8px; color: #ddd; margin-bottom: 4px;">
-            {shadowProfile.strategy || 'Belirtilmedi'}
-          </div>
-          {#if shadowProfile.dark_profile}
-            <div style="display: flex; gap: 8px; font-size: 8px; color: #c4b5fd;">
-              <span>NAR: {shadowProfile.dark_profile.narcissism?.toFixed(2)}</span>
-              <span>MAC: {shadowProfile.dark_profile.machiavellianism?.toFixed(2)}</span>
-              <span>PSY: {shadowProfile.dark_profile.psychopathy?.toFixed(2)}</span>
-            </div>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    {#if osintFootprint}
-      <div class="screen-card" style="border-color: rgba(56, 189, 248, 0.6); background: #0c1a25; margin-top: 10px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: #7dd3fc;">
-              🌐 6. DAMGA: DİJİTAL AYAK İZİ
-              {#if osintFootprint.fallback_reason}
-                <span style="font-size: 9px; font-weight: 800; background: #ef4444; color: #fff; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">
-                  [SİMÜLASYON / API BAĞLANTISI YOK]
-                </span>
-              {/if}
-            </span>
-            <span style="font-size: 9px; font-weight: 700; color: var(--gold);">
-              Ağ Eşleşme Skoru: %{((osintFootprint.digital_footprint_score || 0) * 100).toFixed(0)}
-            </span>
-          </div>
-          
-          <span style="font-size: 9px; font-weight: 700; background: rgba(56,189,248,0.2); border: 1px solid #7dd3fc; color: #bae6fd; padding: 2px 6px; border-radius: 4px;">
-            {(osintFootprint.associated_platforms || []).length} Platform
-          </span>
-        </div>
-        
-        <div style="background: rgba(0,0,0,0.3); padding: 5px; border-radius: 4px; border: 1px solid rgba(56,189,248,0.3); font-size: 8px; color: #e0f2fe;">
-          <b style="color: #7dd3fc;">Kanıtlar:</b> 
-          {(osintFootprint.associated_platforms || []).join(', ') || 'Platform kaydı bulunamadı (Simülasyon/Olası Bot)'}
-        </div>
-      </div>
-    {/if}
-  </section>
-
-  <!-- ==================== SAĞ PANEL: AJAN ZİNCİRİ & KARAR AĞACI ==================== -->
-  <aside style="display: flex; flex-direction: column; gap: 14px;">
-    
-    <div class="brass-plate">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <span class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold);">
-          ⚙️ {t[$currentLang].agentChainTitle}
-        </span>
-        <span style="font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; {taskState === 'completed' ? 'background: #10b981; color: #000;' : taskState.startsWith('halted') || taskState === 'failed' ? 'background: #ef4444; color: #fff;' : taskState === 'processing' ? 'background: #f59e0b; color: #000;' : 'background: #2a1e12; color: var(--text-dim);'}">
-          {taskState.toUpperCase()}
-        </span>
-      </div>
-
-      {#if taskId}
-        <div style="font-size: 9px; color: var(--text-muted); margin-bottom: 10px;">
-          <b>{t[$currentLang].taskLabel}</b> {taskId}
-        </div>
-      {/if}
-
-      <!-- Ajan İlerleme Listesi -->
-      <div style="display: flex; flex-direction: column; gap: 6px;">
-        {#each agentList as agent, i}
-          {@const run = runs[agent.id] || (agent.id === 'depth_forensics' ? runs['depth_analyst'] : null) || (agent.id === 'shadow_agent' ? runs['shadow_executor'] : null)}
-          {@const isCompleted = run?.status === 'completed'}
-          {@const isRunning = currentAgent === agent.id && taskState === 'processing'}
-          {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
-
-          <div class="screen-card" style="padding: 6px 8px; display: flex; align-items: center; gap: 8px; border-left: 2px solid {isRunning ? agent.color : isCompleted ? '#10b981' : isHalted ? '#ef4444' : '#2a1e12'};">
-            <div style="width: 20px; height: 20px; border-radius: 50%; background: {agent.color}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #000; flex-shrink: 0;">
-              {#if isCompleted}✓{:else if isRunning}▶{:else if isHalted}✗{:else}{i + 1}{/if}
-            </div>
-
-            <div style="flex: 1; min-width: 0;">
-              <div style="display: flex; justify-content: space-between; align-items: center; font-size: 9px; font-weight: 700;">
-                <span style="color: {isRunning ? '#fff' : 'var(--text-dim)'}; font-family: 'Cinzel', serif; letter-spacing: 0.5px;">
-                  {agent.name}
-                </span>
-                {#if run?.confidence !== undefined && run?.confidence !== null}
-                  <span style="color: var(--text-main); font-size: 8px; font-family: 'JetBrains Mono', monospace;">
-                    {(run.confidence * 100).toFixed(0)}%
-                  </span>
-                {/if}
-              </div>
-
-              <!-- Model ve rota bilgisi -->
-              <div style="display: flex; gap: 4px; align-items: center; margin-top: 2px; font-size: 7px;">
-                <span style="background: rgba(255,255,255,0.05); border: 1px solid #3d2b17; color: #a1a1aa; padding: 0 4px; border-radius: 2px; font-family: 'JetBrains Mono', monospace;">
-                  {agent.primaryModel}
-                </span>
-                <span style="background: {agent.via === 'local' ? 'rgba(59,130,246,0.15)' : 'rgba(212,175,55,0.15)'}; border: 1px solid {agent.via === 'local' ? '#3b82f6' : 'var(--gold)'}; color: {agent.via === 'local' ? '#93c5fd' : 'var(--gold)'}; padding: 0 3px; border-radius: 2px;">
-                  {agent.via.toUpperCase()}
-                </span>
-              </div>
-
-              <!-- Provenance rozeti (tamamlandıysa) -->
-              {#if isCompleted && run?.output_summary?._provenance}
-                {@const prov = run.output_summary._provenance}
-                <div style="margin-top: 2px;">
-                  {#if prov.source === 'llm'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(16,185,129,0.2); border: 1px solid #10b981; color: #6ee7b7; padding: 1px 4px; border-radius: 3px;">
-                      LLM ✓ {prov.model?.split('/').pop() || ''}
-                    </span>
-                  {:else if prov.source === 'llm_cache'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(6,182,212,0.2); border: 1px solid #06b6d4; color: #67e8f9; padding: 1px 4px; border-radius: 3px;">
-                      CACHE {prov.model?.split('/').pop() || ''}
-                    </span>
-                  {:else if prov.source === 'deterministic'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(212,175,55,0.2); border: 1px solid var(--gold); color: var(--gold); padding: 1px 4px; border-radius: 3px;">
-                      DETERMİNİSTİK
-                    </span>
-                  {:else if prov.source === 'fallback'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(239,68,68,0.25); border: 1px solid #ef4444; color: #fca5a5; padding: 1px 4px; border-radius: 3px;">
-                      ⚠ FALLBACK
-                    </span>
+          <!-- Chat Dialogue Feed -->
+          <div class="dialogue-scroll-area" bind:this={chatContainer}>
+            {#each messages as msg}
+              <div class="chat-row {msg.sender === 'SİZ' ? 'row-user' : 'row-aspasia'}">
+                <div class="avatar-disc">
+                  {#if msg.sender === 'SİZ'}
+                    <span class="avatar-glyph">👤</span>
+                  {:else}
+                    <span class="avatar-glyph">🏛️</span>
                   {/if}
                 </div>
-              {/if}
+                <div class="bubble-body">
+                  <div class="bubble-text">{msg.text}</div>
+                  <div class="bubble-footer">
+                    <span class="msg-timestamp">{msg.time}</span>
+                    <span class="check-marks">✓✓</span>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
 
-              <!-- İlerleme çubuğu -->
-              <div style="height: 3px; background: #1a120b; border-radius: 2px; overflow: hidden; margin-top: 3px;">
-                <div style="height: 100%; width: {isCompleted ? '100%' : isRunning ? '50%' : isHalted ? '100%' : '0%'}; background: {isCompleted ? '#10b981' : isHalted ? '#ef4444' : isRunning ? agent.color : 'transparent'}; transition: width 0.3s ease;"></div>
+          <!-- Input Bar -->
+          <div class="monitor-input-tray">
+            <button class="cam-btn" on:click={() => fileInput.click()} title="Görsel Yükle">
+              📷
+            </button>
+            <input type="file" accept="image/*" bind:this={fileInput} on:change={handleImageUpload} style="display:none;" />
+            <input 
+              type="text" 
+              class="terminal-input"
+              bind:value={inputMessage} 
+              on:keydown={handleKeydown} 
+              placeholder="Enter command or query..." 
+              disabled={isSending} 
+            />
+            <button class="brass-send-btn" on:click={sendMessage} disabled={isSending || (!inputMessage.trim() && !attachedImage)}>
+              SEND
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- SAĞ PANEL: AJAN ZİNCİRİ (KULLANICININ VERDİĞİ KODUN TAM VE EKSİKSİZ UYARLAMASI) -->
+    <aside class="right-agent-rack">
+      <div class="rack-header">
+        <span class="font-cinzel rack-title">AJAN ZİNCİRİ</span>
+        <div class="jewel-led led-on-green"></div>
+      </div>
+
+      <div class="agent-cards-stack">
+        {#each agentList as agent, i}
+          {@const run = runs[agent.id] || (agent.id === 'depth_analyst' ? runs['depth_forensics'] : null) || (agent.id === 'friction_detector' && taskState === 'processing' ? { status: 'running' } : null)}
+          {@const isCompleted = run?.status === 'completed'}
+          {@const isRunning = currentAgent === agent.id && taskState === 'processing' || (!currentAgent && agent.id === 'friction_detector' && $isProcessing)}
+          {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
+          {@const liveModel = run?.model || agent.primaryModel}
+          {@const liveVia = run?.via || agent.via}
+
+          <div class="agent-instrument-card {isRunning ? 'card-running' : isHalted ? 'card-halted' : isCompleted ? 'card-done' : 'card-wait'}">
+            <div class="card-top-line">
+              <!-- Antik Madalyon / İkon -->
+              <div class="agent-medal {isRunning ? 'medal-pulse-red' : ''}">
+                <span class="medal-symbol">{agent.glyph || '⚙️'}</span>
+              </div>
+
+              <div class="agent-info-meta">
+                <div class="agent-title-text">{agent.name}</div>
+                <div class="agent-spec-lines">
+                  <div><b style="color: var(--gold);">STATUS:</b> {isCompleted ? 'DONE' : isHalted ? 'HALT' : isRunning ? 'RUNNING' : 'WAIT'}</div>
+                  <div><b style="color: var(--gold);">MODEL:</b> {liveModel}</div>
+                  <div><b style="color: var(--gold);">VIA:</b> {liveVia}</div>
+                </div>
+              </div>
+
+              <!-- İlerleme Çubuğu -->
+              <div class="agent-meter-bar">
+                <div 
+                  class="meter-fill {isCompleted ? 'fill-green' : isRunning ? 'fill-running-red' : isHalted ? 'fill-red' : 'fill-dim'}"
+                  style="width: {isCompleted ? '100%' : isRunning ? '65%' : isHalted ? '100%' : '0%'};"
+                ></div>
               </div>
             </div>
-
-            <!-- Durum etiketi -->
-            <span style="font-size: 8px; font-weight: 700; width: 42px; text-align: right; flex-shrink: 0; {isCompleted ? 'color: #10b981;' : isHalted ? 'color: #ef4444;' : isRunning ? 'color: #f59e0b;' : 'color: var(--text-muted);'}">
-              {#if isCompleted}{t[$currentLang].statusDone}
-              {:else if isHalted}{t[$currentLang].statusHalt}
-              {:else if isRunning}{t[$currentLang].statusRunning}
-              {:else}{t[$currentLang].statusWait}{/if}
-            </span>
           </div>
         {/each}
       </div>
+    </aside>
 
-      {#if haltedReason}
-        <div style="margin-top: 10px; background: rgba(239,68,68,0.15); border: 1px solid var(--accent-red); padding: 8px; border-radius: 5px; font-size: 9px; color: #fca5a5; line-height: 1.4;">
-          <b>{t[$currentLang].haltedReasonTitle}</b> {haltedReason}
-        </div>
-      {/if}
+  </div>
 
-      <!-- Toplam Sistem Güveni -->
-      <div class="screen-card" style="margin-top: 12px; padding: 10px;">
-        <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--gold); font-weight: 700; margin-bottom: 4px;">
-          <span>{t[$currentLang].overallConfidence}</span>
-          <span style="color: var(--text-main); font-size: 11px;">{overallConfidence.toFixed(2)}</span>
+  <!-- ==================== ALT SIRA: 6 ADLİ DAMGA YUVARLAK BUTONU ==================== -->
+  <footer class="bottom-forensic-bar">
+    <div class="forensic-buttons-track">
+      <button class="round-brass-btn {activeForensicModal === 'follower' ? 'btn-active' : ''}" on:click={() => toggleForensic('follower')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">🕸️</span>
         </div>
-        <div style="height: 6px; background: #1a120b; border-radius: 3px; overflow: hidden; border: 1px solid #3d2b17;">
-          <div style="height: 100%; width: {overallConfidence * 100}%; background: linear-gradient(90deg, #ef4444 0%, #f59e0b 50%, #10b981 100%); transition: width 0.3s;"></div>
+        <span class="forensic-name">FOLLOWER</span>
+      </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'timing' ? 'btn-active' : ''}" on:click={() => toggleForensic('timing')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">⏱️</span>
+        </div>
+        <span class="forensic-name">TIMING</span>
+      </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'depth' ? 'btn-active' : ''}" on:click={() => toggleForensic('depth')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">📑</span>
+        </div>
+        <span class="forensic-name">DEPTH</span>
+      </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'visual' ? 'btn-active' : ''}" on:click={() => toggleForensic('visual')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">👁️</span>
+        </div>
+        <span class="forensic-name">VISUAL</span>
+      </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'shadow' ? 'btn-active' : ''}" on:click={() => toggleForensic('shadow')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">🎭</span>
+        </div>
+        <span class="forensic-name">SHADOW</span>
+      </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'osint' ? 'btn-active' : ''}" on:click={() => toggleForensic('osint')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">🌐</span>
+        </div>
+        <span class="forensic-name">OSINT</span>
+      </button>
+    </div>
+  </footer>
+
+  <!-- ==================== DAMGA AÇILIR PANELİ (POPUP DRAWER) ==================== -->
+  {#if activeForensicModal}
+    <div class="forensic-modal-backdrop" role="presentation" on:click={() => activeForensicModal = null} on:keydown={(e) => { if (e.key === 'Escape') activeForensicModal = null; }}>
+      <div class="forensic-modal-card" role="dialog" aria-modal="true" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+        <div class="modal-header-brass">
+          <span class="font-cinzel modal-title">ADLİ RAPOR: {activeForensicModal.toUpperCase()}</span>
+          <button class="modal-close" on:click={() => activeForensicModal = null}>✕</button>
+        </div>
+        <div class="modal-content-body">
+          {#if activeForensicModal === 'follower' && followerAudit}
+            <div class="report-box">
+              <h4>Takipçi & Bot Raporu</h4>
+              <p>Bot Oranı: %{((followerAudit.bot_probability || 0) * 100).toFixed(1)}</p>
+              <p>Etkileşim Hızı: {followerAudit.engagement_rate || 'Normal'}</p>
+            </div>
+          {:else if activeForensicModal === 'timing' && timingForensics}
+            <div class="report-box">
+              <h4>Zaman & Sirkadiyen Forensik</h4>
+              <p>Gece Kuşu İndeksi: %{((timingForensics.night_owl_score || 0) * 100).toFixed(0)}</p>
+              <p>Tepe Saati: {timingForensics.peak_hour ?? '02:00'}</p>
+            </div>
+          {:else if activeForensicModal === 'depth' && depthReport}
+            <div class="report-box">
+              <h4>Derinlik & Alıntı Kalkanı</h4>
+              <p>Gerçeklik Skoru: %{((depthReport.reality_index || 0) * 100).toFixed(0)}</p>
+              <p>Özet: {depthReport.essence_one_liner || 'Kanıtlar incelendi.'}</p>
+            </div>
+          {:else if activeForensicModal === 'visual' && visualEvidence}
+            <div class="report-box">
+              <h4>Görsel & Estetik Damga</h4>
+              <p>Stil: {visualEvidence.aesthetic_style || 'Klasik'}</p>
+              <p>Özet: {visualEvidence.visual_evidence_summary || 'Fotoğraf analiz edildi.'}</p>
+            </div>
+          {:else if activeForensicModal === 'shadow' && shadowProfile}
+            <div class="report-box">
+              <h4>Gölge Profili (Karanlık Üçlü)</h4>
+              <p>Narsisizm: {shadowProfile.dark_profile?.narcissism ?? 0}</p>
+              <p>Strateji: {shadowProfile.strategy || 'Doğal profil'}</p>
+            </div>
+          {:else if activeForensicModal === 'osint' && osintFootprint}
+            <div class="report-box">
+              <h4>OSINT Dijital Ayak İzi</h4>
+              <p>Platform Eşleşmesi: {(osintFootprint.associated_platforms || []).join(', ') || 'Temiz'}</p>
+            </div>
+          {:else}
+            <div class="report-box">
+              <p style="color: var(--text-dim);">Bu modül için henüz analiz çalıştırılmadı veya hedef veri bekleniyor.</p>
+            </div>
+          {/if}
         </div>
       </div>
-
-      <PillarFeed {frequencyMap} {seismosEvents} {voidMap} {strataMap} {gravityMap} {pulseMap} {keyMatrix} />
     </div>
-
-  </aside>
+  {/if}
 </div>
+
+<style>
+  /* ===================================================
+     HERETIC VICTORIAN STEAMPUNK INSTRUMENT CONSOLE CSS
+     =================================================== */
+  .steampunk-console {
+    background: radial-gradient(circle at center, #22140a 0%, #140b05 100%);
+    border: 3px solid #7d5b32;
+    box-shadow: inset 0 0 40px rgba(0,0,0,0.9), 0 15px 40px rgba(0,0,0,0.95);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: relative;
+  }
+
+  /* --- TOP DIALS ROW --- */
+  .top-dials-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 40px;
+    padding-bottom: 8px;
+  }
+
+  .gauge-enclosure {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .gauge-outer-ring {
+    width: 95px;
+    height: 95px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #2d1c0f 40%, #5a3d1c 90%, #8a6332 100%);
+    border: 3px solid #b8860b;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.9), 0 4px 10px rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .gauge-outer-ring.red-glow {
+    box-shadow: inset 0 0 20px rgba(239,68,68,0.4), 0 0 15px rgba(239,68,68,0.25);
+  }
+  .gauge-outer-ring.gold-glow {
+    box-shadow: inset 0 0 20px rgba(212,175,55,0.4), 0 0 15px rgba(212,175,55,0.2);
+  }
+  .gauge-outer-ring.white-glow {
+    box-shadow: inset 0 0 20px rgba(255,255,255,0.2), 0 0 15px rgba(255,255,255,0.1);
+  }
+
+  .gauge-glass {
+    width: 78px;
+    height: 78px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.15), rgba(0,0,0,0.9) 80%);
+    border: 1px solid #3d2711;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .gauge-needle {
+    position: absolute;
+    width: 2px;
+    height: 35px;
+    background: #ef4444;
+    bottom: 39px;
+    transform-origin: bottom center;
+    transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 0 6px #ef4444;
+  }
+
+  .gauge-gear {
+    width: 50px;
+    height: 50px;
+    border: 4px dashed #99733d;
+    border-radius: 50%;
+  }
+
+  .gauge-gear.spinning {
+    animation: spinGear 4s linear infinite;
+  }
+
+  @keyframes spinGear {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .gauge-hub {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #d4af37;
+    border: 2px solid #553a18;
+  }
+
+  .gauge-bust {
+    font-size: 24px;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
+  }
+
+  .gauge-label-brass {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    font-weight: 800;
+    color: var(--gold);
+    letter-spacing: 1px;
+    background: #170d06;
+    border: 1px solid #5a3d1c;
+    padding: 2px 8px;
+    border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(212,175,55,0.3);
+  }
+
+  /* --- MAIN COCKPIT 3-COLUMN GRID --- */
+  .main-cockpit-grid {
+    display: grid;
+    grid-template-columns: 210px 1fr 280px;
+    gap: 16px;
+    align-items: stretch;
+  }
+
+  /* --- LEFT HARDWARE RACK --- */
+  .left-hardware-rack {
+    background: #1a1008;
+    border: 2px solid #5a3d1c;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+  }
+
+  .hardware-module {
+    background: #23160c;
+    border: 1px solid #4a3014;
+    border-radius: 6px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .module-title {
+    font-family: 'Cinzel', serif;
+    font-size: 8px;
+    font-weight: 800;
+    color: var(--gold);
+    letter-spacing: 0.8px;
+    margin-bottom: 6px;
+  }
+
+  /* Keylock */
+  .brass-keyhole-disc {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #8a6332 0%, #4a3014 90%);
+    border: 2px solid #b8860b;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.7), inset 0 1px 1px #fff4;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .brass-keyhole-disc.unlocked {
+    box-shadow: 0 0 10px #10b981, inset 0 0 6px #10b981;
+    border-color: #10b981;
+  }
+  .keyhole-slot {
+    width: 6px;
+    height: 18px;
+    background: #000;
+    border-radius: 3px 3px 1px 1px;
+    position: relative;
+  }
+
+  /* Knobs */
+  .knobs-row {
+    display: flex;
+    justify-content: space-around;
+    width: 100%;
+    gap: 4px;
+  }
+  .knob-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .knurled-knob {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #7a5629 0%, #3a220e 100%);
+    border: 2px dashed #99733d;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.8);
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.2s ease;
+  }
+  .knob-notch {
+    position: absolute;
+    top: 2px;
+    left: 14px;
+    width: 4px;
+    height: 7px;
+    background: #fff;
+    border-radius: 1px;
+  }
+  .knob-label {
+    font-size: 6px;
+    color: var(--text-dim);
+    font-weight: 700;
+  }
+
+  /* Switches */
+  .switches-row {
+    display: flex;
+    justify-content: space-around;
+    width: 100%;
+  }
+  .switch-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .jewel-led {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .led-on-green {
+    background: #10b981;
+    box-shadow: 0 0 8px #10b981, 0 0 2px #fff;
+  }
+  .led-on-red {
+    background: #ef4444;
+    box-shadow: 0 0 8px #ef4444;
+  }
+  .led-off {
+    background: #1b120a;
+    box-shadow: inset 0 1px 2px #000;
+  }
+
+  .brass-lever {
+    width: 22px;
+    height: 34px;
+    background: #120904;
+    border: 1px solid #5a3d1c;
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    padding: 0;
+  }
+  .lever-handle {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #d4af37, #7a5629);
+    position: absolute;
+    left: 3px;
+    box-shadow: 0 2px 4px #000;
+    transition: top 0.15s ease;
+  }
+  .lever-up .lever-handle { top: 3px; }
+  .lever-down .lever-handle { top: 15px; }
+
+  .switch-label {
+    font-size: 7px;
+    color: var(--text-dim);
+    font-weight: 700;
+  }
+
+  /* Odometer */
+  .odometer-module {
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 6px 10px;
+  }
+  .counter-tag {
+    font-size: 8px;
+    font-weight: 800;
+    color: var(--gold);
+  }
+  .odometer-bezel {
+    background: #0d0703;
+    border: 1px solid #5a3d1c;
+    padding: 2px 6px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 5px #000;
+  }
+  .odometer-digits {
+    display: flex;
+    gap: 3px;
+  }
+  .odo-digit {
+    background: #000;
+    color: #fff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 1px 3px;
+    border-radius: 2px;
+    border: 1px solid #222;
+  }
+
+  /* Status Lamp */
+  .status-module {
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 6px 12px;
+  }
+  .status-title {
+    font-size: 8px;
+    font-weight: 800;
+    color: var(--gold);
+    text-align: left;
+    line-height: 1.1;
+  }
+  .big-jewel-lamp {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #10b981;
+    border: 2px solid #5a3d1c;
+    box-shadow: 0 0 12px #10b981;
+  }
+  .lamp-pulse {
+    animation: lampBlink 1s infinite alternate;
+  }
+  @keyframes lampBlink {
+    from { opacity: 0.4; box-shadow: 0 0 4px #10b981; }
+    to { opacity: 1; box-shadow: 0 0 16px #10b981; }
+  }
+
+  /* Token Plaque */
+  .token-plaque {
+    position: relative;
+    background: linear-gradient(145deg, #a67c3b 0%, #684a1d 100%);
+    border: 1px solid #d4af37;
+    color: #0d0703;
+    padding: 6px;
+    box-shadow: inset 0 1px 1px #fff6, 0 3px 6px rgba(0,0,0,0.6);
+  }
+  .plaque-screw {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #2a1a08;
+    box-shadow: inset 0 1px 0 #000;
+  }
+  .plaque-screw.top-left { top: 3px; left: 3px; }
+  .plaque-screw.top-right { top: 3px; right: 3px; }
+  .plaque-screw.btm-left { bottom: 3px; left: 3px; }
+  .plaque-screw.btm-right { bottom: 3px; right: 3px; }
+  .plaque-header { font-family: 'Cinzel', serif; font-size: 8px; font-weight: 900; letter-spacing: 0.5px; }
+  .plaque-code { font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
+
+  /* --- CENTER MONITOR CHASSIS --- */
+  .center-monitor-chassis {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .crt-screen-bezel {
+    background: #1c1109;
+    border: 3px solid #7d5b32;
+    border-radius: 10px;
+    padding: 8px;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.9);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .crt-screen-inner {
+    background: #080604;
+    border: 2px solid #2a180b;
+    border-radius: 6px;
+    padding: 10px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .crt-header {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-bottom: 1px solid #2a180b;
+    padding-bottom: 8px;
+  }
+
+  .header-title-group {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .deck-title {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--gold);
+    letter-spacing: 1px;
+  }
+
+  .sound-wave-icon {
+    color: #10b981;
+    font-weight: 900;
+    font-size: 12px;
+  }
+  .wave-active {
+    animation: wavePulse 0.5s infinite alternate;
+  }
+  @keyframes wavePulse {
+    from { color: #10b981; text-shadow: 0 0 2px #10b981; }
+    to { color: #34d399; text-shadow: 0 0 10px #34d399; }
+  }
+
+  /* Monitor Tabs */
+  .monitor-tabs-bar {
+    display: flex;
+    gap: 6px;
+  }
+  .monitor-tab-btn {
+    flex: 1;
+    background: #170d06;
+    border: 1px solid #4a3014;
+    color: var(--text-dim);
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .monitor-tab-btn.tab-selected {
+    background: linear-gradient(180deg, #99733d 0%, #5a3d1c 100%);
+    color: #fff;
+    border-color: var(--gold);
+    box-shadow: 0 0 8px rgba(212,175,55,0.4);
+  }
+
+  /* Active Route Subbar */
+  .active-route-subbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #110904;
+    border: 1px solid #331d0b;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 8px;
+    letter-spacing: 0.4px;
+  }
+  .route-text {
+    color: var(--text-muted);
+  }
+  .route-dots {
+    display: flex;
+    gap: 4px;
+  }
+  .dot-led {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .dot-green { background: #10b981; box-shadow: 0 0 4px #10b981; }
+  .dot-amber { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
+
+  /* Quick Target Strip */
+  .quick-target-strip {
+    display: flex;
+    gap: 6px;
+  }
+  .quick-target-strip input {
+    flex: 1;
+    background: #0d0703;
+    border: 1px solid #3d230f;
+    color: #fff;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  .launch-btn {
+    font-family: 'Cinzel', serif;
+    font-size: 10px;
+    font-weight: 800;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-armed {
+    background: linear-gradient(180deg, #10b981 0%, #065f46 100%);
+    color: #fff;
+    border: 1px solid #34d399;
+    box-shadow: 0 0 10px rgba(16,185,129,0.5);
+  }
+  .btn-unarmed {
+    background: #2a1e12;
+    color: var(--text-muted);
+    border: 1px solid #3d2b17;
+  }
+
+  /* Dialogue Area */
+  .dialogue-scroll-area {
+    flex: 1;
+    min-height: 250px;
+    max-height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+  }
+  .chat-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .row-user {
+    flex-direction: row-reverse;
+  }
+  .avatar-disc {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #1f1309;
+    border: 1px solid #6b4e2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .avatar-glyph {
+    font-size: 13px;
+  }
+  .bubble-body {
+    background: #140d07;
+    border: 1px solid #3d2714;
+    border-radius: 6px;
+    padding: 8px 10px;
+    max-width: 85%;
+  }
+  .row-user .bubble-body {
+    background: #241408;
+    border-color: #7d5021;
+  }
+  .bubble-text {
+    font-size: 11px;
+    color: #f1e9da;
+    line-height: 1.45;
+  }
+  .bubble-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    font-size: 8px;
+    color: var(--text-muted);
+  }
+  .check-marks {
+    color: #10b981;
+  }
+
+  /* Monitor Input Tray */
+  .monitor-input-tray {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    border-top: 1px solid #2a180b;
+    padding-top: 8px;
+  }
+  .cam-btn {
+    background: #1f1309;
+    border: 1px solid #5a3d1c;
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .terminal-input {
+    flex: 1;
+    background: #0c0703;
+    border: 1px solid #4a2c12;
+    color: #fff;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  .brass-send-btn {
+    background: linear-gradient(180deg, #d4af37 0%, #8a6332 100%);
+    color: #120904;
+    font-family: 'Cinzel', serif;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 6px 16px;
+    border-radius: 4px;
+    border: 1px solid #ffd700;
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.6);
+  }
+
+  /* --- RIGHT AGENT RACK --- */
+  .right-agent-rack {
+    background: #1a1008;
+    border: 2px solid #5a3d1c;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+    max-height: 520px;
+    overflow-y: auto;
+  }
+
+  .rack-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #3d2714;
+    padding-bottom: 6px;
+  }
+  .rack-title {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--gold);
+    letter-spacing: 1px;
+  }
+
+  .agent-cards-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .agent-instrument-card {
+    background: #140c06;
+    border: 1px solid #3d2714;
+    border-radius: 5px;
+    padding: 6px 8px;
+    transition: all 0.2s;
+  }
+  .card-running {
+    border-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239,68,68,0.3);
+  }
+  .card-done {
+    border-color: #10b981;
+  }
+
+  .card-top-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .agent-medal {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #7a5629 0%, #3a220e 100%);
+    border: 1px solid #b8860b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .medal-pulse-red {
+    border-color: #ef4444;
+    box-shadow: 0 0 8px #ef4444;
+    animation: medalBlink 1s infinite alternate;
+  }
+  @keyframes medalBlink {
+    from { box-shadow: 0 0 2px #ef4444; }
+    to { box-shadow: 0 0 10px #ef4444; }
+  }
+  .medal-symbol {
+    font-size: 11px;
+  }
+
+  .agent-info-meta {
+    flex: 1;
+    min-width: 0;
+  }
+  .agent-title-text {
+    font-family: 'Cinzel', serif;
+    font-size: 9px;
+    font-weight: 800;
+    color: #e2d7c5;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .agent-spec-lines {
+    font-size: 7px;
+    color: var(--text-muted);
+    line-height: 1.25;
+    margin-top: 1px;
+  }
+
+  .agent-meter-bar {
+    width: 50px;
+    height: 4px;
+    background: #000;
+    border: 1px solid #331d0b;
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .meter-fill {
+    height: 100%;
+    transition: width 0.3s;
+  }
+  .fill-green {
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
+  }
+  .fill-running-red {
+    background: linear-gradient(90deg, #ef4444, #f59e0b);
+    box-shadow: 0 0 8px #ef4444;
+    animation: barPulse 1s infinite alternate;
+  }
+  @keyframes barPulse {
+    from { opacity: 0.7; }
+    to { opacity: 1; }
+  }
+  .fill-red { background: #ef4444; }
+  .fill-dim { background: transparent; }
+
+  /* --- BOTTOM FORENSIC BAR --- */
+  .bottom-forensic-bar {
+    background: #170e06;
+    border: 2px solid #5a3d1c;
+    border-radius: 8px;
+    padding: 8px 12px;
+    box-shadow: inset 0 0 10px #000;
+  }
+  .forensic-buttons-track {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+  }
+  .round-brass-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    transition: transform 0.15s;
+  }
+  .round-brass-btn:hover {
+    transform: translateY(-2px);
+  }
+  .btn-inner-disc {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #5a3d1c 0%, #2a1a08 100%);
+    border: 2px solid #b8860b;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.8), inset 0 1px 1px #fff3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .round-brass-btn.btn-active .btn-inner-disc {
+    border-color: #10b981;
+    box-shadow: 0 0 12px #10b981, inset 0 0 6px #10b981;
+  }
+  .forensic-icon {
+    font-size: 18px;
+  }
+  .forensic-name {
+    font-family: 'Cinzel', serif;
+    font-size: 8px;
+    font-weight: 800;
+    color: var(--gold);
+    letter-spacing: 0.8px;
+  }
+
+  /* --- FORENSIC MODAL POPUP --- */
+  .forensic-modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  }
+  .forensic-modal-card {
+    background: #1c1109;
+    border: 2px solid var(--gold);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.9);
+    overflow: hidden;
+  }
+  .modal-header-brass {
+    background: linear-gradient(145deg, #d4af37, #8a6332);
+    color: #120904;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .modal-title {
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 1px;
+  }
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 14px;
+    font-weight: 900;
+    cursor: pointer;
+    color: #120904;
+  }
+  .modal-content-body {
+    padding: 14px;
+    color: var(--text-main);
+  }
+  .report-box h4 {
+    color: var(--gold);
+    margin-bottom: 8px;
+    font-family: 'Cinzel', serif;
+  }
+  .report-box p {
+    font-size: 12px;
+    margin-bottom: 6px;
+    color: #e2d7c5;
+  }
+</style>
