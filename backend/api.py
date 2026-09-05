@@ -1579,6 +1579,56 @@ class OverridePayload(BaseModel):
 
 _override_lock = asyncio.Lock()
 
+def _read_learnings(lp: str) -> list:
+    if not os.path.exists(lp):
+        return []
+    try:
+        with open(lp, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        backup_path = f"{lp}.corrupt.{int(time.time())}"
+        logger.error(
+            "LEARNINGS_CORRUPT: %s okunamadı (%s). Dosya %s olarak karantinaya alınıp, "
+            "sistem hafıza çöküşünden kurtarılıyor.", lp, exc, backup_path
+        )
+        try:
+            os.replace(lp, backup_path)
+        except OSError:
+            pass
+        return []
+
+    if not isinstance(data, list):
+        backup_path = f"{lp}.corrupt.{int(time.time())}"
+        logger.error(
+            "LEARNINGS_SCHEMA_INVALID: Liste beklenirken %s bulundu. %s olarak karantinaya alınıp sıfırlanıyor.",
+            type(data).__name__, backup_path
+        )
+        try:
+            os.replace(lp, backup_path)
+        except OSError:
+            pass
+        return []
+
+    return data
+
+
+def _write_learnings(lp: str, data: list) -> None:
+    # Çok süreçli çakışmayı ve yazma sırasındaki güç kesintilerini önlemek için atomik yazma
+    tmp = f"{lp}.{os.getpid()}_{time.time()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())  # Diske yazıldığını garanti et
+        os.replace(tmp, lp)       # Tek hamlede asıl dosyanın üzerine yaz
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 @app.post("/api/override")
 async def api_override(req: OverridePayload):
     if req.fact.strip():
@@ -1586,47 +1636,9 @@ async def api_override(req: OverridePayload):
         mem_dir = executor.memory.storage_path
         lp = os.path.join(mem_dir, "learnings.json")
         async with _override_lock:
-            def _read_learnings():
-                if not os.path.exists(lp):
-                    return []
-                try:
-                    with open(lp, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            return data
-                        logger.warning("learnings.json liste değil (%s), yedeklenip sıfırlanıyor", type(data).__name__)
-                except (json.JSONDecodeError, OSError) as e:
-                    logger.warning("learnings.json bozuk (%s), yedeklenip sıfırlanıyor", e)
-
-                # Bozuk dosyayı kanıt kaybı olmadan yedekle: learnings.json.corrupt.TIMESTAMP
-                try:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    corrupt_backup = f"{lp}.corrupt.{ts}"
-                    os.replace(lp, corrupt_backup)
-                    logger.info("Bozuk learnings dosyası yedeklendi: %s", corrupt_backup)
-                except Exception:
-                    pass
-                return []
-
-            def _write_learnings(data):
-                # [P2-9] Atomik yazma (tempfile + fsync + os.replace)
-                tmp_path = f"{lp}.tmp.{os.getpid()}_{datetime.now().timestamp()}"
-                try:
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    os.replace(tmp_path, lp)
-                finally:
-                    if os.path.exists(tmp_path):
-                        try:
-                            os.remove(tmp_path)
-                        except OSError:
-                            pass
-
-            learn = await asyncio.to_thread(_read_learnings)
+            learn = await asyncio.to_thread(_read_learnings, lp)
             learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
-            await asyncio.to_thread(_write_learnings, learn)
+            await asyncio.to_thread(_write_learnings, lp, learn)
         broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
     return {"status": "sealed"}
 

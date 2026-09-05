@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_PLATFORMS = ("instagram",)
 
-_IG_RESERVED_PATHS = frozenset({
-    "explore", "reels", "reel", "p", "stories", "accounts", "direct",
-    "tags", "tv", "live", "about", "legal", "privacy", "terms", "creator", ""
+_IG_RESERVED = frozenset({
+    "p", "reel", "reels", "tv", "stories", "explore", "accounts", "about",
+    "legal", "privacy", "terms", "developer", "direct", "web", "challenge",
+    "tags", "creator", "live", ""
 })
 
 
@@ -49,29 +50,33 @@ def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
 
 
 def extract_username(url: str) -> str:
-    """URL'den hedef profil kullanıcı adını çıkarır.
+    """Yalnızca tek segmentli gerçek profil path'ini veya çıplak @kullanici girdisini kabul eder.
 
-    Profil dışı URL'lerde (gönderi /p/, reels, explore, login vb.) boş dize ''
-    dönerek misattribution ve sahte kazımayı engeller.
+    Gönderi (/p/XXX), reels, etiketler veya rezerve edilmiş yollarda boş string dönerek
+    misattribution ve sahte kazımayı engeller.
     """
-    if not url:
-        return ""
-    parsed = urllib.parse.urlparse(url.strip())
-    path_segments = [s for s in parsed.path.strip("/").split("/") if s]
-    if not path_segments:
-        # Path yoksa ama domain dışı düz string girildiyse (@username gibi)
-        candidate = url.strip().lstrip("@")
-        if re.fullmatch(r"^[A-Za-z0-9._]{1,30}$", candidate):
-            return candidate
+    raw = (url or "").strip()
+    if not raw:
         return ""
 
-    first_seg = path_segments[0].lower()
-    if first_seg in _IG_RESERVED_PATHS:
+    parsed = urllib.parse.urlsplit(raw)
+    # Eğer bir domain verilmişse, instagram.com olmalı
+    if parsed.netloc:
+        if "instagram.com" not in parsed.netloc.lower():
+            return ""
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) != 1:  # /p/XXX, /explore/tags/kedi, / -> reddet
+            return ""
+        name = parts[0].lstrip("@")
+    else:
+        # Çıplak handle girişi: "@kullanici" veya "kullanici"
+        name = raw.lstrip("@")
+
+    if not name or name.lower() in _IG_RESERVED:
         return ""
 
-    candidate = path_segments[0].replace("@", "")
-    if re.fullmatch(r"^[A-Za-z0-9._]{1,30}$", candidate):
-        return candidate
+    if re.fullmatch(r"^[A-Za-z0-9._]{1,30}$", name):
+        return name
     return ""
 
 
