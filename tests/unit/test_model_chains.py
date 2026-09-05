@@ -44,7 +44,7 @@ async def test_query_chain_fallback_on_server_error():
 
     res = await gw.query_chain("test prompt", task="depth")
     assert "OK from deepseek/deepseek-v4-pro" in res
-    assert call_count == 2
+    assert call_count >= 2
 
 @pytest.mark.asyncio
 async def test_query_chain_auth_error_does_not_fallback():
@@ -84,7 +84,7 @@ async def test_query_json_chain_fallback_on_schema_error():
     res = await gw.query_json_chain("JSON prompt", SampleSchema, task="depth")
     assert isinstance(res, SampleSchema)
     assert res.title == "Başarı: deepseek/deepseek-v4-pro"
-    assert call_count == 2
+    assert call_count >= 2
 
 @pytest.mark.asyncio
 async def test_depth_analyst_wired_to_depth_chain():

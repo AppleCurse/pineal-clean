@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, afterUpdate } from 'svelte';
-  import { clientId, apiFetch, apiToken, setApiToken, currentApiToken, isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents } from '../store';
+  import { clientId, apiFetch, apiToken, setApiToken, currentApiToken, isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents, armEngaged, sigintEngaged, recordEngaged, keyUnlocked } from '../store';
   import { currentLang, t } from '../i18n';
+  import { playClick, playRunningTone, playHaltAlarm, playLever } from '../lib/consoleAudio';
   import PillarFeed from './PillarFeed.svelte';
   
   // ==========================================
@@ -49,6 +50,11 @@
 
   export async function triggerAnalysis() {
     if (!targetUrl) return;
+    if (!$armEngaged) {
+      logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "WARNING", msg: "[EMNİYET] ARM anahtarı kapalı! Konsoldan ARM'ı aktif edin."}]);
+      playHaltAlarm();
+      return;
+    }
     isProcessing.set(true);
     try {
       const res = await apiFetch(`/api/initiate`, {
@@ -158,6 +164,18 @@
     }
   }
 
+  function speakAspasia(text: string) {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = $currentLang === 'tr' ? 'tr-TR' : 'en-US';
+      utter.rate = 1.05;
+      utter.pitch = 0.95;
+      window.speechSynthesis.speak(utter);
+    } catch (_) {}
+  }
+
   async function sendMessage() {
     if ((!inputMessage.trim() && !attachedImage) || isSending) return;
     const displayMsg = attachedImage ? `[GÖRSEL] ${inputMessage}` : inputMessage;
@@ -188,7 +206,9 @@
               taskStatus.update(s => ({ ...s, task_id: cmd.task_id, status: 'processing' }));
               isProcessing.set(true);
               logs.update(l => [...l, {ts: new Date().toLocaleTimeString(), level: "INFO", msg: `ASPASIA EMRİ [${cmd.command_id}]: ${cmd.intent} → görev ${cmd.task_id}`}]);
-              messages = [...messages, { sender: 'ASPASIA', text: `Emir yürürlükte Mösyö — görev kuyruğa alındı (${cmd.task_id}); sonuç kartını izleyin.` }];
+              const replyText = `Emir yürürlükte Mösyö — görev kuyruğa alındı (${cmd.task_id}); sonuç kartını izleyin.`;
+              messages = [...messages, { sender: 'ASPASIA', text: replyText }];
+              speakAspasia(replyText);
               return;
             }
           }
@@ -206,7 +226,11 @@
       });
       if (!res.ok) throw new Error(isAuthFailure(res) ? "Yetki hatası (PINEAL_TOKEN) — Kasa'dan token girin" : "Ağ geçidi yanıt vermedi");
       const data = await res.json();
-      messages = [...messages, { sender: activeAgentId, text: data.message || data.error?.message || "Yanıt alındı." }];
+      const reply = data.message || data.error?.message || "Yanıt alındı.";
+      messages = [...messages, { sender: activeAgentId, text: reply }];
+      if (activeAgentId === 'ASPASIA') {
+        speakAspasia(reply);
+      }
     } catch (error: any) {
       messages = [...messages, { sender: 'SİSTEM', text: `HATA: ${error.message}` }];
     } finally {
@@ -232,15 +256,19 @@
   let redFlags: string[] = [];
 
   const agentList = [
-    { id: "mirror_truth", name: "MIRROR TRUTH", color: "#10b981" },
-    { id: "autonomous_verifier", name: "AUTONOMOUS VERIFIER", color: "#a855f7" },
-    { id: "human_behavior", name: "HUMAN BEHAVIOR", color: "#f59e0b" },
-    { id: "passion_mapper", name: "PASSION MAPPER", color: "#f59e0b" },
-    { id: "friction_detector", name: "FRICTION & BOUNDS", color: "#ef4444" },
-    { id: "cognitive_profiler", name: "COGNITIVE PROFILER", color: "#06b6d4" },
-    { id: "resonance_calc", name: "RESONANCE CALCULATOR", color: "#3b82f6" },
-    { id: "pattern_interrupt", name: "PATTERN INTERRUPT", color: "#dc2626" },
-    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE", color: "#10b981" }
+    { id: "mirror_truth",          name: "MIRROR TRUTH",          color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/openrouter", capability: "unfiltered_reality" },
+    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-flash", via: "nous/deepseek",   capability: "extract+judgment" },
+    { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "deep_psychology" },
+    { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "gemini-3.7-flash",    backupModel: "deepseek-v4-flash", via: "google-direct",  capability: "zero_cost_classify" },
+    { id: "friction_detector",     name: "FRICTION & BOUNDS",     color: "#ef4444", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "boundary_detect" },
+    { id: "cognitive_profiler",    name: "COGNITIVE PROFILER",    color: "#06b6d4", primaryModel: "gemini-3.7-flash",    backupModel: "deepseek-v4-flash", via: "google-direct",  capability: "zero_cost_lexicon" },
+    { id: "resonance_calc",        name: "RESONANCE CALCULATOR",  color: "#3b82f6", primaryModel: "local-numpy",         backupModel: "none",              via: "local",           capability: "deterministic_math" },
+    { id: "pattern_interrupt",     name: "PATTERN INTERRUPT",     color: "#dc2626", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "nous/google",     capability: "hook_generation" },
+    { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE",      color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "rapport_synthesis" },
+    { id: "follower_audit",        name: "FOLLOWER AUDIT",        color: "#8b5cf6", primaryModel: "deterministic-math",  backupModel: "none",              via: "local",           capability: "heuristic_scoring" },
+    { id: "timing_forensics",      name: "TIMING FORENSICS",      color: "#ec4899", primaryModel: "circadian-analysis",  backupModel: "none",              via: "local",           capability: "fourier_spectral" },
+    { id: "depth_forensics",       name: "DEPTH FORENSICS",       color: "#14b8a6", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "quote_grounding" },
+    { id: "shadow_agent",          name: "SHADOW PROFILER",       color: "#6366f1", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "nous/deepseek",   capability: "dark_triad_detect" }
   ];
 
   let runs: Record<string, any> = {};
@@ -249,6 +277,8 @@
   let haltedReason: string | null = null;
   let taskState = "IDLE";
   let taskId = "";
+  let prevAgent = "";
+  let prevTaskState = "";
   let holisticProfile: any = null;
   let followerAudit: any = null;
   let timingForensics: any = null;
@@ -311,6 +341,25 @@
     }
   }
 
+  // Ses olayları: durum değişimlerinde spam yapmayan ses tetikleyicileri
+  $: {
+    if (currentAgent && currentAgent !== prevAgent && taskState === 'processing') {
+      playRunningTone();
+      prevAgent = currentAgent;
+    }
+    if ((taskState === 'failed' || taskState.startsWith('halted')) && prevTaskState !== taskState) {
+      playHaltAlarm();
+      prevTaskState = taskState;
+    } else if (taskState !== prevTaskState) {
+      prevTaskState = taskState;
+    }
+  }
+
+  // SIGINT Acil Durdurma kancası
+  $: if ($sigintEngaged && $isProcessing && $taskStatus?.task_id) {
+    cancelAnalysis();
+  }
+
   let logContainer: HTMLElement;
   $: displayLogs = $logs.slice(-25);
 
@@ -324,6 +373,43 @@
   <!-- ==================== SOL PANEL: TELEMETRİ VE KASA ==================== -->
   <aside style="display: flex; flex-direction: column; gap: 14px;">
     
+    <!-- POWER · SIGINT Kontrol Plakası -->
+    <div class="brass-plate" style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="font-cinzel" style="font-size: 10px; font-weight: 800; color: var(--gold); letter-spacing: 1px;">
+        POWER · SIGINT
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+        <button
+          class="btn-dark"
+          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$armEngaged ? '#10b981' : '#3d2b17'}; color: {$armEngaged ? '#10b981' : 'var(--text-muted)'}; background: {$armEngaged ? 'rgba(16,185,129,0.1)' : '#17110c'};"
+          on:click={() => { $armEngaged = !$armEngaged; playClick(); }}
+        >
+          ARM {$armEngaged ? '● ON' : '○ OFF'}
+        </button>
+        <button
+          class="btn-dark"
+          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$sigintEngaged ? '#ef4444' : '#3d2b17'}; color: {$sigintEngaged ? '#ef4444' : 'var(--text-muted)'}; background: {$sigintEngaged ? 'rgba(239,68,68,0.1)' : '#17110c'};"
+          on:click={() => { $sigintEngaged = !$sigintEngaged; playLever(); }}
+        >
+          SIGINT {$sigintEngaged ? '● HALT' : '○ NORM'}
+        </button>
+        <button
+          class="btn-dark"
+          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$recordEngaged ? '#f59e0b' : '#3d2b17'}; color: {$recordEngaged ? '#f59e0b' : 'var(--text-muted)'}; background: {$recordEngaged ? 'rgba(245,158,11,0.1)' : '#17110c'};"
+          on:click={() => { $recordEngaged = !$recordEngaged; playLever(); }}
+        >
+          REC {$recordEngaged ? '● REC' : '○ STBY'}
+        </button>
+        <button
+          class="btn-dark"
+          style="padding: 6px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; border-color: {$keyUnlocked ? 'var(--gold)' : '#3d2b17'}; color: {$keyUnlocked ? 'var(--gold)' : 'var(--text-muted)'}; background: {$keyUnlocked ? 'rgba(212,175,55,0.1)' : '#17110c'};"
+          on:click={() => { $keyUnlocked = !$keyUnlocked; playLever(); }}
+        >
+          KEY {$keyUnlocked ? '🔓 LIVE' : '🔒 SAFE'}
+        </button>
+      </div>
+    </div>
+
     <!-- Göstergeler (Telemetry) -->
     <div class="brass-plate">
       <div class="font-cinzel" style="font-size: 11px; font-weight: 800; color: var(--gold); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
@@ -519,6 +605,16 @@
         <button class="btn-dark" style="font-size: 10px; padding: 4px 10px;" on:click={explainState}>
           💡 {t[$currentLang].explainStateBtn}
         </button>
+      </div>
+
+      <!-- ASPASIA ROUTE İNDİKATÖRÜ -->
+      <div style="display: flex; gap: 8px; align-items: center; padding: 4px 10px; background: #120c07; border: 1px solid #2a1e12; border-radius: 4px; margin-bottom: 8px; font-size: 8px; font-family: 'JetBrains Mono', monospace;">
+        <span style="color: var(--gold);">ASPASIA ROUTE:</span>
+        <span style="color: #60a5fa;">{localModelActive ? `LOCAL (${selectedLocalModel})` : 'CLAUDE-SONNET-5 / PRO'}</span>
+        <span style="color: var(--text-muted);">|</span>
+        <span style="color: #a1a1aa;">REASONING: STRONG</span>
+        <span style="color: var(--text-muted);">|</span>
+        <span style="color: {localModelActive ? '#3b82f6' : 'var(--gold)'};">{localModelActive ? 'OLLAMA' : 'OPENROUTER'}</span>
       </div>
 
       <!-- Sohbet Akışı -->
@@ -967,56 +1063,70 @@
       <!-- Ajan İlerleme Listesi -->
       <div style="display: flex; flex-direction: column; gap: 6px;">
         {#each agentList as agent, i}
-          {@const run = runs[agent.id]}
+          {@const run = runs[agent.id] || (agent.id === 'depth_forensics' ? runs['depth_analyst'] : null) || (agent.id === 'shadow_agent' ? runs['shadow_executor'] : null)}
           {@const isCompleted = run?.status === 'completed'}
           {@const isRunning = currentAgent === agent.id && taskState === 'processing'}
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
 
-          <div class="screen-card" style="padding: 6px 8px; display: flex; align-items: center; gap: 8px;">
-            <div style="width: 20px; height: 20px; border-radius: 50%; background: {agent.color}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #000;">
+          <div class="screen-card" style="padding: 6px 8px; display: flex; align-items: center; gap: 8px; border-left: 2px solid {isRunning ? agent.color : isCompleted ? '#10b981' : isHalted ? '#ef4444' : '#2a1e12'};">
+            <div style="width: 20px; height: 20px; border-radius: 50%; background: {agent.color}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #000; flex-shrink: 0;">
               {#if isCompleted}✓{:else if isRunning}▶{:else if isHalted}✗{:else}{i + 1}{/if}
             </div>
 
-            <div style="flex: 1;">
-              <div style="display: flex; justify-content: space-between; font-size: 9px; font-weight: 700; color: var(--text-dim);">
-                <span>{agent.name}</span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; justify-content: space-between; align-items: center; font-size: 9px; font-weight: 700;">
+                <span style="color: {isRunning ? '#fff' : 'var(--text-dim)'}; font-family: 'Cinzel', serif; letter-spacing: 0.5px;">
+                  {agent.name}
+                </span>
                 {#if run?.confidence !== undefined && run?.confidence !== null}
-                  <span style="color: var(--text-main); font-size: 9px;">{run.confidence.toFixed(2)}</span>
+                  <span style="color: var(--text-main); font-size: 8px; font-family: 'JetBrains Mono', monospace;">
+                    {(run.confidence * 100).toFixed(0)}%
+                  </span>
                 {/if}
               </div>
-              <!-- P2-9 PROVENANCE: bu çıktının kökeni. Damga yoksa kanıt sayılmaz. -->
+
+              <!-- Model ve rota bilgisi -->
+              <div style="display: flex; gap: 4px; align-items: center; margin-top: 2px; font-size: 7px;">
+                <span style="background: rgba(255,255,255,0.05); border: 1px solid #3d2b17; color: #a1a1aa; padding: 0 4px; border-radius: 2px; font-family: 'JetBrains Mono', monospace;">
+                  {agent.primaryModel}
+                </span>
+                <span style="background: {agent.via === 'local' ? 'rgba(59,130,246,0.15)' : 'rgba(212,175,55,0.15)'}; border: 1px solid {agent.via === 'local' ? '#3b82f6' : 'var(--gold)'}; color: {agent.via === 'local' ? '#93c5fd' : 'var(--gold)'}; padding: 0 3px; border-radius: 2px;">
+                  {agent.via.toUpperCase()}
+                </span>
+              </div>
+
+              <!-- Provenance rozeti (tamamlandıysa) -->
               {#if isCompleted && run?.output_summary?._provenance}
                 {@const prov = run.output_summary._provenance}
                 <div style="margin-top: 2px;">
                   {#if prov.source === 'llm'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(16,185,129,0.2); border: 1px solid #10b981; color: #6ee7b7; padding: 1px 4px; border-radius: 3px;" title="Gerçek LLM çağrısı: {prov.model}">
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(16,185,129,0.2); border: 1px solid #10b981; color: #6ee7b7; padding: 1px 4px; border-radius: 3px;">
                       LLM ✓ {prov.model?.split('/').pop() || ''}
                     </span>
                   {:else if prov.source === 'llm_cache'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(6,182,212,0.2); border: 1px solid #06b6d4; color: #67e8f9; padding: 1px 4px; border-radius: 3px;" title="Önbellekten gelen LLM yanıtı: {prov.model}">
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(6,182,212,0.2); border: 1px solid #06b6d4; color: #67e8f9; padding: 1px 4px; border-radius: 3px;">
                       CACHE {prov.model?.split('/').pop() || ''}
                     </span>
                   {:else if prov.source === 'deterministic'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(212,175,55,0.2); border: 1px solid var(--gold); color: var(--gold); padding: 1px 4px; border-radius: 3px;" title="Yerel hesaplama — LLM yok, tahmin yok">
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(212,175,55,0.2); border: 1px solid var(--gold); color: var(--gold); padding: 1px 4px; border-radius: 3px;">
                       DETERMİNİSTİK
                     </span>
                   {:else if prov.source === 'fallback'}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(239,68,68,0.25); border: 1px solid #ef4444; color: #fca5a5; padding: 1px 4px; border-radius: 3px;" title="Fallback üretim: {prov.fallback_reason} — kanıt DEĞİL">
+                    <span style="font-size: 7px; font-weight: 800; background: rgba(239,68,68,0.25); border: 1px solid #ef4444; color: #fca5a5; padding: 1px 4px; border-radius: 3px;">
                       ⚠ FALLBACK
-                    </span>
-                  {:else}
-                    <span style="font-size: 7px; font-weight: 800; background: rgba(100,116,139,0.2); border: 1px solid #64748b; color: #94a3b8; padding: 1px 4px; border-radius: 3px;" title="Köken izlenemedi">
-                      ? KÖKEN YOK
                     </span>
                   {/if}
                 </div>
               {/if}
-              <div style="height: 4px; background: #1a120b; border-radius: 2px; overflow: hidden; margin-top: 3px;">
-                <div style="height: 100%; width: {isCompleted ? '100%' : isRunning ? '50%' : isHalted ? '100%' : '0%'}; background: {isCompleted ? '#10b981' : isHalted ? '#ef4444' : isRunning ? '#f59e0b' : 'transparent'}; transition: width 0.3s ease;"></div>
+
+              <!-- İlerleme çubuğu -->
+              <div style="height: 3px; background: #1a120b; border-radius: 2px; overflow: hidden; margin-top: 3px;">
+                <div style="height: 100%; width: {isCompleted ? '100%' : isRunning ? '50%' : isHalted ? '100%' : '0%'}; background: {isCompleted ? '#10b981' : isHalted ? '#ef4444' : isRunning ? agent.color : 'transparent'}; transition: width 0.3s ease;"></div>
               </div>
             </div>
 
-            <span style="font-size: 8px; font-weight: 700; width: 45px; text-align: right; {isCompleted ? 'color: #10b981;' : isHalted ? 'color: #ef4444;' : isRunning ? 'color: #f59e0b;' : 'color: var(--text-muted);'}">
+            <!-- Durum etiketi -->
+            <span style="font-size: 8px; font-weight: 700; width: 42px; text-align: right; flex-shrink: 0; {isCompleted ? 'color: #10b981;' : isHalted ? 'color: #ef4444;' : isRunning ? 'color: #f59e0b;' : 'color: var(--text-muted);'}">
               {#if isCompleted}{t[$currentLang].statusDone}
               {:else if isHalted}{t[$currentLang].statusHalt}
               {:else if isRunning}{t[$currentLang].statusRunning}

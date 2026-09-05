@@ -259,32 +259,23 @@ class LLMGateway:
     }
     # Agent policies make specialist selection explicit while retaining a
     # bounded, capability-compatible failover chain.
-    # Karar matrisi (2026-09-02): FrictionDetector ucuz/fast katmandan çıkarıldı,
-    # VisionAnalyzer tek modele kilitli değil, Verifier extract/hüküm ayrık,
-    # OSINT sentezi Grok'ta. Emekli/promo slug'lar (solar-pro4, ling-3.0-flash,
-    # glm-5.2, grok-4-1-fast-*) hiçbir zincirin birincil/yedeği değil —
-    # MODEL_REGISTRY'de yalnızca /v1 uyumluluğu için duruyorlar.
+    # Karar matrisi: Passion/Cognitive/Audit hızlı & ucuz katmana çekildi,
+    # Friction/HumanBehavior/Aspasia/Lilith yüksek akıl katmanında.
     AGENT_CHAINS = {
-        "cognitive_profiler": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "cognitive_profiler": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
         "friction_detector": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
-        "passion_mapper": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "passion_mapper": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
         "resonance_synthesizer": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
-        # AutonomousVerifier iki ayrı rol: extract mekanik/ucuz, hüküm kaliteli
-        # ve farklı sağlayıcı.
         "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["grok_4_6"]],
         "autonomous_verifier_extract": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["gemini_3_7_flash"]],
-        # OSINT koleksiyon LLM'siz kalır; bu zincir yalnız sentez katmanı için.
         "osint_investigator": [MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "aspasia": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
-        # FINAL-SPEC F-2/F-3: kimliği olmayan çağrılar matrise bağlandı.
-        # authenticity_auditor + depth_analyst depth-task zincirini BİLİNÇLİ
-        # paylaşır (ayrı zincir tanımlamak matrix değişiminde otomatik yansır);
-        # mirror_truth/pattern_interrupt diyalog, human_behavior derin zincir.
+        "lilith_growth": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
         "authenticity_auditor": [
-            MODEL_REGISTRY["claude_sonnet_5"],
-            MODEL_REGISTRY["deepseek_v4_pro"],
+            MODEL_REGISTRY["deepseek_v4_flash"],
             MODEL_REGISTRY["gemini_3_7_flash"],
+            MODEL_REGISTRY["claude_sonnet_5"],
         ],
         "depth_analyst": [
             MODEL_REGISTRY["claude_sonnet_5"],

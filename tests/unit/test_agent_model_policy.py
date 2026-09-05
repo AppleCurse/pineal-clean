@@ -3,9 +3,9 @@ from agent_core.services.llm_gateway import LLMGateway
 
 def test_specialist_agent_chains_are_explicit():
     gateway = LLMGateway()
-    assert gateway.get_agent_chain("cognitive_profiler", "depth")[0] == "anthropic/claude-sonnet-5"
+    assert gateway.get_agent_chain("cognitive_profiler", "depth")[0] == "google/gemini-3.7-flash"
     assert gateway.get_agent_chain("friction_detector", "fast")[0] == "anthropic/claude-sonnet-5"
-    assert gateway.get_agent_chain("passion_mapper", "depth")[0] == "anthropic/claude-sonnet-5"
+    assert gateway.get_agent_chain("passion_mapper", "depth")[0] == "google/gemini-3.7-flash"
     assert gateway.get_agent_chain("resonance_synthesizer", "depth")[0] == "anthropic/claude-sonnet-5"
     assert gateway.get_agent_chain("aspasia", "dialogue")[0] == "anthropic/claude-sonnet-5"
     assert gateway.get_agent_chain("vision_analyzer", "vision") == [

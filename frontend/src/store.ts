@@ -79,3 +79,15 @@ export const scrapedBio = writable('');
 export const scrapedPosts = writable<string[]>([]);
 export const isScraping = writable(false);
 export const autoTriggerLLM = writable(false);
+
+// ==========================================
+// ANALOG KONSOL KONTROLLERİ (POWER · SIGINT)
+// ==========================================
+export const armEngaged = writable<boolean>(false);
+export const sigintEngaged = writable<boolean>(false);
+export const recordEngaged = writable<boolean>(true);
+export const keyUnlocked = writable<boolean>(false);
+
+// i18n köprüsü
+export { currentLang, type Language } from './i18n';
+
