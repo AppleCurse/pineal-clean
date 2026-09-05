@@ -45,3 +45,16 @@ def _isolate_rate_limit_state():
     api._rate_buckets.clear()
     yield
     api._rate_buckets.clear()
+
+
+# ⚡ Bolt Optimization: Clear security lru_cache for every test
+# What: Clears _environment_secret_values cache before each test.
+# Why: Prevents test pollution since we cached the environment secrets parsing which would otherwise ignore monkeypatch.setenv changes.
+@pytest.fixture(autouse=True)
+def _clear_security_lru_cache():
+    try:
+        from agent_core.utils.security import _environment_secret_values
+        _environment_secret_values.cache_clear()
+    except Exception:
+        pass
+    yield
