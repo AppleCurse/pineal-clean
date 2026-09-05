@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased — 2026-09-06 — ROUND 3: N1-N6 ARTIK MADELERİ (3fc89fc üzerine)
+
+Bağımsız doğrulama turu R1-R6+F3 çekirdeğini doğruladı; 6 artık madde
+(N1-N6) kapatıldı. Her fix önce canlı ölçümle doğrulandı (önce/sonra),
+`tests/audit/test_round3_residue_findings.py` (16 test) ile korunuyor ve
+**mutasyon testiyle** kanıtlandı (8/8 mutasyon KIRMIZI).
+
+- **[N1] Hayalet görev + GİZLİ ENUM HATASI.** `active_tasks` tavan trim'i
+  en eskiyi durum gözetmeksizin siliyordu (ölçülen: 300 aktiften 44 hayalet).
+  Trim artık YALNIZ terminal kayıtlara düşer; aktifler sessizce ASLA silinmez.
+  Aktif tek başına tavanı aşıyorsa oda "doymuş" sayılır: `/api/initiate`
+  → **503 ACTIVE_TASKS_FULL**, ASPASIA dispatch → None → gateway
+  `accepted=False, reason="dispatch_rejected"` (eski kod dispatch=None'i
+  `accepted=True + task_id=None` ile "dispatched" kaydediyordu — yalan kabul).
+  **Canlı testte çıkan GİZLİ hata:** `PipelineStatus` str-mixin enum'da
+  Python 3.11'de `str(uye)` → `"PipelineStatus.COMPLETED"`; eski
+  `str(snap.status).lower()` karşılaştırması GERÇEK TaskSnapshot'larda ASLA
+  terminal eşleştiremiyordu → retention trim'i canlıda hiç çalışmıyordu
+  (üniteler string-tabanlı sahte sınıf kullandığı için yeşildi). Yeni
+  `_snapshot_status()` `.value` üzerinden gider; regresyon testleri GERÇEK
+  modeli kullanır. Ölçüm: 300 terminal+10 aktif → 256 (10 aktifin TAMAMI
+  korunur); 300 aktif → 0 silme; terminal yoğunluğu doyma YARATMAZ.
+- **[N2] RecursionError → kalıcı 500.** `_read_learnings_safe` catch
+  tuple'ına `RecursionError` eklendi: 60.000 seviyeli (geçerli ama derin)
+  `learnings.json` artık quarantine edilir → 200 (önce: 500 ×N, dosya
+  yerinde kalıyordu; ölçüldü).
+- **[N3] Yedek birikimi sınırlı.** `learnings.json.corrupt.*` / `.schema.*`
+  yedekleri `PINEAL_LEARNINGS_BACKUP_KEEP` (5) son yedekle sınırlı; en eski
+  fazlası silinir (önce: 20 olay → 20 dosya; sonra: 20 olay → 5 dosya).
+- **[N4] Host substring → tam eşleşme.** `extract_username` host kontrolü
+  `"instagram.com" in host` (substring) idi → `notinstagram.com`,
+  `www.instagram.com.evil.com`, `evilinstagram.com` kabul ediliyordu
+  (3/20 adversarial URL). Yeni `_is_instagram_host`: `host == "instagram.com"`
+  veya `host.endswith(".instagram.com")` (www dahil tüm meşru alt alanlar).
+  Ölçüm: 20/20 adversarial URL doğru (önce 17/20).
+- **[N5] Doküman:** R3 maddesine `ChatPayload.target_message ≤ 32.000`
+  davranış değişikliği eklendi (422; önceki turda belgelenmemişti).
+- **[N6] Doküman rotu:** `test_production_audit_findings.py` başlığındaki
+  stale "AÇIK/xfail" listesi güncellendi (0 xfail gerçeği); CHANGELOG'daki
+  "832 passed"/"%84.66"/"19/19" satırları DÜZELTİLMİŞ değerlerle (842/5/2/9,
+  %85.04, 18/19) değiştirildi, orijinal iddialar "alıntılanmasın" notuyla
+  alıntı bloğuna itildi.
+
+#### Doğrulama (bu turun, ölçülmüş)
+CI'nın birebir komutu (`ci.yml` backend job) → **895 passed, 2 skipped,
+0 failed, 0 xfailed** (önceki tur: 879; +16 = bu turun regresyon testleri) ·
+coverage **%85.13 ≥ %80** · ruff → temiz · mutasyonlar 8/8 KIRMIZI ·
+N1/N2/N3/N4 önce-sonra canlı ölçümleri (bkz. üst maddeler).
+
 ## Unreleased — 2026-09-06 — 3. GÖZ DENETİMİ ONARIM TURU (bağımsız denetim, 2026-09-06)
 
 Bağımsız denetim (F1–F17 bulgu, R1–R8 risk sıralaması) kapatılan bulguları
@@ -58,6 +107,12 @@ kurtarıldı: `room['events']` testi artık gönderim katmanını senkron çağ�
   path `Path(max_length)` → 422; biçim `validate_identifier` → 400
   `INVALID_TASK_ID` (DELETE sözleşmesiyle eş); `reason` ≤ 500 → 400.
   `DELETE /api/tasks/{id}`'e de uzunluk kontrolü eklendi.
+  **Davranış değişikliği (N5, bu round belgelendi):** aynı turda
+  `ChatPayload.target_message`'a `Field(max_length=32_000)` eklendi —
+  32.001 karakterden uzun mesaj artık **422** (ölçüldü: 32.001 → 422,
+  100 → 200). Gerekçe: sınırsız gövde alanı, DialogueManager oturum
+  sözlüğüne ve LLM promptuna aktığı için bellek/prompt şişirme yüzeyiydi;
+  32.000 normal sohbet mesajı için geniş paydır.
 - **[R4/P1-6] `extract_username` yalnız profil URL'si.** `/p/…`, `/reel/…`,
   `/explore/tags/kedi/`, `/accounts/login/`, host URL'leri artık "" üretir ve
   `scrape_instagram` kazımayı başlatmaz (`InsufficientEvidenceError`).
@@ -237,24 +292,26 @@ Ayrıca `P1-8` testinin ilk hâli kaynak metninde `"time.sleep"` arıyordu ve
 docstring eşleştiği için kendi kendini kandırıyordu → `inspect.iscoroutinefunction`
 + çağrı noktasında `await` kontrolüne çevrildi.
 
-#### Hâlâ AÇIK (sonraki tur)
+#### Bu turun sonunda AÇIK kalanlar (2026-09-06 round-2 turunda KAPATILDI)
 - **P1-6** `extract_username` profil olmayan URL'yi hedef kullanıcı adı sanıyor
-  (`/p/…`, `/reel/…`, `/explore/tags/kedi/` → `kedi`).
+  (`/p/…`, `/reel/…`, `/explore/tags/kedi/` → `kedi`). → 2026-09-06 kapatıldı.
 - **P1-7** `InstagramGhostScraper.evaluate_confidence` üretimde HİÇ çağrılmıyor
   (anti-halüsinasyon kapısı ölü kod; testler yeşil olduğu için görünmüyor).
+  → 2026-09-06 kapatıldı.
 - **P2-9** Bozuk `learnings.json` → `/api/override` kalıcı 500 (atomik yazma yok).
+  → 2026-09-06 kapatıldı.
 
-#### Doğrulama
-> **DÜZELTME NOTU (2026-09-06 bağımsız denetimi):** Aşağıdaki değerler o gün
-> ölçülmüş değeri EŞLEMEMEKTEYDİ — aynı commit'te (d651a7b) tam suite
-> **842 passed, 5 failed, 2 skipped, 9 xfailed** ölçüldü; 5 kırmızı test
-> 09-05 turunun F3 frontend sözleşme testleriydi (bu turda kapatıldı).
-> Yine de bu blok o turun ANLIK ölçümü olarak bırakıldı, silinmedi.
-
-`ruff check .` → temiz · `pytest -q` → **832 passed, 2 skipped, 9 xfailed**
-(9 xfail = yukarıdaki 3 açık bulgu) · CI kapsam kapısı → **%84.66 ≥ %80**.
-Tek başarısız test (`test_open_interpreter_imports_with_installed_psutil`)
-denetim sandbox'ında `open-interpreter` kurulu olmadığı için; kod kusuru değil.
+#### Doğrulama (düzeltildi: 2026-09-06 bağımsız denetimi)
+`ruff check .` → temiz · `pytest -q` → **842 passed, 5 failed, 2 skipped,
+9 xfailed** (d651a7b, 2026-09-06 ölçümü — bu turun gerçek başlangıç durumu;
+5 kırmızı test = 09-05 turunun F3 frontend sözleşme testleri, round-2 turunda
+kapatıldı; 9 xfail = yukarıdaki 3 açık bulgu, round-2 turunda işaretten
+düşürüldü) · CI kapsam kapısı → **%85.04 ≥ %80** (CI aralığı ölçümü).
+> **Orijinal tur kaydı — ölçülmüş değeri EŞLEMEZ, alıntılanmasın:**
+> "832 passed, 2 skipped, 9 xfailed" ve "CI kapsam kapısı %84.66 ≥ %80"
+> ve "tek başarısız test: test_open_interpreter_imports_with_installed_psutil".
+> Bağımsız denetim (2026-09-06) bu üç iddianın da doğru olmadığını ölçtü
+> (gerçek: 842/5/2/9, %85.04; 5 kırmızı F3 sözleşme testleriydi).
 
 ## Unreleased (post-rc.2) — 2026-09-05
 
@@ -279,12 +336,13 @@ denetim sandbox'ında `open-interpreter` kurulu olmadığı için; kod kusuru de
   `accepted && task_id` → görev kartına bağlanır; değilse chat fallback (mesaj
   kaybı yok). Yapılandırılmış form `/api/initiate`'te kalır (programatik hat).
 - Cancel/halt: bu fazda YOK (yalnız extension noktası: gateway dispatch şeması).
-- Testler: `tests/unit/test_aspasia_chief_layer.py` 19/19 —
-  > **DÜZELTME NOTU (2026-09-06):** Bağımsız denetimde bu dosya **18/19**
-  > ölçüldü (kırmızı: `test_panel_ui_bridges_to_command_and_chat` — panelde
-  > komut köprüsü yoktu; bu turda `sendMessage()` köprüsüyle kapatıldı).
-  > Ayrıca aynı turun "UI köprüsü" maddesi panelde gerçekleşmemişti (yalnız
-  > `initiate()` çağrısı vardı); köprü bu turda kuruldu.
+- Testler: `tests/unit/test_aspasia_chief_layer.py` **18/19** (2026-09-06
+  ölçümü — kırmızı: `test_panel_ui_bridges_to_command_and_chat`; panelde
+  komut köprüsü yoktu, round-2 turunda `sendMessage()` köprüsüyle kapatıldı
+  ve dosya 19/19).
+  > **Orijinal tur kaydı — alıntılanmasın:** "19/19". Bağımsız denetim
+  > (2026-09-06) bu dosyada 18/19 ölçtü; ayrıca aynı turun "UI köprüsü"
+  > maddesi panelde gerçekleşmemişti (yalnız `initiate()` çağrısı vardı).
 - Promosyon testleri 16/16; routing regresyonu
   (provider-aware+firewall+compliance+policy+aspasia+wiring) 92/92.
 

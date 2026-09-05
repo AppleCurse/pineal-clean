@@ -1113,6 +1113,22 @@ _TERMINAL_PIPELINE_STATES = frozenset({
 })
 
 
+def _snapshot_status(snap) -> str:
+    """Snapshot.status'un küçük harfli KADAR değerini döndürür.
+
+    [AUDIT N1] PipelineStatus bir str-mixin enum'dur; Python 3.11'de
+    `str(enum_uyesi)` -> 'PipelineStatus.COMPLETED' (değeri DEĞİL).
+    Eski kod `str(snap.status).lower()` yazdığı için GERÇEK TaskSnapshot
+    durumları ASLA terminal kümesine eşleşmiyordu (retention trim'i
+    gerçek snapshot'larda hiç çalışmıyordu; üniteler string-tabanlı sahte
+    sınıf kullandığı için yeşil görünüyordu). `.value` enum ve string'i
+    birden doğru ele alır.
+    """
+    status = getattr(snap, "status", "")
+    value = getattr(status, "value", status)
+    return str(value).lower()
+
+
 def _prune_room_stale_state(room: dict) -> None:
     """Odanın task_id ile büyüyen yapılarını retention/tavanla geri kazanır.
 
@@ -1146,15 +1162,29 @@ def _prune_room_stale_state(room: dict) -> None:
             pass
         for task_id in [
             t for t, snap in active.items()
-            if str(getattr(snap, "status", "")).lower() in _TERMINAL_PIPELINE_STATES
+            if _snapshot_status(snap) in _TERMINAL_PIPELINE_STATES
             and now - ts.get(t, 0.0) > retention
         ]:
             active.pop(task_id, None)
             ts.pop(task_id, None)
+        # [AUDIT N1] Tavan trim'i ARTIK DURUM FARKINDA: yalnız TERMINAL
+        # kayıtlar düşer (en eski önce). Aktif (processing) snapshot'lar
+        # ASLA sessizce silinmez — eskiden en eski kayıt terminal OLSA BİLE
+        # aktifse silinir, görev /api/tasks + UI'da görünmez (hayalet) olur,
+        # mission timeout'a kadar arka planda çalışmaya devam ederdi
+        # (ölçülen: 300 aktiften 44 hayalet). Aktif tek başına tavanı
+        # aşıyorsa odayı "doymuş" sayarız ve yeni görev 503 alır
+        # (_active_tasks_full).
         overflow = len(active) - _ROOM_ACTIVE_TASKS_CAP
         if overflow > 0:
-            ordered = sorted(active, key=lambda t: ts.get(t, 0.0))
-            for task_id in ordered[:overflow]:
+            terminals = sorted(
+                (
+                    t for t, snap in active.items()
+                    if _snapshot_status(snap) in _TERMINAL_PIPELINE_STATES
+                ),
+                key=lambda t: ts.get(t, 0.0),
+            )
+            for task_id in terminals[:overflow]:
                 active.pop(task_id, None)
                 ts.pop(task_id, None)
         for stale_ts in [t for t in ts if t not in active]:
@@ -1166,6 +1196,25 @@ def _prune_room_stale_state(room: dict) -> None:
         overflow = len(interventions) - _ROOM_INTERVENTIONS_CAP
         if overflow > 0:
             del interventions[:overflow]
+
+
+def _active_tasks_full(room: dict) -> bool:
+    """[AUDIT N1] Odada AKTİF (terminal olmayan) snapshot sayısı tavanı aşıyor mu?
+
+    Tavan trim'i aktifleri sessizce silmediği (hayalet yasağı) için, aktif
+    işyükü tavanı dolduğunda yeni görev kabulü 503 ile reddedilir. O(N)
+    tarama yalnız initiate yollarında (rate-limit 5/dk) çalışır.
+    """
+    active = room.get("active_tasks")
+    if not isinstance(active, dict):
+        return False
+    full = 0
+    for snap in active.values():
+        if _snapshot_status(snap) not in _TERMINAL_PIPELINE_STATES:
+            full += 1
+            if full > _ROOM_ACTIVE_TASKS_CAP:
+                return True
+    return False
 
 
 def _delivery_status(room: dict) -> dict:
@@ -1603,6 +1652,22 @@ async def api_initiate(req: InitiatePayload, request: Request):
             status_code=429,
         )
     room = get_room(req.client_id)
+    # [AUDIT N1] Oda doymuşsa yeni görev sessizce başlatılmaz: aktif
+    # snapshot'lar tavanı aşmışsa 503 (aktifler silinerek yer açılmaz —
+    # hayalet görev yasağı).
+    if _active_tasks_full(room):
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "ACTIVE_TASKS_FULL",
+                    "message": (
+                        f"Oda aktif görev tavanını doldurdu (>{_ROOM_ACTIVE_TASKS_CAP}); "
+                        "aktif görevler tamamlanana kadar yeni görev başlatılamaz."
+                    ),
+                }
+            },
+            status_code=503,
+        )
     task_id = _new_task_id()
     _lifecycle(room).transition(task_id, "processing")
     mission = asyncio.create_task(run_mission(req, task_id))
@@ -1676,7 +1741,12 @@ def _read_learnings_safe(lp: str) -> tuple:
     try:
         with open(lp, encoding="utf-8") as f:
             data = json.load(f)
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError, RecursionError) as exc:
+        # [AUDIT N2] RecursionError: derin nested JSON (geçerli JSON ama
+        # ~60.000 seviye) json.load'ı RecursionError'a düşürür; eski catch
+        # tuple'ında YOKTU -> endpoint KALICI 500 üretiyordu ve dosya
+        # quarantine'edilmiyordu (dosya bozulmadan kaldığı için her istek
+        # aynı 500'ü veriyordu).
         logger.warning(
             "LEARNINGS_CORRUPT: %s okunamadı (%s: %s); boş liste + yedek",
             lp, type(exc).__name__, str(exc)[:80],
@@ -1689,15 +1759,42 @@ def _read_learnings_safe(lp: str) -> tuple:
 
 
 def _quarantine_learnings(lp: str, problem: str) -> Optional[str]:
-    """Bozuk dosyayı okunabilir kalıcılıkla yedekler; dönen değer yedek yolu."""
+    """Bozuk dosyayı okunabilir kalıcılıkla yedekler; dönen değer yedek yolu.
+
+    [AUDIT N3] Yedekler ARTIK Sınırlı: her bozuk olay 1 dosya üretiyordu
+    (ölçülen: 20 olay -> 20 dosya) ve hiçbir temizleyici yoktu — R1 deseninin
+    disk versiyonu. Yedek başına `PINEAL_LEARNINGS_BACKUP_KEEP` (5) son
+    yedek tutulur; en eski fazlası silinir. Ad içindeki mikrosaniye damgası
+    sözlük sıralamasında kronolojiktir.
+    """
     stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
     backup = f"{lp}.{problem}.{stamp}"
     try:
         os.replace(lp, backup)
-        return backup
     except OSError as exc:
         logger.warning("LEARNINGS_BACKUP_FAILED: %s (%s)", lp, str(exc)[:80])
         return None
+    try:
+        keep = max(1, int(os.getenv("PINEAL_LEARNINGS_BACKUP_KEEP", "5")))
+    except (TypeError, ValueError):
+        keep = 5
+    base, _ = os.path.split(lp)
+    prefix = os.path.basename(lp) + "."
+    try:
+        backups = sorted(
+            (
+                name for name in os.listdir(base)
+                if name.startswith(prefix) and name[len(prefix):].split(".")[0] in ("corrupt", "schema")
+            )
+        )
+        for name in backups[:-keep]:
+            try:
+                os.remove(os.path.join(base, name))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return backup
 
 
 def _write_learnings_atomic(lp: str, data: list) -> None:
@@ -1906,6 +2003,9 @@ def _aspasia_command_dispatch(spec: dict) -> "str | None":
     """
     client_id = spec["client_id"]
     room = get_room(client_id)
+    # [AUDIT N1] /api/initiate ile aynı doyma kuralı (tek yazma kanalı).
+    if _active_tasks_full(room):
+        return None  # komut kabul edilmez; gateway "reason" ile yanıtlar
     req = InitiatePayload(
         client_id=client_id,
         url=spec["target_url"],

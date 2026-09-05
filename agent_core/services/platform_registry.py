@@ -58,6 +58,19 @@ _RESERVED_IG_SEGMENTS = frozenset({
 _IG_USERNAME = re.compile(r"^[A-Za-z0-9._]{1,30}$")
 
 
+def _is_instagram_host(host: str) -> bool:
+    """[AUDIT N4] Yalnız GERÇEK Instagram hostları.
+
+    Eski substring kontrolü (`"instagram.com" in host`) bakış benzeri
+    hostları kabul ediyordu: `notinstagram.com`, `evilinstagram.com`,
+    `www.instagram.com.evil.com` (ölçülen: 3/20 adversarial URL yanlış
+    kabul). Kurallar: tam eşleşme YA da `.instagram.com` SONEK'i (bu,
+    www.instagram.com dahil tüm meşru alt alanları kapsar; sahte hostlar
+    sonekle bitmez).
+    """
+    return host == "instagram.com" or host.endswith(".instagram.com")
+
+
 def extract_username(url: str) -> str:
     """Instagram PROFİL URL'sinden hedef kullanıcı adını çıkarır.
 
@@ -71,7 +84,7 @@ def extract_username(url: str) -> str:
     except ValueError:
         return ""
     host = (parts.hostname or "").lower().rstrip(".")
-    if "instagram.com" not in host:
+    if not _is_instagram_host(host):
         return ""
     segments = [s for s in parts.path.split("/") if s]
     if len(segments) != 1:
