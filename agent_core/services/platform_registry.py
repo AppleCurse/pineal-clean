@@ -17,7 +17,10 @@ Sözleşme (sahte veri YASAK):
 from __future__ import annotations
 
 import logging
+import os
+import re
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +44,75 @@ def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
     return "unsupported_web"
 
 
+# [AUDIT P1-6] Yalnız GERÇEK profil URL'lerinden kullanıcı adı çıkarılır.
+# Eskiden URL'nin SON path segmenti körlemesine hedef sanılıyordu:
+# /p/CxYz123Ab/ -> "CxYz123Ab", /explore/tags/kedi/ -> "kedi",
+# /accounts/login/ -> "login" — yani etiket/ID/login sayfaları "hedef
+# kullanıcı" oluyor ve aynı adı taşıyan GERÇEK bir hesap varsa yanlış kişi
+# sessizce kazınıyordu (kanıt zinciri başkasına ait oluyordu).
+_RESERVED_IG_SEGMENTS = frozenset({
+    "p", "reel", "reels", "explore", "stories", "accounts", "tv",
+    "about", "developer", "legal", "press", "locations", "direct",
+    "home", "search", "notifications", "settings", "terms", "privacy",
+})
+_IG_USERNAME = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+
+
 def extract_username(url: str) -> str:
-    """URL'nin son path segmentinden hedef kullanıcı adını çıkarır."""
-    return (url or "").split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
+    """Instagram PROFİL URL'sinden hedef kullanıcı adını çıkarır.
+
+    Sözleşme: yalnız `instagram.com/<kullanici>` biçiminde TEK segmentli,
+    rezerv olmayan ve geçerli karakter/uzunlukta URL'ler kullanıcı adı
+    üretir. Profil-DIŞI her URL (post/reel/etiket/stories/login/host) ""
+    döndürür; çağıran bu durumda kazımayı BAŞLATMAZ (yanlış hedef yasağı).
+    """
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower().rstrip(".")
+    if "instagram.com" not in host:
+        return ""
+    segments = [s for s in parts.path.split("/") if s]
+    if len(segments) != 1:
+        return ""
+    username = segments[0].lstrip("@").strip().lower()
+    if not username or username in _RESERVED_IG_SEGMENTS:
+        return ""
+    if not _IG_USERNAME.match(username):
+        return ""
+    if username.startswith(".") or username.endswith(".") or ".." in username:
+        return ""
+    return username
+
+
+def _min_scrape_confidence() -> float:
+    """[AUDIT P1-7] Anti-halüsinasyon güven eşiği (env ile ayarlanabilir)."""
+    try:
+        return max(0.0, min(1.0, float(
+            os.getenv("PINEAL_MIN_SCRAPER_CONFIDENCE", "0.6"))))
+    except (TypeError, ValueError):
+        return 0.6
+
+
+def check_scrape_confidence(ig_scraper, ig_data, emit) -> float:
+    """[AUDIT P1-7] Anti-halüsinasyon kapısı (ÜRETİM yolunda çağrılır).
+
+    evaluate_confidence artık yalnız testte değil, kazıma zincirinde devrededir:
+    kanıt zayıfsa (gizli/boş/zayıf profil) düşük güvenli profili işleme devam
+    etmek yerine InsufficientEvidenceError ile görev HALT edilir. Dönen değer
+    güven skorudur (telemetri/retrospektif için).
+    """
+    from agent_core.scraper.instagram_ghost import InsufficientEvidenceError
+    min_confidence = _min_scrape_confidence()
+    confidence = ig_scraper.evaluate_confidence(ig_data)
+    emit("INFO", f"SCRAPER CONFIDENCE: {confidence:.2f} (min esik {min_confidence:.2f})")
+    if confidence < min_confidence:
+        raise InsufficientEvidenceError(
+            f"Yetersiz kanit guveni: {confidence:.2f} < {min_confidence:.2f} "
+            "(anti-halüsinasyon kapısı; sahte profil üretmiyorum)"
+        )
+    return confidence
 
 
 def ig_target_profile_update(ig_data: Any) -> dict:
@@ -88,6 +157,14 @@ async def scrape_instagram(
     """
     emit = log or (lambda level, msg: None)
     username = extract_username(url)
+    if not username:
+        # [AUDIT P1-6] Profil dışı URL (post/reel/etiket/login/host) artık
+        # HİÇBİR hedefe çözümlenmez; kazıma başlatılmaz.
+        from agent_core.scraper.instagram_ghost import InsufficientEvidenceError
+        raise InsufficientEvidenceError(
+            "URL bir Instagram PROFİLİ değil (yanlış hedef kazınmaz): "
+            f"{(url or '')[:80]} — https://www.instagram.com/<kullanici> verin"
+        )
 
     # [FAZ 5] STEALTH_PROVIDER seçici: default (env yok) = playwright_stealth
     # (bugünkü davranış); invisible/cloak yalnız binary operator tarafından
@@ -154,6 +231,11 @@ async def scrape_instagram(
                     emit("WARNING", f"STEALTH apply başarısız: {note}")
             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
             ig_data = await ig_scraper.scrape_async(username, playwright_page=page)
+
+            # [AUDIT P1-7] Anti-halüsinasyon kapısı ÜRETİMDE devrede (bkz.
+            # check_scrape_confidence): kanıt zayıfsa düşük güvenli profil
+            # yerine InsufficientEvidenceError -> görev HALT.
+            check_scrape_confidence(ig_scraper, ig_data, emit)
 
             # [024]/[025]/[026]: hizalı gerçek alanlar; sentetik post ÜRETİLMEZ.
             return ig_target_profile_update(ig_data)

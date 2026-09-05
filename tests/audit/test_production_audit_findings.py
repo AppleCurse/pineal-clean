@@ -487,7 +487,10 @@ def test_rate_bucket_count_is_bounded(monkeypatch):
 # --------------------------------------------------------------------------
 # P1-6  extract_username URL path'ini doğrulamıyor -> yanlış hedef kazıma
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="P1-6 AÇIK: extract_username profil-disi URL'yi hedef sanıyor", strict=False)
+# [AUDIT 2026-09-06] P1-6 KAPANDI: extract_username yalnız tek-segmentli,
+# rezerv olmayan, geçerli karakter/uzunluktaki instagram.com/<kullanici>
+# URL'lerinden kullanıcı adı üretir; profil dışı URL "" üretir ve
+# scrape_instagram kazımayı başlatmaz. Xfail işareti kaldırıldı.
 @pytest.mark.parametrize(
     "url",
     [
@@ -517,7 +520,9 @@ def test_extract_username_rejects_non_profile_urls(url):
 # --------------------------------------------------------------------------
 # P1-7  Scraper anti-halüsinasyon güven kapısı üretimde hiç çağrılmıyor
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="P1-7 AÇIK: evaluate_confidence uretimde hic cagrilmıyor", strict=False)
+# [AUDIT 2026-09-06] P1-7 KAPANDI: platform_registry.scrape_instagram
+# kazıma sonrası evaluate_confidence'ı çağırır; PINEAL_MIN_SCRAPER_CONFIDENCE
+# (0.6) altında InsufficientEvidenceError yükseltir. Xfail işareti kaldırıldı.
 def test_evaluate_confidence_is_wired_into_production():
     """Testler evaluate_confidence'ı doğruluyor, üretim kodu hiç çağırmıyor."""
     import pathlib
@@ -584,7 +589,9 @@ async def test_scraper_delay_yields_to_event_loop(monkeypatch):
 # --------------------------------------------------------------------------
 # P2-9  /api/override bozuk learnings.json ile kalıcı 500
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="P2-9 AÇIK: bozuk learnings.json /api/override'i kalici 500 yapar", strict=False)
+# [AUDIT 2026-09-06] P2-9 KAPANDI: /api/override artık (a) bozuk/şemasız
+# learnings.json'u yedekleyip sıfırdan devam eder, (b) atomik (tmp+replace)
+# yazar -> endpoint bir daha kalıcı 500 üretemez. Xfail işareti kaldırıldı.
 @pytest.mark.parametrize("raw", ['{ bozuk', '{"fact": "x"}'])
 def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
     from fastapi.testclient import TestClient

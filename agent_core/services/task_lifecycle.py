@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,6 +41,10 @@ class LifecycleRun:
     fingerprints: set[str] = field(default_factory=set)
     terminal_snapshot_fingerprint: Optional[str] = None
     terminal_event_recorded: bool = False
+    # [AUDIT R1] Son etkinlik anı (monotonik). Sweep, sadece ETKİNLİĞİ eski
+    # run'ları düşer — böylece "uzun süredir dokunulmamış terminal görev"
+    # bellekten çıkar, taze run'lar dokunulmaz.
+    last_activity: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,19 @@ class TaskLifecycleRegistry:
         self.rejected_terminal_events = 0
         self.rejected_terminal_mutations = 0
         self.idempotent_terminal_requests = 0
+        # [AUDIT R1] Oda başına registry task_id ile BÜYÜDÜĞÜ için (WS'li oda
+        # evict'ten muaf -> ölümsüz) terminal run'lar bir RETENTION süresi
+        # sonra geri kazanılır. Eşik/TTL'siz sınırsız büyüme (P0-2/P0-5
+        # deseninin üçüncü tekrarı) kapatılır: boyut artık "retention süresi x
+        # görev hızı" ile sınırlıdır, toplam görev sayısı ile değil.
+        try:
+            self.retention_seconds = max(60.0, float(os.getenv(
+                "PINEAL_LIFECYCLE_RETENTION_SECONDS", "1800")))
+        except (TypeError, ValueError):
+            self.retention_seconds = 1800.0
+        self._sweep_interval_seconds = 30.0
+        self._last_sweep = 0.0
+        self.swept = 0
 
     def _run(self, task_id: str) -> LifecycleRun:
         run = self._runs.get(task_id)
@@ -125,6 +144,7 @@ class TaskLifecycleRegistry:
                     return LifecycleDecision(False, "TERMINAL_STATE", state=run.state)
 
             run.sequence += 1
+            run.last_activity = self._clock_now()
             run.fingerprints.add(fingerprint)
             if terminal_state is not None:
                 run.state = terminal_state
@@ -150,6 +170,7 @@ class TaskLifecycleRegistry:
                 self.rejected_terminal_mutations += 1
                 return LifecycleDecision(False, "TERMINAL_STATE", state=run.state)
             run.state = requested_state
+            run.last_activity = self._clock_now()
             return LifecycleDecision(True, "TRANSITIONED", state=run.state)
 
     def accept_snapshot(self, snapshot: object) -> LifecycleDecision:
@@ -176,6 +197,7 @@ class TaskLifecycleRegistry:
                 return LifecycleDecision(False, "TERMINAL_STATE", state=run.state)
 
             run.state = requested_state
+            run.last_activity = self._clock_now()
             if requested_state in TERMINAL_STATES:
                 run.terminal_snapshot_fingerprint = fingerprint
             return LifecycleDecision(True, "SNAPSHOT", state=run.state)
@@ -189,6 +211,48 @@ class TaskLifecycleRegistry:
         else:
             raise ValueError(f"Unsupported terminal action: {action}")
         return self.transition(task_id, requested)
+
+    @staticmethod
+    def _clock_now() -> float:
+        return time.monotonic()
+
+    def sweep(self, now: Optional[float] = None, live_task_ids: Optional[set] = None) -> int:
+        """[AUDIT R1] Eski run'ları geri kazanır (oda-özel bellek sızıntısı kapanışı).
+
+        Kurallar:
+        - YENİ (retention içinde) run'lara ASLA dokunulmaz.
+        - TERMINAL run: retention dolunca düşer (cancel/halt geçmişe bakılmaz;
+          `/api/tasks` listesi dosyaya bakar, registry'ye değil).
+        - ACTIVE run: `live_task_ids` verilip run bu kümede değilse VE
+          retention dolduysa düşer (askıya kalmış/ölü görev). `live_task_ids`
+          None ise ACTIVE run'lara hiç dokunulmaz (muhafazakar varsayılan).
+
+        Amortize maliyet: registry başına en fazla ~30 sn'de bir O(N) tarama
+        (deadline throttle); geri kalan çağrılar tek float karşılaştırması.
+        Dönen değer düşürülen run sayısıdır.
+        """
+        if now is None:
+            now = time.monotonic()
+        if now - self._last_sweep < self._sweep_interval_seconds:
+            return 0
+        self._last_sweep = now
+        removed = 0
+        with self._lock:
+            for task_id in list(self._runs):
+                run = self._runs.get(task_id)
+                if run is None:
+                    continue
+                if now - run.last_activity <= self.retention_seconds:
+                    continue
+                if run.state in TERMINAL_STATES:
+                    del self._runs[task_id]
+                    removed += 1
+                elif live_task_ids is not None and task_id not in live_task_ids:
+                    del self._runs[task_id]
+                    removed += 1
+            if removed:
+                self.swept += removed
+        return removed
 
     def get_run(self, task_id: str) -> Optional[dict]:
         with self._lock:
@@ -210,4 +274,5 @@ class TaskLifecycleRegistry:
                 "rejected_terminal_events": self.rejected_terminal_events,
                 "rejected_terminal_mutations": self.rejected_terminal_mutations,
                 "idempotent_terminal_requests": self.idempotent_terminal_requests,
+                "swept": self.swept,
             }

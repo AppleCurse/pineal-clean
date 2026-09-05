@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, WebSocket, Request
+from fastapi import FastAPI, HTTPException, Path, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
@@ -530,6 +530,13 @@ def _load_vault(vault_file: str = VAULT_FILE) -> dict:
 _MAX_ROOMS = _bounded_env_int("PINEAL_MAX_ROOMS", 512, 1, 1_000_000)
 # Üretecin biçimi "client_<7 karakter>"; 64 geniş bir pay bırakır.
 _MAX_CLIENT_ID_LENGTH = _bounded_env_int("PINEAL_MAX_CLIENT_ID_LENGTH", 64, 8, 4_096)
+# [AUDIT R3] validate_identifier'ın regex'i uzunluk SINIRLAMIYOR
+# (^[A-Za-z0-9_-]+$). client_id'ye 64-char tavan eklenmişti; aynı koruma
+# task_id giriş noktalarına taşınmadı (ChatPayload.task_id gövdede SINIRSIZ,
+# /api/tasks/{task_id}/cancel|halt path param'ı doğrulanmıyordu). Sunucu
+# ürettiği task_id 27 karakter (op_YYYYMMDDHHMMSS_<8hex>); 128 geniş paydır.
+_MAX_TASK_ID_LENGTH = _bounded_env_int("PINEAL_MAX_TASK_ID_LENGTH", 128, 8, 4_096)
+_MAX_TERMINATE_REASON_LENGTH = 500
 _ROOM_TTL_SECONDS = float(os.getenv("PINEAL_ROOM_TTL_SECONDS", "1800"))
 _rooms_last_seen: Dict[str, float] = {}
 
@@ -677,6 +684,7 @@ def get_room(client_id: str) -> dict:
             )
         except RuntimeError:
             pass
+    _prune_room_stale_state(app.state.rooms[client_id])  # [AUDIT R1]
     return app.state.rooms[client_id]
 
 def get_executor(client_id: str) -> PinealExecutor:
@@ -1088,6 +1096,78 @@ def _lifecycle(room: dict) -> TaskLifecycleRegistry:
     return room.setdefault("lifecycle", TaskLifecycleRegistry())
 
 
+# [AUDIT R1] Oda-özel, task_id/event anahtarlı yapılar HİÇBİR temizliğe
+# sahipken WS'li odalar evict'ten muaf (ölümsüz) -> monoton sızıntı
+# (P0-2/P0-5 deseninin üçüncü tekrarı, bu sefer tetikleyicisiz). Ölçülen alt
+# sınır: 2000 görev/oda -> 4.6 MB (1 event/görev); gerçek görev ~30-60 event
+# taşıyarak 50-100 KB/görev'e çıkar. Çözüm: terminal durum + retention TTL
+# (PINEAL_LIFECYCLE_RETENTION_SECONDS, 1800 sn) + sert tavanlar. Etki: oda
+# belleği "retention x görev hızı" ile sınırlı, toplam görev sayısı ile değil.
+_ROOM_PRUNE_INTERVAL_SECONDS = 30.0
+_ROOM_ACTIVE_TASKS_CAP = _bounded_env_int("PINEAL_ROOM_ACTIVE_TASKS_CAP", 256, 1, 100_000)
+_ROOM_INTERVENTIONS_CAP = _bounded_env_int("PINEAL_ROOM_INTERVENTIONS_CAP", 512, 1, 100_000)
+_TERMINAL_PIPELINE_STATES = frozenset({
+    "completed", "partially_completed", "failed",
+    "cancelled", "canceled",
+    "halted_evidence", "halted_frequency", "halted_critical", "halted_user",
+})
+
+
+def _prune_room_stale_state(room: dict) -> None:
+    """Odanın task_id ile büyüyen yapılarını retention/tavanla geri kazanır.
+
+    Çağrı sıklığı yüksek (her broadcast); maliyet oda başına ~30 sn'de bir
+    O(N) taramaya amortize edilir (tek float karşılaştırması).
+    """
+    now = time.monotonic()
+    last = room.get("_stale_prune_ts", 0.0)
+    if now - last < _ROOM_PRUNE_INTERVAL_SECONDS:
+        return
+    room["_stale_prune_ts"] = now
+
+    # 1) Lifecycle registry: terminal (+ canlı olmayan askıda) eski run'lar.
+    try:
+        live = set((room.get("mission_tasks") or {}).keys())
+        _lifecycle(room).sweep(now, live_task_ids=live)
+    except Exception:
+        pass
+
+    # 2) active_tasks: terminal snapshot'lar retention dolunca düşer; sert
+    # tavan aşımında EN ESKİ terminal (hepsi terminal değilse en eski kayıt)
+    # düşer. Girdi zamanı paralel ts sözlüğünde izlenir (snapshot'ta
+    # güvenilir zaman damgası yok).
+    active = room.get("active_tasks")
+    if isinstance(active, dict) and active:
+        ts = room.setdefault("_active_tasks_ts", {})
+        retention = 1800.0
+        try:
+            retention = _lifecycle(room).retention_seconds
+        except Exception:
+            pass
+        for task_id in [
+            t for t, snap in active.items()
+            if str(getattr(snap, "status", "")).lower() in _TERMINAL_PIPELINE_STATES
+            and now - ts.get(t, 0.0) > retention
+        ]:
+            active.pop(task_id, None)
+            ts.pop(task_id, None)
+        overflow = len(active) - _ROOM_ACTIVE_TASKS_CAP
+        if overflow > 0:
+            ordered = sorted(active, key=lambda t: ts.get(t, 0.0))
+            for task_id in ordered[:overflow]:
+                active.pop(task_id, None)
+                ts.pop(task_id, None)
+        for stale_ts in [t for t in ts if t not in active]:
+            ts.pop(stale_ts, None)
+
+    # 3) interventions: audit listesi sert tavanla (en eski düşer).
+    interventions = room.get("interventions")
+    if isinstance(interventions, list):
+        overflow = len(interventions) - _ROOM_INTERVENTIONS_CAP
+        if overflow > 0:
+            del interventions[:overflow]
+
+
 def _delivery_status(room: dict) -> dict:
     delivery = room.setdefault("telemetry_delivery", {
         "state": "NORMAL",
@@ -1159,9 +1239,9 @@ async def _send_event(room: dict, telemetry: Any):
         "delivery_state": delivery["state"],
         "dropped_event_count": delivery["dropped_event_count"],
     })
-    if "events" not in room:
-        room["events"] = []
-    room["events"].append(telemetry)
+    # [AUDIT R1] Eski `room["events"]` birikimi SİLİNDİ: eklenen telemetri
+    # hiçbir yerde okunmuyordu (grep: yalnız append) — saf bellek sızıntısıydı.
+    # Canlı akış `websockets` üzerinden gidiyor; oda geçmişine gerek yok.
     await _send_ws(room, telemetry.model_dump_json())
 
 
@@ -1169,6 +1249,7 @@ def broadcast_event(client_id: str, event: Any):
     room = app.state.rooms.get(client_id)
     if room is None:
         return
+    _prune_room_stale_state(room)  # [AUDIT R1]
     if hasattr(event, "model_dump"):
         clean_event_data = redact_structure(event.model_dump(mode="json"))
         event = type(event).model_validate(clean_event_data)
@@ -1229,12 +1310,14 @@ async def _send_snapshot(room: dict, snapshot: Any):
     if "active_tasks" not in room:
         room["active_tasks"] = {}
     room["active_tasks"][snapshot.task_id] = snapshot
+    room.setdefault("_active_tasks_ts", {})[snapshot.task_id] = time.monotonic()
     await _send_ws(room, payload)
 
 def broadcast_snapshot(client_id: str, snapshot: Any):
     room = app.state.rooms.get(client_id)
     if room is None:
         return
+    _prune_room_stale_state(room)  # [AUDIT R1]
     decision = _lifecycle(room).accept_snapshot(snapshot)
     if decision.accepted:
         _enqueue(client_id, ("snapshot", snapshot))
@@ -1450,6 +1533,7 @@ def broadcast_result(client_id, res):
     room = app.state.rooms.get(client_id)
     if room is None:
         return
+    _prune_room_stale_state(room)  # [AUDIT R1]
     decision = _lifecycle(room).transition(res.task_id, res.status)
     if not decision.accepted:
         return
@@ -1579,24 +1663,70 @@ class OverridePayload(BaseModel):
 
 _override_lock = asyncio.Lock()
 
+
+def _read_learnings_safe(lp: str) -> tuple:
+    """[AUDIT P2-9] learnings.json'ı her zaman (liste, sorun) olarak döndürür.
+
+    Eskiden `json.load` try/except'i OLMADAN çağrılıyordu: dosya bir kez
+    bozulursa (elle düzenleme, yarım yazma) endpoint KALICI 500 üretiyordu.
+    Bozuk/şemasız dosya [] sayılır; orijinal baytlar ayrı yedeklenir (aşağı).
+    """
+    if not os.path.exists(lp):
+        return [], None
+    try:
+        with open(lp, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        logger.warning(
+            "LEARNINGS_CORRUPT: %s okunamadı (%s: %s); boş liste + yedek",
+            lp, type(exc).__name__, str(exc)[:80],
+        )
+        return [], "corrupt"
+    if not isinstance(data, list):
+        logger.error("LEARNINGS_SCHEMA_INVALID: %s bir JSON listesi değil (%s)", lp, type(data).__name__)
+        return [], "schema"
+    return data, None
+
+
+def _quarantine_learnings(lp: str, problem: str) -> Optional[str]:
+    """Bozuk dosyayı okunabilir kalıcılıkla yedekler; dönen değer yedek yolu."""
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    backup = f"{lp}.{problem}.{stamp}"
+    try:
+        os.replace(lp, backup)
+        return backup
+    except OSError as exc:
+        logger.warning("LEARNINGS_BACKUP_FAILED: %s (%s)", lp, str(exc)[:80])
+        return None
+
+
+def _write_learnings_atomic(lp: str, data: list) -> None:
+    """[AUDIT P2-9] Atomik yazım: yarım/kısmi dosya bir daha asla oluşmaz."""
+    tmp = f"{lp}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, lp)
+
+
 @app.post("/api/override")
 async def api_override(req: OverridePayload):
+    quarantined = None
     if req.fact.strip():
         executor = get_executor(req.client_id)
         mem_dir = executor.memory.storage_path
         lp = os.path.join(mem_dir, "learnings.json")
         async with _override_lock:
-            def _read_learnings():
-                return json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
-            def _write_learnings(data):
-                with open(lp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-
-            learn = await asyncio.to_thread(_read_learnings)
+            learn, problem = await asyncio.to_thread(_read_learnings_safe, lp)
+            if problem:
+                quarantined = await asyncio.to_thread(_quarantine_learnings, lp, problem)
             learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})
-            await asyncio.to_thread(_write_learnings, learn)
+            await asyncio.to_thread(_write_learnings_atomic, lp, learn)
+        if quarantined:
+            broadcast_log(req.client_id, "WARNING", f"HAFIZA: bozuk learnings.json yedeklendi ({os.path.basename(quarantined)}); kayıtsız devam")
         broadcast_log(req.client_id, "INFO", f"HAFIZA: Yeni konsept mühürlendi [{req.tag.strip()}]")
-    return {"status": "sealed"}
+    return {"status": "sealed", "quarantined": quarantined}
 
 @app.get("/api/telemetry")
 async def api_telemetry(client_id: str):
@@ -1735,10 +1865,12 @@ async def shadow_generate(task: dict):
     return result.model_dump()
 
 class ChatPayload(BaseModel):
-    task_id: str
+    # [AUDIT R3] task_id, DialogueManager.sessions anahtarı olur; sınırsız
+    # gövde ile 512 oturum x MB'lık anahtar = yüzlerce MB DoS yüzeyiydi.
+    task_id: str = Field(min_length=1, max_length=_MAX_TASK_ID_LENGTH)
     target_profile: dict
     user_profile: dict
-    target_message: str
+    target_message: str = Field(max_length=32_000)
 
 @app.post("/api/experimental/chat/respond")
 async def chat_respond(payload: ChatPayload):
@@ -2148,6 +2280,23 @@ async def api_list_tasks(client_id: str):
 
 
 def _terminate_mission(client_id: str, task_id: str, action: str, reason: str):
+    # [AUDIT R3] task_id doğrulaması: DELETE'teki INVALID_TASK_ID sözleşmesi
+    # cancel/halt'e de taşınır (regex + uzunluk). Uzun `reason` da sınırlanır
+    # (WS'e + oda durumuna akıyordu).
+    try:
+        if len(task_id) > _MAX_TASK_ID_LENGTH:
+            raise ValueError
+        validate_identifier(task_id, field="task_id")
+    except ValueError:
+        return JSONResponse(
+            {"error": {"code": "INVALID_TASK_ID", "message": "Invalid task identifier"}},
+            status_code=400,
+        )
+    if len(reason or "") > _MAX_TERMINATE_REASON_LENGTH:
+        return JSONResponse(
+            {"error": {"code": "INVALID_REASON", "message": "reason exceeds 500 chars"}},
+            status_code=400,
+        )
     room = get_room(client_id)
     run = _lifecycle(room).get_run(task_id)
     if run is None:
@@ -2195,12 +2344,12 @@ def _terminate_mission(client_id: str, task_id: str, action: str, reason: str):
 
 
 @app.post("/api/tasks/{task_id}/cancel")
-async def api_cancel_task(task_id: str, client_id: str, reason: str = ""):
+async def api_cancel_task(task_id: str = Path(min_length=1, max_length=_MAX_TASK_ID_LENGTH), client_id: str = "", reason: str = ""):
     return _terminate_mission(client_id, task_id, "cancel", reason)
 
 
 @app.post("/api/tasks/{task_id}/halt")
-async def api_halt_task(task_id: str, client_id: str, reason: str = ""):
+async def api_halt_task(task_id: str = Path(min_length=1, max_length=_MAX_TASK_ID_LENGTH), client_id: str = "", reason: str = ""):
     return _terminate_mission(client_id, task_id, "halt", reason)
 
 
@@ -2210,6 +2359,9 @@ async def api_delete_task(task_id: str, client_id: str):
     room = get_room(client_id)
 
     try:
+        # [AUDIT R3] regex + uzunluk (client_id ile aynı sözleşme).
+        if len(task_id) > _MAX_TASK_ID_LENGTH:
+            raise ValueError
         validate_identifier(task_id, field="task_id")
         mem_path = safe_child_path(
             room["executor"].memory.storage_path,

@@ -107,6 +107,7 @@
   let visualEvidence: any = null;
   let shadowProfile: any = null;
   let osintFootprint: any = null;
+  let resonanceCalc: any = null;
 
   // Active Tab: ASPASIA, VISION, OSINT, FRICTION, VERIFY
   let activeTab = 'ASPASIA';
@@ -148,6 +149,8 @@
       if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
       if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
       if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
+      // resonance_calc sonucu runs.output_summary altında taşınır (gerçek anahtarlar).
+      resonanceCalc = $taskStatus.runs?.resonance_calc?.output_summary || null;
       overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
     }
   }
@@ -190,9 +193,45 @@
     playClick(280, 50);
 
     try {
+      const activeAgentId = activeTab;
+
+      // [UI-BRIDGE] ASPASIA serbest metni ÖNCE komut kanalına gider
+      // (doğal dil niyet -> yapılandırılmış komut -> GERÇEK görev akışı;
+      // ikinci bir orchestrator yok: /api/aspasia/command tek dispatch
+      // kanalından /api/initiate akışına bağlanır). Kabul edilen komut
+      // (accepted && task_id) görev kartına bağlanır. Reddedilen/boş
+      // yanıtta aşağıdaki chat fallback'ine geçilir — mesaj kaybi yok.
+      if (activeAgentId === 'ASPASIA' && currentInput.trim()) {
+        try {
+          const cmdRes = await apiFetch(`/api/aspasia/command`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: $clientId, user_message: currentInput })
+          });
+          const cmd = cmdRes.ok ? await cmdRes.json() : null;
+          if (cmd && cmd.accepted && cmd.task_id) {
+            taskStatus.update(s => ({ ...s, task_id: cmd.task_id, status: 'processing' }));
+            const boundTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            messages = [...messages, {
+              sender: 'ASPASIA',
+              text: `Görev başlatıldı: ${cmd.task_id} [${cmd.intent || 'run_profile_analysis'}]`,
+              time: boundTime
+            }];
+            logs.update(l => [...l, { ts: boundTime, level: 'INFO', msg: `ASPASIA KOMUT kabul edildi -> görev ${cmd.task_id}` }]);
+            isSending = false;
+            return;
+          }
+        } catch (_cmdErr) {
+          /* komut kanalı boşta/hatalı -> chat fallback (mesaj kaybi yok) */
+        }
+      }
+
+      // [UI-BRIDGE] Chat ağızları: tüm sekmeler aynı tek /api/aspasia/chat
+      // ağzını kullanır; sekme yalnız bağlam değiştirir.
+      const chatUrl = activeAgentId === 'ASPASIA' ? '/api/aspasia/chat' : '/api/aspasia/chat';
       const payload: any = { client_id: $clientId, user_message: currentInput };
       if (currentImage) payload.image_data = currentImage;
-      const res = await apiFetch(`/api/aspasia/chat`, {
+      const res = await apiFetch(chatUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -410,7 +449,7 @@
           <div class="crt-header">
             <div class="header-title-group">
               <span class="font-cinzel deck-title">AGENT DECK &bull; ASPASIA OBSERVER</span>
-              <span class="sound-wave-icon {$isSending ? 'wave-active' : ''}">)))</span>
+              <span class="sound-wave-icon {isSending ? 'wave-active' : ''}">)))</span>
             </div>
 
             <!-- Tabs: ASPASIA, VISION, OSINT, FRICTION, VERIFY -->
@@ -515,6 +554,9 @@
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
           {@const liveModel = run?.model || agent.primaryModel}
           {@const liveVia = run?.via || agent.via}
+          <!-- W4: kanonik çağrı bağlayıcısı — run.output_summary._provenance
+               üzerinden call_id okunur (LLM'siz/uydurma satır üretilmez). -->
+          {@const provCallId = (run && run.output_summary && run.output_summary._provenance) ? (run.output_summary._provenance.call_id || '') : ''}
 
           <div class="agent-instrument-card {isRunning ? 'card-running' : isHalted ? 'card-halted' : isCompleted ? 'card-done' : 'card-wait'}">
             <div class="card-top-line">
@@ -529,6 +571,7 @@
                   <div><b style="color: var(--gold);">STATUS:</b> {isCompleted ? 'DONE' : isHalted ? 'HALT' : isRunning ? 'RUNNING' : 'WAIT'}</div>
                   <div><b style="color: var(--gold);">MODEL:</b> {liveModel}</div>
                   <div><b style="color: var(--gold);">VIA:</b> {liveVia}</div>
+                  <div><b style="color: var(--gold);">CALL:</b> {provCallId ? provCallId.slice(0, 14) + '…' : '—'}</div>
                 </div>
               </div>
 
@@ -591,6 +634,13 @@
         </div>
         <span class="forensic-name">OSINT</span>
       </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'resonance' ? 'btn-active' : ''}" on:click={() => toggleForensic('resonance')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">🎯</span>
+        </div>
+        <span class="forensic-name">RESONANCE</span>
+      </button>
     </div>
   </footer>
 
@@ -605,15 +655,30 @@
         <div class="modal-content-body">
           {#if activeForensicModal === 'follower' && followerAudit}
             <div class="report-box">
-              <h4>Takipçi & Bot Raporu</h4>
-              <p>Bot Oranı: %{((followerAudit.bot_probability || 0) * 100).toFixed(1)}</p>
-              <p>Etkileşim Hızı: {followerAudit.engagement_rate || 'Normal'}</p>
+              <h4>Takipçi & Kitle Denetimi</h4>
+              <!-- W2: UI Türkce metin eslemek yerine makine-okunur verdict_code'u okur -->
+              <p>Hüküm: {followerAudit.verdict || 'BİLİNMİYOR'} <span style="opacity:0.7;">({followerAudit.verdict_code || 'unknown'})</span></p>
+              <p>Takipçi: {followerAudit.follower_count ?? 0} · Takip: {followerAudit.following_count ?? 'ölçülmedi'} · Gönderi: {followerAudit.post_count ?? 0}</p>
+              <p>Etkileşim: {followerAudit.engagement_rate ?? '—'} (beklenen: {followerAudit.expected_rate_range || 'N/A'})</p>
+              <p>Veri Tamamlık: %{((followerAudit.data_completeness ?? 0) * 100).toFixed(0)}</p>
             </div>
           {:else if activeForensicModal === 'timing' && timingForensics}
             <div class="report-box">
               <h4>Zaman & Sirkadiyen Forensik</h4>
-              <p>Gece Kuşu İndeksi: %{((timingForensics.night_owl_score || 0) * 100).toFixed(0)}</p>
-              <p>Tepe Saati: {timingForensics.peak_hour ?? '02:00'}</p>
+              <!-- W1: GERÇEK backend anahtarları (timing_forensics çıktısı):
+                   night_share, peak_hour, median_drift_hours -->
+              <p>Gece Payı: %{((timingForensics.night_share ?? 0) * 100).toFixed(0)}</p>
+              <p>Tepe Saati: {timingForensics.peak_hour ?? '—'}</p>
+              <p>Medyan Drift: {timingForensics.median_drift_hours ?? '—'} saat</p>
+            </div>
+          {:else if activeForensicModal === 'resonance' && resonanceCalc}
+            <div class="report-box">
+              <h4>Rezonans & Yaklaşım Önerisi</h4>
+              <!-- resonance_calc GERÇEK çıktısı: compatibility_score,
+                   recommended_approach, red_flags (runs.output_summary) -->
+              <p>Uyumluluk: %{((resonanceCalc.compatibility_score ?? 0) * 100).toFixed(0)}</p>
+              <p>Önerilen Yaklaşım: {resonanceCalc.recommended_approach || '—'}</p>
+              <p>Kırmızı Bayraklar: {(resonanceCalc.red_flags || []).join(', ') || 'Yok'}</p>
             </div>
           {:else if activeForensicModal === 'depth' && depthReport}
             <div class="report-box">

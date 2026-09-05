@@ -1,5 +1,90 @@
 # Changelog
 
+## Unreleased — 2026-09-06 — 3. GÖZ DENETİMİ ONARIM TURU (bağımsız denetim, 2026-09-06)
+
+Bağımsız denetim (F1–F17 bulgu, R1–R8 risk sıralaması) kapatılan bulguları
+kod + mutasyon testiyle doğruladı. Bu tur denetimci önceliğiyle sıralandı:
+**R1 → R2 → F3 → R3/R4/R5/R6**. Her onarım `tests/audit/test_auditor_round2_findings.py`
+(yeni) + mevcut audit testleri içinde **mutasyon testiyle doğrulanmış** regresyon
+testiyle korunuyor (10/10 mutasyon KIRMIZI; 1 mutasyon test yarışından
+kurtarıldı: `room['events']` testi artık gönderim katmanını senkron çağırır).
+
+- **[R1] Oda-özel sözlüklerin süresiz büyümesi kapatıldı** (ölçülen alt sınır:
+  2000 görev/oda → 4.6 MB; gerçek görev ~30–60 event ile 50–100 KB/görev;
+  WS'li oda evict'ten muaf = ölümsüz oda; P0-2/P0-5 deseninin üçüncü tekrarı).
+  - `TaskLifecycleRegistry`: run başına `last_activity`; throttled (30 sn)
+    `sweep()` — terminal run retention dolunca düşer (varsayılan 1800 sn,
+    `PINEAL_LIFECYCLE_RETENTION_SECONDS`, taban 60); ACTIVE run yalnız
+    `mission_tasks`'ta DEĞİLSE ve stale ise düşer. Boyut artık
+    "retention × görev hızı" ile sınırlı, toplam görev sayısı ile değil.
+  - `room["active_tasks"]`: terminal snapshot retention + sert tavan
+    (`PINEAL_ROOM_ACTIVE_TASKS_CAP`, 256; en eski terminal önce düşer).
+  - `room["events"]`: **ölü yapıydı** (append-only, okuyucusu yok — grep ile
+    doğrulandı) → append KALICI SİLİNDİ.
+  - `room["interventions"]`: sert tavan (`PINEAL_ROOM_INTERVENTIONS_CAP`, 512).
+  - Pruning tek hizada: `get_room`/`broadcast_event`/`broadcast_result`/
+    `broadcast_snapshot` → `_prune_room_stale_state` (oda başına 30 sn throttle;
+    kalan çağrılar 1 float karşılaştırması).
+- **[R2] Compose fail-closed PINEAL_ENV sabiti.** `docker-compose.yml` artık
+  `PINEAL_ENV=${PINEAL_ENV:-production}` explicit taşır (env_file, imaj ENV'ini
+  ezemiyor artık); `.env.example` içindeki AKTIF `PINEAL_ENV=development` satırı
+  amacılı yorumlandı (compose interpolation .env'den okurdu → development
+  sızması). Reponun kendi "cp .env.example .env" akışı artık production
+  default'ını korur; yerel geliştirme açık seçimle (baslat.bat otomatik,
+  compose için bilinçli PINEAL_ENV=development). Sözleşme:
+  `tests/unit/test_compose_env_contract.py` (yeni).
+- **[F3/W1–W4] Frontend-UI bridge TAMAMLANDI** (5 kırmızı sözleşme testi yeşile
+  döndü; önceki turun "UI köprüsü" iddiası PANELDE yoktu — yalnız `initiate()`
+  çağrıyordu; ölçülen: 18/19). `UnifiedCompactPanel.svelte`:
+  - `sendMessage()`: ASPASIA serbest metin ÖNCE `/api/aspasia/command`
+    (`accepted && task_id` → `taskStatus` görev kartına bağlanır); yoksa
+    chat fallback (`/api/aspasia/chat`) — mesaj kaybı yok.
+  - Forensic modallar GERÇEK backend anahtarlarını okur: timing →
+    `night_share`/`peak_hour`/`median_drift_hours`; takipçi → `verdict_code`
+    (+verdict/engagement_rate/expected_rate_range/data_completeness).
+    Uydurma anahtarlar (`night_owl_score`, `bot_probability`, …) dosyadan
+    kalktı (testler "must-not-contain" ile korur).
+  - Yeni 7. forensic modal **RESONANCE**: `runs.resonance_calc.output_summary`
+    → `compatibility_score`/`recommended_approach`/`red_flags`.
+  - Agent kartları `run.output_summary._provenance.call_id` gösterir
+    (uydurma satır değil; boşsa "—").
+  - Ek: mevcut `{$isSending}` store-sözdüzgüsü hatası düzeltildi
+    (`isSending` düz boolean; svelte-check 1 error → 0).
+  - `npm run check` → 0 error · `npm run build` → yeşil (84.6 kB js / 31 kB gzip).
+- **[R3] Identifier uzunluk sınırı eksik giriş noktalarına taşındı.**
+  `validate_identifier` regex'i uzunluk SINIRLAMIYORDU: `ChatPayload.task_id`
+  (gövde, sınırsız), `/api/tasks/{id}/cancel|halt` (path, doğrulamasız) —
+  artık `PINEAL_MAX_TASK_ID_LENGTH` (128): gövde `Field(max_length)`,
+  path `Path(max_length)` → 422; biçim `validate_identifier` → 400
+  `INVALID_TASK_ID` (DELETE sözleşmesiyle eş); `reason` ≤ 500 → 400.
+  `DELETE /api/tasks/{id}`'e de uzunluk kontrolü eklendi.
+- **[R4/P1-6] `extract_username` yalnız profil URL'si.** `/p/…`, `/reel/…`,
+  `/explore/tags/kedi/`, `/accounts/login/`, host URL'leri artık "" üretir ve
+  `scrape_instagram` kazımayı başlatmaz (`InsufficientEvidenceError`).
+  Kurallar: tek path segmenti, Instagram hostu, rezerv segment yasağı
+  (p/reel/explore/…), `^[A-Za-z0-9._]{1,30}$`, nokta kuralları. 9 xfail (6
+  parametre) işaretten düşürüldü.
+- **[R5/P2-9] Bozuk `learnings.json` → kalıcı 500 YOK.** `/api/override`:
+  bozuk/şemasız dosya `.corrupt.<ts>`/`.schema.<ts>` yedeklenir, boş listeden
+  devam edilir; yazım **atomik** (tmp+fsync+replace) → yarım dosya bir daha
+  oluşamaz. Yanıt `quarantined` yolunu taşır. 2 xfail işaretten düşürüldü.
+- **[R6/P1-7] Anti-halüsinasyon kapısı üretimde.** `scrape_instagram` kazıma
+  sonrası `check_scrape_confidence` çağırır; `PINEAL_MIN_SCRAPER_CONFIDENCE`
+  (0.6) altında `InsufficientEvidenceError` → görev HALT (düşük güvenli
+  profil işleme sokulmaz). 1 xfail işaretten düşürüldü.
+- **CHANGELOG düzeltmeleri:** 09-04 turundaki "832 passed" doğrulama bloğu ve
+  09-05 turundaki "19/19" satırı ölçülmüş değeri EŞLEMEMEKTEYDİ (bağımsız
+  denetimde 842 passed / 5 failed / 2 skipped / 9 xfailed ve 18/19 ölçüldü;
+  5 kırmızı = bu turda kapatılan F3 frontend sözleşme testleri). Eski değerler
+  aşağıda DÜZELTME NOTU ile işaretlendi.
+
+#### Doğrulama (bu turun, ölçülmüş)
+`ruff check .` → temiz · `pytest tests/ -q` → **879 passed, 2 skipped,
+0 failed, 0 xfailed** (önce: 842/5/2/9) · `npm run check` → 0 error ·
+`npm run build` → yeşil · mutasyon testleri 10/10 KIRMIZI (bkz. üstte).
+2 skipped = çevre-skip'leri (LLM/playwright gerektiren, denetimden önce de
+aynıydı).
+
 ## Unreleased (post-rc.2) — 2026-09-04
 
 ### ÜRETİM DENETİMİ ONARIM TURU (PRODUCTION_AUDIT_2026-09-04.md) — 7 bulgu kapatıldı
@@ -160,6 +245,12 @@ docstring eşleştiği için kendi kendini kandırıyordu → `inspect.iscorouti
 - **P2-9** Bozuk `learnings.json` → `/api/override` kalıcı 500 (atomik yazma yok).
 
 #### Doğrulama
+> **DÜZELTME NOTU (2026-09-06 bağımsız denetimi):** Aşağıdaki değerler o gün
+> ölçülmüş değeri EŞLEMEMEKTEYDİ — aynı commit'te (d651a7b) tam suite
+> **842 passed, 5 failed, 2 skipped, 9 xfailed** ölçüldü; 5 kırmızı test
+> 09-05 turunun F3 frontend sözleşme testleriydi (bu turda kapatıldı).
+> Yine de bu blok o turun ANLIK ölçümü olarak bırakıldı, silinmedi.
+
 `ruff check .` → temiz · `pytest -q` → **832 passed, 2 skipped, 9 xfailed**
 (9 xfail = yukarıdaki 3 açık bulgu) · CI kapsam kapısı → **%84.66 ≥ %80**.
 Tek başarısız test (`test_open_interpreter_imports_with_installed_psutil`)
@@ -188,9 +279,14 @@ denetim sandbox'ında `open-interpreter` kurulu olmadığı için; kod kusuru de
   `accepted && task_id` → görev kartına bağlanır; değilse chat fallback (mesaj
   kaybı yok). Yapılandırılmış form `/api/initiate`'te kalır (programatik hat).
 - Cancel/halt: bu fazda YOK (yalnız extension noktası: gateway dispatch şeması).
-- Testler: `tests/unit/test_aspasia_chief_layer.py` 19/19; promosyon 16/16;
-  routing regresyonu (provider-aware+firewall+compliance+policy+aspasia+wiring)
-  92/92.
+- Testler: `tests/unit/test_aspasia_chief_layer.py` 19/19 —
+  > **DÜZELTME NOTU (2026-09-06):** Bağımsız denetimde bu dosya **18/19**
+  > ölçüldü (kırmızı: `test_panel_ui_bridges_to_command_and_chat` — panelde
+  > komut köprüsü yoktu; bu turda `sendMessage()` köprüsüyle kapatıldı).
+  > Ayrıca aynı turun "UI köprüsü" maddesi panelde gerçekleşmemişti (yalnız
+  > `initiate()` çağrısı vardı); köprü bu turda kuruldu.
+- Promosyon testleri 16/16; routing regresyonu
+  (provider-aware+firewall+compliance+policy+aspasia+wiring) 92/92.
 
 ### ASPASIA-PROMOTION: merkezi doğal-dil arayüzü + komut ağzı (orkestrasyon yetkisi DEĞİL)
 - `agent_core/aspasia/interface.py` (yeni): salt-okur denetçiler
