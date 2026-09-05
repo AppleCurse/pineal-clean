@@ -229,6 +229,21 @@ push/PR'da **asla** koşmaz (Gate A paralı canlı LLM çağrısı içerir). Ayn
 
 2026-09-02 kaydında workflow dosyası yalnızca `release/` altında duruyordu ve "operatör `cp`'lemeli"
 notu düşülmüştü. **Bu adım artık kod tarafında tamamlandı**: `.github/workflows/release-gates.yml`
+repoya işlendi; gövde-kaynak eşitliği + dispatch-güvenliği birim teste bağlandı; **PR #60 ile main'e alındı** (`68fa552`).
+
+| Madde | 2026-09-02 | 2026-09-03 (bu tur, merge sonrası) |
+|---|---|---|
+| Workflow `.github/workflows/`'da | ❌ (yalnız `release/`) | ✅ **main'de** — PR #60 squash merge, `68fa552` |
+| Workflow GitHub'da KAYITLI | ❌ (`gh workflow list` → yalnız `CI`) | ✅ `gh workflow list` → `Release Gates active` (id `349137796`) |
+| Dispatch edilebilirlik | ❌ (dispatch listesinde görünmezdi) | ✅ **artık listede**; `gh workflow run release-gates.yml --ref main` → `403 Resource not accessible by integration` (agent token'ının Actions-write yetkisi yok) → **dispatch operatör adımı olarak kaldı** |
+| Gate A **yeşil koşu kaydı** | ❌ | 🔴 **AÇIK · NOT_EXECUTED** — `OPENROUTER_API_KEY` secret'ı + dispatch gerekli. Secret varlığı doğrulanamadı (`gh secret list` → 403); sandbox dış ağı kapalı (`openrouter.ai` → connect fail) |
+| Gate B **yeşil koşu kaydı** | ❌ | 🔴 **AÇIK · NOT_EXECUTED** — bu ortamda docker daemon yok; IG `initiate` bacağı operatör ortamında manuel |
+
+**Kanıt discipline notu:** "gate koşuldu" yazılmadı çünkü koşum yok. Yeşil koşu üretemediğimiz yerde
+sahte-yeşil veya "muhtemelen geçer" hükmü bırakmamak, bu belgenin Bölüm 8–9 kriterlerinin parçasıdır.
+Gate A'nın dispatch'ini takiben düşmesi **beklenen ve doğru** davranıştır eğer secret tanımlı değilse
+(fail-closed `::error::`) — bu bir başarısızlık değil, kapının çalıştığının kanıtıdır; kapanış için
+yeşil job gerekir.
 repoya işlendi (bu PR) ve govde-kaynak eşitliği + dispatch-güvenliği birim teste bağlandı.
 
 | Madde | 2026-09-02 | 2026-09-03 |
@@ -263,6 +278,10 @@ repoya işlendi (bu PR) ve govde-kaynak eşitliği + dispatch-güvenliği birim 
 - Bu iki gate kapanmadan GO LIVE kararı verilmez (Bölüm 11 uyarısı aynen geçerli).
 
 ### Koşu talimatı (operatör)
+
+> 2026-09-03 doğrulaması: workflow artık main'de kayıtlı (`gh workflow list` → `Release Gates active`,
+> id `349137796`), yani aşağıdaki 2. adım **elle yapılabilir** hale geldi. Agent token'ının kendisi
+> dispatch edemez (`gh workflow run` → 403) — bu yüzden 1–4. adımların sahibi operatördür.
 
 1. Repo **Settings → Secrets and variables → Actions** → `OPENROUTER_API_KEY` tanımlı olmalı
    (yoksa Gate A bilinçli olarak reddedilir; Gate B anahtarsız da koşar).
