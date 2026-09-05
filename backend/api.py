@@ -1587,10 +1587,42 @@ async def api_override(req: OverridePayload):
         lp = os.path.join(mem_dir, "learnings.json")
         async with _override_lock:
             def _read_learnings():
-                return json.load(open(lp, encoding="utf-8")) if os.path.exists(lp) else []
+                if not os.path.exists(lp):
+                    return []
+                try:
+                    with open(lp, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            return data
+                        logger.warning("learnings.json liste değil (%s), yedeklenip sıfırlanıyor", type(data).__name__)
+                except (json.JSONDecodeError, OSError) as e:
+                    logger.warning("learnings.json bozuk (%s), yedeklenip sıfırlanıyor", e)
+
+                # Bozuk dosyayı kanıt kaybı olmadan yedekle: learnings.json.corrupt.TIMESTAMP
+                try:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    corrupt_backup = f"{lp}.corrupt.{ts}"
+                    os.replace(lp, corrupt_backup)
+                    logger.info("Bozuk learnings dosyası yedeklendi: %s", corrupt_backup)
+                except Exception:
+                    pass
+                return []
+
             def _write_learnings(data):
-                with open(lp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                # [P2-9] Atomik yazma (tempfile + fsync + os.replace)
+                tmp_path = f"{lp}.tmp.{os.getpid()}_{datetime.now().timestamp()}"
+                try:
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp_path, lp)
+                finally:
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except OSError:
+                            pass
 
             learn = await asyncio.to_thread(_read_learnings)
             learn.append({"fact": req.fact.strip(), "tag": req.tag.strip(), "ts": datetime.now().isoformat(), "hash": hashlib.sha256(req.fact.strip().encode()).hexdigest()[:12]})

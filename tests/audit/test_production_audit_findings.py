@@ -487,7 +487,6 @@ def test_rate_bucket_count_is_bounded(monkeypatch):
 # --------------------------------------------------------------------------
 # P1-6  extract_username URL path'ini doğrulamıyor -> yanlış hedef kazıma
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="P1-6 AÇIK: extract_username profil-disi URL'yi hedef sanıyor", strict=False)
 @pytest.mark.parametrize(
     "url",
     [
@@ -517,7 +516,6 @@ def test_extract_username_rejects_non_profile_urls(url):
 # --------------------------------------------------------------------------
 # P1-7  Scraper anti-halüsinasyon güven kapısı üretimde hiç çağrılmıyor
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="P1-7 AÇIK: evaluate_confidence uretimde hic cagrilmıyor", strict=False)
 def test_evaluate_confidence_is_wired_into_production():
     """Testler evaluate_confidence'ı doğruluyor, üretim kodu hiç çağırmıyor."""
     import pathlib
@@ -584,7 +582,6 @@ async def test_scraper_delay_yields_to_event_loop(monkeypatch):
 # --------------------------------------------------------------------------
 # P2-9  /api/override bozuk learnings.json ile kalıcı 500
 # --------------------------------------------------------------------------
-@pytest.mark.xfail(reason="P2-9 AÇIK: bozuk learnings.json /api/override'i kalici 500 yapar", strict=False)
 @pytest.mark.parametrize("raw", ['{ bozuk', '{"fact": "x"}'])
 def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
     from fastapi.testclient import TestClient
@@ -610,6 +607,9 @@ def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
         f"learnings.json={raw!r} iken /api/override 500 döndü; "
         "dosya bir kez bozulursa endpoint kalıcı olarak kullanılamaz"
     )
+    # [P2-9] Bozuk dosya silinmemeli, learnings.json.corrupt.* olarak yedeklenmeli
+    corrupt_backups = [f for f in os.listdir(storage) if "learnings.json.corrupt" in f]
+    assert len(corrupt_backups) >= 1, "Bozuk dosya yedeklenmeden kayboldu veya silindi"
 
 
 # --------------------------------------------------------------------------

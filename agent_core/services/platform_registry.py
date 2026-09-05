@@ -17,11 +17,18 @@ Sözleşme (sahte veri YASAK):
 from __future__ import annotations
 
 import logging
+import re
+import urllib.parse
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_PLATFORMS = ("instagram",)
+
+_IG_RESERVED_PATHS = frozenset({
+    "explore", "reels", "reel", "p", "stories", "accounts", "direct",
+    "tags", "tv", "live", "about", "legal", "privacy", "terms", "creator", ""
+})
 
 
 def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
@@ -42,8 +49,30 @@ def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
 
 
 def extract_username(url: str) -> str:
-    """URL'nin son path segmentinden hedef kullanıcı adını çıkarır."""
-    return (url or "").split("?")[0].rstrip("/").split("/")[-1].replace("@", "")
+    """URL'den hedef profil kullanıcı adını çıkarır.
+
+    Profil dışı URL'lerde (gönderi /p/, reels, explore, login vb.) boş dize ''
+    dönerek misattribution ve sahte kazımayı engeller.
+    """
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url.strip())
+    path_segments = [s for s in parsed.path.strip("/").split("/") if s]
+    if not path_segments:
+        # Path yoksa ama domain dışı düz string girildiyse (@username gibi)
+        candidate = url.strip().lstrip("@")
+        if re.fullmatch(r"^[A-Za-z0-9._]{1,30}$", candidate):
+            return candidate
+        return ""
+
+    first_seg = path_segments[0].lower()
+    if first_seg in _IG_RESERVED_PATHS:
+        return ""
+
+    candidate = path_segments[0].replace("@", "")
+    if re.fullmatch(r"^[A-Za-z0-9._]{1,30}$", candidate):
+        return candidate
+    return ""
 
 
 def ig_target_profile_update(ig_data: Any) -> dict:
@@ -88,6 +117,12 @@ async def scrape_instagram(
     """
     emit = log or (lambda level, msg: None)
     username = extract_username(url)
+    if not username:
+        from agent_core.scraper.instagram_ghost import InsufficientEvidenceError
+        raise InsufficientEvidenceError(
+            f"Geçersiz hedef veya profil dışı URL: '{url}'. "
+            "Gönderi, reels veya etiket değil; doğrudan geçerli kullanıcı profili girilmelidir."
+        )
 
     # [FAZ 5] STEALTH_PROVIDER seçici: default (env yok) = playwright_stealth
     # (bugünkü davranış); invisible/cloak yalnız binary operator tarafından
@@ -133,7 +168,7 @@ async def scrape_instagram(
             browser = await launcher.launch(**launch_kwargs)
             ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
-            from agent_core.scraper.instagram_ghost import InstagramGhostScraper
+            from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InsufficientEvidenceError
             ctx = await browser.new_context(**ctx_kwargs)
             if cookie and "sessionid" in cookie:
                 parsed = []
@@ -155,8 +190,20 @@ async def scrape_instagram(
             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
             ig_data = await ig_scraper.scrape_async(username, playwright_page=page)
 
+            # [P1-7] Anti-halüsinasyon güven kapısı (PINEAL_MIN_SCRAPER_CONFIDENCE)
+            min_confidence = float(os.getenv("PINEAL_MIN_SCRAPER_CONFIDENCE", "0.4"))
+            confidence = ig_scraper.evaluate_confidence(ig_data)
+            emit("INFO", f"SCRAPER CONFIDENCE: {confidence:.2f} (esik={min_confidence:.2f})")
+            if confidence < min_confidence:
+                raise InsufficientEvidenceError(
+                    f"Yetersiz profil kanıtı (güven skoru: {confidence:.2f} < {min_confidence:.2f}). "
+                    "Halüsinasyon riskine karşı analiz durduruldu."
+                )
+
             # [024]/[025]/[026]: hizalı gerçek alanlar; sentetik post ÜRETİLMEZ.
-            return ig_target_profile_update(ig_data)
+            res = ig_target_profile_update(ig_data)
+            res["scraper_confidence"] = confidence
+            return res
         finally:
             for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
                 if resource:
