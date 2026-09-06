@@ -60,10 +60,51 @@ def test_production_without_token_cannot_start(monkeypatch):
     assert api.app.state.startup_health["error_code"] == "PRODUCTION_AUTH_REQUIRED"
 
 
+def test_production_without_spend_cap_cannot_start(monkeypatch):
+    """[AUDIT S1] production + OPENROUTER_MAX_SPEND_USD 0/tanimsiz → acilis RED.
+
+    Cap 0 = sinirsiz LLM harcamasi (runtime enforce cap yoksa devre disi).
+    /health 'degraded' uyarisi bu sinif icin yetersizdi (P2-10 sinifi)."""
+    monkeypatch.setenv("PINEAL_ENV", "production")
+    monkeypatch.setenv("PINEAL_TOKEN", "production-test-token-which-is-long")
+    monkeypatch.setenv("OPENROUTER_MAX_SPEND_USD", "0")
+
+    with pytest.raises(SecurityConfigurationError) as raised:
+        with TestClient(api.app):
+            pass
+    assert raised.value.error_code == "PRODUCTION_SPEND_CAP_REQUIRED"
+    assert api.app.state.startup_health["error_code"] == "PRODUCTION_SPEND_CAP_REQUIRED"
+
+
+def test_production_missing_spend_cap_env_cannot_start(monkeypatch):
+    """env degiskeni tamamen YOKSE de ayni sonuc (varsayilan 0 = sinirsiz)."""
+    monkeypatch.setenv("PINEAL_ENV", "production")
+    monkeypatch.setenv("PINEAL_TOKEN", "production-test-token-which-is-long")
+    monkeypatch.delenv("OPENROUTER_MAX_SPEND_USD", raising=False)
+
+    with pytest.raises(SecurityConfigurationError) as raised:
+        with TestClient(api.app):
+            pass
+    assert raised.value.error_code == "PRODUCTION_SPEND_CAP_REQUIRED"
+
+
+def test_development_without_spend_cap_still_starts(monkeypatch):
+    """Kapı yalnız PRODUCTION içindir; development + cap 0 etkilenmez."""
+    monkeypatch.setenv("PINEAL_ENV", "development")
+    monkeypatch.delenv("PINEAL_TOKEN", raising=False)
+    monkeypatch.delenv("PINEAL_REQUIRE_AUTH", raising=False)
+    monkeypatch.setenv("OPENROUTER_MAX_SPEND_USD", "0")
+
+    with TestClient(api.app) as client:
+        response = client.get("/health")
+    assert response.status_code == 200
+
+
 def test_production_with_token_enforces_api_auth(monkeypatch):
     token = "production-test-token-which-is-long"
     monkeypatch.setenv("PINEAL_ENV", "production")
     monkeypatch.setenv("PINEAL_TOKEN", token)
+    monkeypatch.setenv("OPENROUTER_MAX_SPEND_USD", "10")  # [AUDIT S1] prod: cap zorunlu
 
     with TestClient(api.app) as client:
         denied = client.get("/api/telemetry", params={"client_id": "prod_auth"})

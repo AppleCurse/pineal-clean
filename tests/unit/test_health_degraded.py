@@ -10,6 +10,7 @@ Sözleşme (Go/No-Go raporundan):
 - PINEAL_ENV=production + OPENROUTER_MAX_SPEND_USD=5 → spend_cap_unlimited: false
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -63,21 +64,25 @@ def test_health_starting_returns_503():
     assert r.status_code == 503
 
 
-def test_spend_cap_unlimited_in_production_surfaces_degraded(monkeypatch):
-    """PINEAL_ENV=production + spend_cap=0 → SPEND_CAP_UNLIMITED degraded_reason."""
+def test_spend_cap_unlimited_in_production_refuses_to_start(monkeypatch):
+    """[AUDIT S1] PINEAL_ENV=production + spend_cap=0 → acilis RED (fail-closed).
+
+    Eski sozlesme degraded bayrakti (uyari yuzeyi); denetim bunu P2-10 sinifi
+    (production env eksigi -> tehlikeli varsayilan) olarak niteledi ve kapatildi:
+    PRODUCTION_SPEND_CAP_REQUIRED, ayni PRODUCTION_AUTH_REQUIRED mekanizmasi.
+    """
     from backend.api import app
+    from agent_core.utils.security import SecurityConfigurationError
 
     monkeypatch.setenv("PINEAL_ENV", "production")
     monkeypatch.setenv("OPENROUTER_MAX_SPEND_USD", "0")
     monkeypatch.setenv("PINEAL_TOKEN", "test-token-sentinel")
 
-    with TestClient(app) as client:
-        r = client.get("/health")
-    body = r.json()
-    assert r.status_code == 200          # servis çalışıyor (load-balancer geçirir)
-    assert body.get("spend_cap_unlimited") is True
-    assert body.get("status") == "degraded"
-    assert "SPEND_CAP_UNLIMITED" in body.get("degraded_reasons", [])
+    with pytest.raises(SecurityConfigurationError) as raised:
+        with TestClient(app):
+            pass
+    assert raised.value.error_code == "PRODUCTION_SPEND_CAP_REQUIRED"
+    assert app.state.startup_health["error_code"] == "PRODUCTION_SPEND_CAP_REQUIRED"
 
 
 def test_spend_cap_set_no_cap_degraded(monkeypatch):

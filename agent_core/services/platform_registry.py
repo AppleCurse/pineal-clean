@@ -17,19 +17,14 @@ Sözleşme (sahte veri YASAK):
 from __future__ import annotations
 
 import logging
+import os
 import re
-import urllib.parse
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_PLATFORMS = ("instagram",)
-
-_IG_RESERVED = frozenset({
-    "p", "reel", "reels", "tv", "stories", "explore", "accounts", "about",
-    "legal", "privacy", "terms", "developer", "direct", "web", "challenge",
-    "tags", "creator", "live", ""
-})
 
 
 def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
@@ -49,35 +44,88 @@ def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
     return "unsupported_web"
 
 
-def extract_username(url: str) -> str:
-    """Yalnızca tek segmentli gerçek profil path'ini veya çıplak @kullanici girdisini kabul eder.
+# [AUDIT P1-6] Yalnız GERÇEK profil URL'lerinden kullanıcı adı çıkarılır.
+# Eskiden URL'nin SON path segmenti körlemesine hedef sanılıyordu:
+# /p/CxYz123Ab/ -> "CxYz123Ab", /explore/tags/kedi/ -> "kedi",
+# /accounts/login/ -> "login" — yani etiket/ID/login sayfaları "hedef
+# kullanıcı" oluyor ve aynı adı taşıyan GERÇEK bir hesap varsa yanlış kişi
+# sessizce kazınıyordu (kanıt zinciri başkasına ait oluyordu).
+_RESERVED_IG_SEGMENTS = frozenset({
+    "p", "reel", "reels", "explore", "stories", "accounts", "tv",
+    "about", "developer", "legal", "press", "locations", "direct",
+    "home", "search", "notifications", "settings", "terms", "privacy",
+})
+_IG_USERNAME = re.compile(r"^[A-Za-z0-9._]{1,30}$")
 
-    Gönderi (/p/XXX), reels, etiketler veya rezerve edilmiş yollarda boş string dönerek
-    misattribution ve sahte kazımayı engeller.
+
+def _is_instagram_host(host: str) -> bool:
+    """[AUDIT N4] Yalnız GERÇEK Instagram hostları.
+
+    Eski substring kontrolü (`"instagram.com" in host`) bakış benzeri
+    hostları kabul ediyordu: `notinstagram.com`, `evilinstagram.com`,
+    `www.instagram.com.evil.com` (ölçülen: 3/20 adversarial URL yanlış
+    kabul). Kurallar: tam eşleşme YA da `.instagram.com` SONEK'i (bu,
+    www.instagram.com dahil tüm meşru alt alanları kapsar; sahte hostlar
+    sonekle bitmez).
     """
-    raw = (url or "").strip()
-    if not raw:
+    return host == "instagram.com" or host.endswith(".instagram.com")
+
+
+def extract_username(url: str) -> str:
+    """Instagram PROFİL URL'sinden hedef kullanıcı adını çıkarır.
+
+    Sözleşme: yalnız `instagram.com/<kullanici>` biçiminde TEK segmentli,
+    rezerv olmayan ve geçerli karakter/uzunlukta URL'ler kullanıcı adı
+    üretir. Profil-DIŞI her URL (post/reel/etiket/stories/login/host) ""
+    döndürür; çağıran bu durumda kazımayı BAŞLATMAZ (yanlış hedef yasağı).
+    """
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
         return ""
-
-    parsed = urllib.parse.urlsplit(raw)
-    # Eğer bir domain verilmişse, instagram.com olmalı
-    if parsed.netloc:
-        if "instagram.com" not in parsed.netloc.lower():
-            return ""
-        parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) != 1:  # /p/XXX, /explore/tags/kedi, / -> reddet
-            return ""
-        name = parts[0].lstrip("@")
-    else:
-        # Çıplak handle girişi: "@kullanici" veya "kullanici"
-        name = raw.lstrip("@")
-
-    if not name or name.lower() in _IG_RESERVED:
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not _is_instagram_host(host):
         return ""
+    segments = [s for s in parts.path.split("/") if s]
+    if len(segments) != 1:
+        return ""
+    username = segments[0].lstrip("@").strip().lower()
+    if not username or username in _RESERVED_IG_SEGMENTS:
+        return ""
+    if not _IG_USERNAME.match(username):
+        return ""
+    if username.startswith(".") or username.endswith(".") or ".." in username:
+        return ""
+    return username
 
-    if re.fullmatch(r"^[A-Za-z0-9._]{1,30}$", name):
-        return name
-    return ""
+
+def _min_scrape_confidence() -> float:
+    """[AUDIT P1-7] Anti-halüsinasyon güven eşiği (env ile ayarlanabilir)."""
+    try:
+        return max(0.0, min(1.0, float(
+            os.getenv("PINEAL_MIN_SCRAPER_CONFIDENCE", "0.6"))))
+    except (TypeError, ValueError):
+        return 0.6
+
+
+def check_scrape_confidence(ig_scraper, ig_data, emit) -> float:
+    """[AUDIT P1-7] Anti-halüsinasyon kapısı (ÜRETİM yolunda çağrılır).
+
+    evaluate_confidence artık yalnız testte değil, kazıma zincirinde devrededir:
+    kanıt zayıfsa (gizli/boş/zayıf profil) düşük güvenli profili işleme devam
+    etmek yerine InsufficientEvidenceError ile görev HALT edilir. Dönen değer
+    güven skorudur (telemetri/retrospektif için).
+    """
+    from agent_core.scraper.instagram_ghost import InsufficientEvidenceError
+    min_confidence = _min_scrape_confidence()
+    confidence = ig_scraper.evaluate_confidence(ig_data)
+    emit("INFO", f"SCRAPER CONFIDENCE: {confidence:.2f} (min esik {min_confidence:.2f})")
+    if confidence < min_confidence:
+        raise InsufficientEvidenceError(
+            f"Yetersiz kanit guveni: {confidence:.2f} < {min_confidence:.2f} "
+            "(anti-halüsinasyon kapısı; sahte profil üretmiyorum)"
+        )
+    return confidence
 
 
 def ig_target_profile_update(ig_data: Any) -> dict:
@@ -123,10 +171,12 @@ async def scrape_instagram(
     emit = log or (lambda level, msg: None)
     username = extract_username(url)
     if not username:
+        # [AUDIT P1-6] Profil dışı URL (post/reel/etiket/login/host) artık
+        # HİÇBİR hedefe çözümlenmez; kazıma başlatılmaz.
         from agent_core.scraper.instagram_ghost import InsufficientEvidenceError
         raise InsufficientEvidenceError(
-            f"Geçersiz hedef veya profil dışı URL: '{url}'. "
-            "Gönderi, reels veya etiket değil; doğrudan geçerli kullanıcı profili girilmelidir."
+            "URL bir Instagram PROFİLİ değil (yanlış hedef kazınmaz): "
+            f"{(url or '')[:80]} — https://www.instagram.com/<kullanici> verin"
         )
 
     # [FAZ 5] STEALTH_PROVIDER seçici: default (env yok) = playwright_stealth
@@ -173,7 +223,7 @@ async def scrape_instagram(
             browser = await launcher.launch(**launch_kwargs)
             ctx_kwargs = {"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
-            from agent_core.scraper.instagram_ghost import InstagramGhostScraper, InsufficientEvidenceError
+            from agent_core.scraper.instagram_ghost import InstagramGhostScraper
             ctx = await browser.new_context(**ctx_kwargs)
             if cookie and "sessionid" in cookie:
                 parsed = []
@@ -195,20 +245,13 @@ async def scrape_instagram(
             ig_scraper = InstagramGhostScraper(vault_cookies={"sessionid": cookie} if cookie else None)
             ig_data = await ig_scraper.scrape_async(username, playwright_page=page)
 
-            # [P1-7] Anti-halüsinasyon güven kapısı (PINEAL_MIN_SCRAPER_CONFIDENCE)
-            min_confidence = float(os.getenv("PINEAL_MIN_SCRAPER_CONFIDENCE", "0.4"))
-            confidence = ig_scraper.evaluate_confidence(ig_data)
-            emit("INFO", f"SCRAPER CONFIDENCE: {confidence:.2f} (esik={min_confidence:.2f})")
-            if confidence < min_confidence:
-                raise InsufficientEvidenceError(
-                    f"Yetersiz profil kanıtı (güven skoru: {confidence:.2f} < {min_confidence:.2f}). "
-                    "Halüsinasyon riskine karşı analiz durduruldu."
-                )
+            # [AUDIT P1-7] Anti-halüsinasyon kapısı ÜRETİMDE devrede (bkz.
+            # check_scrape_confidence): kanıt zayıfsa düşük güvenli profil
+            # yerine InsufficientEvidenceError -> görev HALT.
+            check_scrape_confidence(ig_scraper, ig_data, emit)
 
             # [024]/[025]/[026]: hizalı gerçek alanlar; sentetik post ÜRETİLMEZ.
-            res = ig_target_profile_update(ig_data)
-            res["scraper_confidence"] = confidence
-            return res
+            return ig_target_profile_update(ig_data)
         finally:
             for resource_name, resource in (("page", page), ("context", ctx), ("browser", browser)):
                 if resource:

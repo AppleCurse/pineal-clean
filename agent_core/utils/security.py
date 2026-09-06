@@ -102,6 +102,25 @@ def security_posture() -> dict:
             "PRODUCTION_AUTH_REQUIRED" if environment == "production" else "AUTH_TOKEN_REQUIRED",
             "PINEAL_TOKEN must be configured when authentication is required",
         )
+    # [AUDIT S1] Production'da harcama tavani ZORUNLU (fail-closed).
+    # Cap 0/tanimsiz = SINIRSIZ LLM harcamasi: runtime enforce llm_gateway'de
+    # var (spend_cap_usd > 0 kontrolu) ama cap yoksa enforce da yok. Eskiden
+    # bu durum /health "SPEND_CAP_UNLIMITED" degraded uyarisiyla KALACAKTI —
+    # uyarı yuzeyi bu sinif icin yetersizdir (P2-10 sinifi: production env
+    # eksigi -> tehlikeli varsayilan sessizce aktif; auth'ta ayni hata
+    # PRODUCTION_AUTH_REQUIRED ile kapatilmisti). Artik: production +
+    # cap<=0 -> acilis REDDedilir. Development etkilenmez (kendi hesabiniz).
+    if environment == "production":
+        try:
+            spend_cap = float(os.getenv("OPENROUTER_MAX_SPEND_USD", "0").strip() or "0")
+        except (TypeError, ValueError):
+            spend_cap = 0.0
+        if spend_cap <= 0:
+            raise SecurityConfigurationError(
+                "PRODUCTION_SPEND_CAP_REQUIRED",
+                "OPENROUTER_MAX_SPEND_USD must be a positive value in production "
+                "(0 or undefined means UNLIMITED LLM spend; e.g. 50 = $50/session)",
+            )
     return {
         "environment": environment,
         "auth_required": required or bool(token),

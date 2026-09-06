@@ -3,7 +3,7 @@
 Bu dosya yeni bir davranış sözleşmesi icat etmez; denetimde ölçülen somut
 kusurların geri gelmesini engeller.
 
-Durum (2026-09-04 onarım turu):
+Durum (2026-09-04 onarım turu; 2026-09-06 round-2 turunda TAMAMLANDI):
   KAPATILDI  P0-1 redact O(N x M)          -> iplik önbellekli tek geçiş regex
              P0-2 cache prune yok          -> get() siler + periyodik prune
              P0-3 dict olmayan vault 500   -> _load_vault() her zaman dict
@@ -11,13 +11,16 @@ Durum (2026-09-04 onarım turu):
              P0-5 _rate_buckets sızıntısı  -> boş kova iadesi + LRU tavan
              P1-8 time.sleep event loop    -> async _random_delay
              P2-10 auth fail-open          -> PINEAL_ENV belirsizse üretim
-  AÇIK       P1-6 extract_username doğrulaması yok
-             P1-7 evaluate_confidence üretimde çağrılmıyor
-             P2-9 bozuk learnings.json /api/override'i 500 yapıyor
+             P1-6 extract_username profili-dışı URL  (2026-09-06: strict
+                  profile-URL kuralı + scrape guard; xfail kaldı)
+             P1-7 evaluate_confidence üretimde kapısı   (2026-09-06:
+                  check_scrape_confidence scrape yolunda; xfail kaldı)
+             P2-9 bozuk learnings.json 500              (2026-09-06:
+                  quarantine + atomik yazım; xfail kaldı)
 
-AÇIK maddeler `xfail(strict=False)` ile işaretlidir: onarıldıklarında XPASS'e
-dönerler ve işaretin kaldırılması gerektiğini söylerler. KAPATILAN maddeler
-artık normal testtir — davranış geri gelirse suite KIZARIR.
+Bu dosyada AÇIK madde ve xfail işareti YOKTUR (9 işaret 2026-09-06 round-2
+turunda kaldırıldı). Tüm maddeler normal testtir — davranış geri gelirse
+suite KIZARIR.
 
 Çalıştırma:
     pytest tests/audit/test_production_audit_findings.py -v
@@ -487,6 +490,10 @@ def test_rate_bucket_count_is_bounded(monkeypatch):
 # --------------------------------------------------------------------------
 # P1-6  extract_username URL path'ini doğrulamıyor -> yanlış hedef kazıma
 # --------------------------------------------------------------------------
+# [AUDIT 2026-09-06] P1-6 KAPANDI: extract_username yalnız tek-segmentli,
+# rezerv olmayan, geçerli karakter/uzunluktaki instagram.com/<kullanici>
+# URL'lerinden kullanıcı adı üretir; profil dışı URL "" üretir ve
+# scrape_instagram kazımayı başlatmaz. Xfail işareti kaldırıldı.
 @pytest.mark.parametrize(
     "url",
     [
@@ -516,6 +523,9 @@ def test_extract_username_rejects_non_profile_urls(url):
 # --------------------------------------------------------------------------
 # P1-7  Scraper anti-halüsinasyon güven kapısı üretimde hiç çağrılmıyor
 # --------------------------------------------------------------------------
+# [AUDIT 2026-09-06] P1-7 KAPANDI: platform_registry.scrape_instagram
+# kazıma sonrası evaluate_confidence'ı çağırır; PINEAL_MIN_SCRAPER_CONFIDENCE
+# (0.6) altında InsufficientEvidenceError yükseltir. Xfail işareti kaldırıldı.
 def test_evaluate_confidence_is_wired_into_production():
     """Testler evaluate_confidence'ı doğruluyor, üretim kodu hiç çağırmıyor."""
     import pathlib
@@ -582,6 +592,9 @@ async def test_scraper_delay_yields_to_event_loop(monkeypatch):
 # --------------------------------------------------------------------------
 # P2-9  /api/override bozuk learnings.json ile kalıcı 500
 # --------------------------------------------------------------------------
+# [AUDIT 2026-09-06] P2-9 KAPANDI: /api/override artık (a) bozuk/şemasız
+# learnings.json'u yedekleyip sıfırdan devam eder, (b) atomik (tmp+replace)
+# yazar -> endpoint bir daha kalıcı 500 üretemez. Xfail işareti kaldırıldı.
 @pytest.mark.parametrize("raw", ['{ bozuk', '{"fact": "x"}'])
 def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
     from fastapi.testclient import TestClient
@@ -608,7 +621,12 @@ def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
         "dosya bir kez bozulursa endpoint kalıcı olarak kullanılamaz"
     )
     # [P2-9] Bozuk dosya silinmemeli, learnings.json.corrupt.* olarak yedeklenmeli
-    corrupt_backups = [f for f in os.listdir(storage) if "learnings.json.corrupt" in f]
+    # (main 56fec0e uzerindeki ekleme; merge ile birlestirildi). Audit uretimi
+    # şema hatasını .schema.* ile ayırdığı için her iki aile de kabul edilir.
+    corrupt_backups = [
+        f for f in os.listdir(storage)
+        if "learnings.json.corrupt" in f or "learnings.json.schema" in f
+    ]
     assert len(corrupt_backups) >= 1, "Bozuk dosya yedeklenmeden kayboldu veya silindi"
 
 

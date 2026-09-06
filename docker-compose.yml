@@ -17,6 +17,14 @@ services:
         required: false
     environment:
       - PINEAL_PORT=8000
+      # [AUDIT R2] env_file'daki PINEAL_ENV, imajdaki ENV PINEAL_ENV=production'ı
+      # EZİYORDU: reponun kendi önerdiği "cp .env.example .env" akışı (example
+      # içinde PINEAL_ENV=development) konteyneri sessizce development moduna
+      # sokuyor, fail-closed auth KAPANIYORDU. Compose önceliği
+      # environment > env_file olduğundan üretim profili burada açıkça sabitlenir
+      # (host env PINEAL_ENV devralınır; .env artık yalnız PINEAL_TOKEN vb. taşır).
+      # Yerel geliştirme için tek istisna yol: PINEAL_ENV=development ile başlatın.
+      - PINEAL_ENV=${PINEAL_ENV:-production}
     volumes:
       - pineal_memory:/app/memory      # kalıcı kanıt/öğrenme belleği (kritik - kayıp = veri kaybı)
       - pineal_cache:/app/cache        # SQLite response cache (kaybedilebilir; yeniden doldurulur)

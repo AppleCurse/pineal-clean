@@ -410,6 +410,15 @@ class AspasiaCommandGateway:
                          intent=intent.intent, error=f"{type(exc).__name__}"[:80])
             return AspasiaCommandResult(command_id=command_id, accepted=False,
                                         intent=intent.intent, reason="dispatch_failed")
+        # [AUDIT N1] dispatch "None" dönerse görev BAŞLATILMAMIŞTIR (oda
+        # doymuş / kapasite reddi). Eski kod bunu accepted=True + task_id=None
+        # olarak "dispatched" kaydediyordu (yalan kabul).
+        if task_id is None:
+            self._record(command_id=command_id, status="rejected",
+                         intent=intent.intent, reason="dispatch_rejected")
+            return AspasiaCommandResult(command_id=command_id, accepted=False,
+                                        intent=intent.intent,
+                                        reason="dispatch_rejected")
         self._record(command_id=command_id, status="dispatched", intent=intent.intent,
                      task_id=task_id, goals=list(intent.goals),
                      target_host=re.sub(r"^https://", "", url).split("/")[0])
