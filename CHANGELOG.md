@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — 2026-09-06 — S1: PROD SPEND-CAP FAIL-CLOSED + N7 DOKÜMAN
+
+Kapanış kararı (üretim onayı) ile kapatılan son açık madde.
+
+- **[S1] Production + spend cap 0/tanımsız → ARTIK AÇILIŞ REDDİ (fail-closed).**
+  Runtime enforce zaten var (`llm_gateway.py:630-634` cap>0 iken reddetmek;
+  `:670-673` cap≤0 → SINIRSIZ), ama production'da cap 0/tanımsız kalırsa
+  enforce devre dışı kalıyordu ve tek sinyali /health "SPEND_CAP_UNLIMITED"
+  degraded bayrağıydı — P2-10 sınıfı (production env eksikliği → tehlikeli
+  varsayılan). `security_posture()` artık production + cap≤0 →
+  `SecurityConfigurationError("PRODUCTION_SPEND_CAP_REQUIRED")`; lifespan
+  bunu `CRITICAL` + raise ile açılış REDDİ'ne çevirir
+  (`backend/api.py:121-124`) — aynen `PRODUCTION_AUTH_REQUIRED`
+  (P2-10) ile aynı mekanizma. Geliştirme ortamı etkilenmez (cap 0 = kendi
+  hesabınız). Canlı kanıt: prod+cap0 → uvicorn exit 3, log
+  "PRODUCTION_SPEND_CAP_REQUIRED ... Application startup failed. Exiting.";
+  prod+cap50 → boot, /health `ready` + `spend_cap_unlimited: false`.
+  Testler: `test_production_without_spend_cap_cannot_start`,
+  `test_production_missing_spend_cap_env_cannot_start`,
+  `test_development_without_spend_cap_still_starts`
+  (test_security_hardening.py) + `test_spend_cap_unlimited_in_production_
+  refuses_to_start` (test_health_degraded.py — eski degraded-özeti testinin
+  S1 sözleşmesiyle değiştirilmiş hali). Mutasyon: gate silinince 3/3 test
+  KIRMIZI (dev testi yeşil kalır — kapı production-only, doğru).
+  `SPEND_CAP_UNLIMITED` degraded bloğu (api.py:85-107) savunma derinliği
+  olarak yerinde bırakıldı: gate'in arkasında ikinci bir kat.
+- **[N7] Rate-limit kimlik modeli .env.example'de DOKÜMANTALENDİ.**
+  Kimlik = `sha256(presented_token or client_ip or "unknown")[:16]`
+  (api.py:247-253): geliştirmede IP → aynı IP arkasındaki kullanıcılar
+  tek kovaya girer (canlı ölçüm R4: 12 istemci/1 IP → 5×200 + 7×429);
+  production'da token varsa istemci token kullanıp kovasını kendine alır.
+  `.env.example` PINEAL_TOKEN bloğu altına açıkça yazıldı.
+
 ## Unreleased — 2026-09-06 — ROUND 3: N1-N6 ARTIK MADELERİ (3fc89fc üzerine)
 
 Bağımsız doğrulama turu R1-R6+F3 çekirdeğini doğruladı; 6 artık madde
