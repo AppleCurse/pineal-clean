@@ -620,6 +620,14 @@ def test_api_override_survives_corrupt_learnings(tmp_path, monkeypatch, raw):
         f"learnings.json={raw!r} iken /api/override 500 döndü; "
         "dosya bir kez bozulursa endpoint kalıcı olarak kullanılamaz"
     )
+    # [P2-9] Bozuk dosya silinmemeli, learnings.json.corrupt.* olarak yedeklenmeli
+    # (main 56fec0e uzerindeki ekleme; merge ile birlestirildi). Audit uretimi
+    # şema hatasını .schema.* ile ayırdığı için her iki aile de kabul edilir.
+    corrupt_backups = [
+        f for f in os.listdir(storage)
+        if "learnings.json.corrupt" in f or "learnings.json.schema" in f
+    ]
+    assert len(corrupt_backups) >= 1, "Bozuk dosya yedeklenmeden kayboldu veya silindi"
 
 
 # --------------------------------------------------------------------------
