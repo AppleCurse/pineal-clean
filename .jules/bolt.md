@@ -9,3 +9,7 @@
 ## 2025-02-24 - Async SQLite Concurrency
 **Learning:** When offloading synchronous SQLite operations to threads using `asyncio.to_thread()`, running multiple writes concurrently via `asyncio.gather()` triggers SQLite locking issues because it spawns a separate thread for every item, violating SQLite concurrency limitations.
 **Action:** When batch writing to SQLite in an async context, collect the writes into a single synchronous function and offload the entire sequential batch loop to a single background thread using `asyncio.to_thread()`.
+
+## 2024-05-25 - Caching os.environ reads
+**Learning:** Iterating over `os.environ` on every string redaction or logging operation (like in `_environment_secret_values()`) is a hot path bottleneck that degrades CPU time during heavy text processing.
+**Action:** Use `@lru_cache(maxsize=1)` on functions returning environment variable subsets since process environment variables are largely static after initialization, and clear the cache during tests that use `monkeypatch.setenv`.

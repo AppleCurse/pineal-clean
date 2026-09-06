@@ -11,6 +11,7 @@ import secrets
 import socket
 import urllib.parse
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional
 
@@ -273,6 +274,10 @@ async def safe_get(
     raise UnsafeURLError("TOO_MANY_REDIRECTS")
 
 
+# [AUDIT P0-2] Performance Optimization: Cache environment secret values.
+# Iterating over os.environ on every log or redaction call acts as a bottleneck.
+# The cache limits redundant iterations during process lifecycle.
+@lru_cache(maxsize=1)
 def _environment_secret_values() -> tuple[str, ...]:
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "COOKIE")
     return tuple(

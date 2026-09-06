@@ -25,6 +25,22 @@ def _isolate_response_cache(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_security_env_cache():
+    try:
+        from agent_core.utils.security import _environment_secret_values
+        if hasattr(_environment_secret_values, "cache_clear"):
+            _environment_secret_values.cache_clear()
+    except Exception:
+        pass
+    yield
+    try:
+        if hasattr(_environment_secret_values, "cache_clear"):
+            _environment_secret_values.cache_clear()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _isolate_rate_limit_state():
     """[AUDIT P1-18a] `backend.api._rate_buckets` süreç genelinde paylaşılan
     mutable durumdur.
