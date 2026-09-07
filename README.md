@@ -6,52 +6,60 @@ Kararları `PinealExecutor` + `CognitiveRouter` + `PsychodynamicDepthEngine` ver
 
 ---
 
-## 1. Temel Mimari ve Yeni Nesil Motorlar
+## 1. Kodda Gerçekten Var Olan Temel Mimari ve Motorlar
 
-Bu sürüm, sistemin önceki statik ve tek sağlayıcıya bağımlı yapısını tamamen yıkan 4 ana motoru içerir:
+Bu depoda yer alan ve testlerle kilitlenmiş gerçek çalışma zamanı bileşenleri şunlardır:
 
-### A. 14 Sağlayıcılı Hibrit Çıkarım Havuzu (Multi-Provider Engine)
+### A. 14 Sağlayıcılı Hibrit Çıkarım Havuzu (`llm_gateway.py`, `provider_catalog.json`)
 Sistem artık tek bir sağlayıcıya (OpenRouter) kilitlenmez. 16 anahtarlık yerel envanteri (`.pineal_vault.json` ve `.env`) doğrudan tanır:
 - **Resmi OpenAI Uyumlu Uç Noktalar:** Google Gemini (`/v1beta/openai/`), DeepSeek (`api.deepseek.com/v1`), NVIDIA NIM (`integrate.api.nvidia.com/v1`).
 - **Ultra Hızlı Ücretsiz Katman:** Groq (30 RPM), Cerebras (5 RPM).
 - **Açık Ağırlıklı Havuz:** Together AI, DeepInfra, Nous Research Portal.
 - **Olgusal OSINT & Doğrulama:** Tavily, SerpAPI, Exa AI.
-- **Hiyerarşik Kasa:** `.pineal_vault.json` içindeki `providers.{ad}.api_key` yapısı şemadan bağımsız güvenle parse edilir; sırlar asla loglara sızmaz.
+- **Hiyerarşik Kasa Parser:** `.pineal_vault.json` içindeki `providers.{ad}.api_key` yapısı `api.py` içinde parse edilir; sırlar asla loglara sızmaz.
 - **Savunma Derinliği:** `PINEAL_ALLOW_PAID_ESCALATION=1` ve `PINEAL_ALLOW_UNPRICED_MODELS=1` bayrakları olmadan bütçe koruması fail-closed kalır.
 
-### B. Zaman Serisi & Video Kazıyıcı (GÖREV 1 — Scraper Engine)
-- **`/reel/` ve Video Desteği:** Yalnızca `/p/` değil, `/reel/` URL'leri de taranır. Post türleri (`image`, `video`, `reel`, `carousel`) ve video bağlantıları toplanır.
-- **1-e-1 Doğrulanmış Eşleşme:** Görseller ve post linkleri arasındaki kör `zip()` indeksi kaldırılmıştır. Her görsel kendi shortcode ve metin bloğuyla doğrulanmış tekil nesne olarak paketlenir.
-- **Kronolojik Zaman Ekseni:** Zaman damgaları (`taken_at`), beğeni ve yorum sayıları parse edilerek tüm gönderiler $t_0 \to t_N$ kronolojisine dizilir.
+### B. Zaman Serisi & Video Kazıyıcı (`agent_core/scraper/instagram_ghost.py`)
+- **`/reel/` ve Video Desteği:** Yalnızca `/p/` değil, `/reel/` URL'leri de toplanır; yapısal düğümden `post_type` (`image`, `video`, `reel`, `carousel`) ve `video_url` çekilir.
+- **1-e-1 Doğrulanmış Eşleşme:** Kör `zip()` indeksi kaldırılmıştır. Her görsel kendi shortcode'u ve metin bloğuyla tek bir doğrulanmış nesnede birleştirilir.
+- **Kronolojik Zaman Ekseni:** Zaman damgaları (`taken_at`), beğeni ve yorum sayıları parse edilir; gönderiler $t_0 \to t_N$ kronolojik sırasına dizilir.
 
-### C. 4 Sütunlu Psikodinamik Derinlik Motoru (GÖREV 2 — Depth Engine)
-İlkel kelime sayma sözlükleri (`['strateji', 'piyon']`) ve sanat tarihi etiketleri tamamen kaldırılmıştır. Sistem insanı 4 matematiksel sütunla analiz eder:
-1. **Denetimsiz Semantik Kümeleme (`theme_cluster.py`):** Karakter 3-gram ve kosinüs benzerliği ile çalışır. Profilin metinlerinden $K$ adet doğal tema türer; **Kompülsif Tekrar Skoru (`repetition_score`)** ve **İzole Anomali Tespiti (`isolated_anomaly_count`)** üretilir.
-2. **Durum Yörüngesi $S(t)$ ve Faz Kırılması (`timing_forensics.py`):** Gönderiler zaman fonksiyonuna dökülür; varyans makası, yarı-entropi ve **Faz Kırılma Noktaları (`entropy_jump`, `variance_shift`)** tespit edilir.
+### C. 4 Sütunlu Psikodinamik Derinlik Motoru
+İlkel kelime sayma sözlükleri (`['strateji', 'piyon']`) kaldırılmıştır; analiz 4 matematiksel sütun üzerinden çalışır:
+1. **Denetimsiz Semantik Kümeleme (`theme_cluster.py`):** Karakter 3-gram ve kosinüs benzerliği ile çalışır. Profil metinlerinden veriye dayalı $K$ tema türer; **Kompülsif Tekrar Skoru (`repetition_score`)** ve **İzole Anomali Tespiti (`isolated_anomaly_count`)** üretilir.
+2. **Durum Yörüngesi $S(t)$ ve Faz Kırılması (`timing_forensics.py`):** Gönderi zaman dizisi $S(t)$ olarak incelenir; yarı-entropi, aralık varyansı ve **Faz Kırılma Noktaları (`entropy_jump`, `variance_shift`)** hesaplanır.
 3. **4 Kanallı Çapraz Gerilim Matrisi (`psychodynamic_depth.py`):**  
    - *Kanal 1 (Beyan):* Biyografi ve yazılı açıklamalar (Ego ideali)
    - *Kanal 2 (Sahneleme):* Görseller, format çeşitliliği, estetik dil (Dış vitrin)
    - *Kanal 3 (Biyolojik Ritim):* Zaman damgaları, sirkadiyen döngü (Dürtü kontrolü)
    - *Kanal 4 (Sosyal Metrik):* Takipçi/takip oranı, etkileşim asimetrisi  
-   Bu kanallar arasındaki gerilimden yapısal **Telafi İndeksi (`compensation_index`)** ve **Reaksiyon Oluşturma İndeksi (`reaction_formation_index`)** hesaplanır.
-4. **Bayesian Dinamik Epistemik Kapı:** `if not text: halt` katliamı silinmiştir. Profilde metin yoksa ($w_{\text{decl}} = 0$), epistemik bütçe otomatik olarak Görsel ve Zamansal kanallara aktarılır ($w_{\text{vis}} + w_{\text{temp}} = 1.0$). Sistem metinsiz profillerde asla durmaz.
+   Kanallar arasındaki gerilimden yapısal **Telafi İndeksi (`compensation_index`)** ve **Reaksiyon Oluşturma İndeksi (`reaction_formation_index`)** hesaplanır.
+4. **Bayesian Dinamik Epistemik Kapı (`psychodynamic_depth.py`):** `if not text: halt` kontrolü kaldırılmıştır. Profilde metin yoksa ($w_{\text{decl}} = 0$), epistemik bütçe otomatik olarak Görsel ve Zamansal kanallara aktarılır ($w_{\text{vis}} + w_{\text{temp}} = 1.0$). Sistem metinsiz profillerde durmaz.
 
-### D. Aspasia Disk Köprüsü (`DiskMemoryBridge`)
-Aspasia artık geçici RAM'e mahkûm değildir. RAM boşalsa bile diskteki `CanonicalMemory` kayıtlarını okur; sistem boşta beklerken hayali ajanlar uydurmaz (`ROUTING-ADAY` vs `GÖZLEMLENEN`), geçmiş operasyonları unutmaz.
+### D. Shadow Strateji Eşlemesi (`agent_core/psychology/dark_triad.py`, `shadow_executor.py`)
+Eski kelime sayma yerine derinlik motorunun yapısal indekslerine bağlanmıştır:
+- $\text{reaction\_formation\_index} \ge 0.40 \implies$ **`mirroring`**
+- $\text{repetition\_score} \ge 0.40 \implies$ **`alliance`**
+- $\text{n\_ruptures} \ge 1$ veya $\text{entropy\_jump} \implies$ **`thrill`**
+- Eşiklerin altı $\implies$ **`unobserved`**
+
+### E. Aspasia Disk Köprüsü (`DiskMemoryBridge`)
+`agent_core/aspasia/interface.py` ve `task_executor.py` üzerinden çalışır:
+- Görev bitiminde derinlik verisi `forensic_digest` mührüyle kanonik kanıta yazılır.
+- Aspasia RAM boşalsa bile diskteki [`CanonicalMemory`](file:///c:/pineal-clone/memory) kayıtlarından bu mührü okur.
+- Boşta beklerken hayali ajan uydurmaz (`ROUTING-ADAY` vs `GÖZLEMLENEN` ayrımı korunur).
+
+### F. Görüntü Doygunluk Analizi (`psychodynamic_depth.py`)
+Yerel ortamda `Pillow` kuruluysa indirilen görsellerin ortalama HSV-S doygunluğu hesaplanır; kütüphane yoksa dürüstçe `None` döner (asla uydurma sayı üretilmez).
 
 ---
 
-## 2. Dış Cephanelik ve Hafıza Mühendisliği (Seçilmiş Entegrasyonlar)
+## 2. Mimari Statü ve Gerçek Durum Notları
 
-Sistemi hantal servislerle boğmak yerine ("Çok sikmekle çok çocuk olmaz"), Pineal'in omurgasına organik olarak kaynayan **3 altın bileşen** benimsenmiştir:
+Koddaki gerçek durum ile belge arasındaki tam uyum sözleşmesi:
 
-| Bileşen | Kaynak | Pineal'deki Entegrasyon Yeri | Sağladığı Güç |
-|---|---|---|---|
-| **RTK (Rust Token-saver)** | `rtk-ai/rtk` | `rust_core/` | Ham veri promptlarını Rust katmanında %40-%85 oranında sıkıştırarak token kotasını ve bütçeyi 4 katına çıkarır. |
-| **One-API / ai-wanderer Mantığı** | `songquanpeng/one-api` & `sshnaidm/ai-wanderer` | `llm_gateway.py` | Ağır Go sunucusu kurulmaz; **akıllı havuz mantığı** kullanılır: 429 alan anahtar 5 dk soğutulur, Groq (30 RPM) dolunca anında Cerebras Free'ye atlanır. |
-| **Pollinations.ai** | `pollinations.ai` | HTTP İstemcisi | Kurulumsuz, anahtarsız acil durum görsel ve çıkarım can simidi; tüm API kotaları bitse dahi analizin sürmesini sağlar. |
-
-*(Not: G4F, 9Router, CLIProxyAPI ve Cloudflare Worker gibi harici kırılgan ve hantal yapılar sistemin hafifliğini ve kararlılığını korumak adına elenmiştir.)*
+- **`rust_core/` Durumu:** FAZ 9 **Karar B** geçerlidir: `rust_core/` şu an deneysel/opsiyonel bir dizindir. Bağımsız `cargo test` kapısına sahiptir ancak Python ürün çalışma zamanına henüz bağlanmamıştır ve ürün kararlarını etkilemez.
+- **Dış Araçlar Yol Haritası:** Araştırılan ve elenen 9 araç arasından sisteme eklenecek olanlar (RTK, ai-wanderer havuz rotasyonu, Pollinations yedeği) **henüz koda entegre edilmemiştir**. Yalnızca kodlandığı ve testleri geçtiği gün bu belgenin 1. Bölümüne dahil edilecektir.
 
 ---
 
@@ -153,11 +161,11 @@ Anahtarlarınızı güvenli şekilde `.pineal_vault.json` kasasına koyabilir ve
 
 Sistem, gevşek testleri ve sahte mock'ları reddeden **Mutasyon Testi (Fault Injection)** disipliniyle korunmaktadır:
 ```bash
-# Tüm test süitini çalıştır (980+ test):
+# Tüm test süitini çalıştır (1014 test):
 pytest -q
 
 # Yeni motorların hedefli testleri:
-pytest tests/unit/test_gorev1_reel_video_chrono.py tests/unit/test_gorev2_depth_engine.py tests/unit/test_vault_providers_schema.py -q
+pytest tests/unit/test_gorev1_reel_video_chrono.py tests/unit/test_gorev2_depth_engine.py tests/unit/test_vault_providers_schema.py tests/unit/test_aspasia_depth_hukmu.py tests/unit/test_gorev2_artiklar.py -q
 ```
 - **0 Regresyon İlkesi:** Her yeni mimari ekleme, `comm` regresyon filtresinden geçirilerek eski testleri kırmadığı kanıtlanarak merge edilir.
 - **Mutasyon Kanıtı:** Güvenlik duvarı veya bellek kontrolleri kaldırıldığında testlerin kırmızıya (`FAILED`) düştüğü doğrulanmıştır.
