@@ -67,9 +67,15 @@ class ShadowExecutor:
                 fallback_reason="target_evidence_unavailable",
             )
 
-        # 1. Dark Triad Analizi (LLM gerektirmez — deterministik)
+        # 1. Strateji kaynagı (GÖREV 2 artıgı): psychodynamic_depth verdict
+        # ok ise BIRINCIL kaynaktır (yapısal indeksler); yoksa/bozuksa legacy
+        # eşik yolu denenir (analyze() sıfırları -> 'unavailable').
         dark = self.dark_triad.analyze(task_input.get('target_profile', {}))
-        strategy = self.dark_triad.generate_strategy(dark)
+        _depth = task_input.get("psychodynamic_depth")
+        if isinstance(_depth, dict) and _depth.get("verdict") == "ok":
+            strategy = self.dark_triad.strategy_from_depth(_depth)
+        else:
+            strategy = self.dark_triad.generate_strategy(dark)
 
         # [024 devamı] Gözlemlenebilir markör yoksa strateji ÜRETİLMEZ;
         # kısmi markör eşiği geçmediyse de strateji türetilmez. Sahte

@@ -24,22 +24,40 @@ from agent_core.agents.lilith_growth import LilithGrowthAgent
 
 
 def resolve_credentials(model: str) -> tuple[str | None, str | None, str]:
-    """OpenAI -> OpenRouter -> .pineal_vault.json sırasıyla API anahtarını çözer."""
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-    base_url = os.getenv("OPENAI_BASE_URL")
+    """Nous / OpenRouter / Vault / .env sırasıyla API anahtarını ve base_url'i çözer."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
+    base_url = os.getenv("OPENROUTER_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("NOUS_API_KEY") or os.getenv("OPENAI_API_KEY")
 
     if not api_key and os.path.exists(".pineal_vault.json"):
         try:
             with open(".pineal_vault.json", "r", encoding="utf-8") as vf:
                 vdata = json.load(vf)
-                api_key = vdata.get("api_key") or vdata.get("openrouter_key")
+                api_key = vdata.get("api_key") or vdata.get("openrouter_key") or vdata.get("nous_key")
+                if not api_key:
+                    # KASA SEMASI: providers.{ad}.api_key (yerel envanter).
+                    _provs = vdata.get("providers") if isinstance(vdata.get("providers"), dict) else {}
+                    _or_entry = _provs.get("openrouter") or _provs.get("nous_portal") or _provs.get("nous-research")
+                    if isinstance(_or_entry, dict):
+                        api_key = _or_entry.get("api_key")
+                    elif isinstance(_or_entry, str):
+                        api_key = _or_entry
         except Exception:
             pass
 
-    if api_key and not base_url and api_key.startswith("sk-or-v1-"):
-        base_url = "https://openrouter.ai/api/v1"
-        if model == "gpt-4o":
-            model = "anthropic/claude-3.5-sonnet"
+    if api_key and not base_url:
+        if api_key.startswith("sk-nous-"):
+            base_url = "https://inference-api.nousresearch.com/v1"
+        elif api_key.startswith("sk-or-v1-"):
+            base_url = "https://openrouter.ai/api/v1"
+
+    if model == "gpt-4o":
+        model = os.getenv("OPENROUTER_TIER_1_MODEL") or "anthropic/claude-sonnet-5"
 
     return api_key, base_url, model
 

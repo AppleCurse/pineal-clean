@@ -390,7 +390,8 @@ class PinealExecutor:
             self._log("INFO", f"[{task_id}] TAKİPÇİ DENETİMİ: {audit_res.verdict.upper()}")
             
             p_times = tp_info.get("post_times", [])
-            t_res = analyze_timing(p_times)
+            # GÖREV 2.2: hizali sayimlar yorungeye hiz-sinyali olarak verilir.
+            t_res = analyze_timing(p_times, engagement=posts_meta)
             if t_res:
                 input_data["timing_forensics"] = t_res
                 status.timing_forensics = t_res
@@ -420,12 +421,65 @@ class PinealExecutor:
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
 
+        # GÖREV 2.3/2.4: psikodinamik derinlik motoru (deterministik).
+        # Metin yoksa agirlik otomatik gorsel+zamansala kayar; motor ASLA
+        # halt etmez (hic kanal yoksa no_evidence verdict'i doner).
+        try:
+            from agent_core.services.psychodynamic_depth import analyze_depth
+            depth_res = analyze_depth(input_data)
+            input_data["psychodynamic_depth"] = depth_res
+            status.psychodynamic_depth = depth_res
+            _dw = depth_res.get("epistemic_weights", {})
+            self._log(
+                "INFO",
+                f"[{task_id}] DERİNLİK MOTORU: {depth_res.get('verdict')} "
+                f"guven={depth_res.get('confidence')} "
+                f"telafi={depth_res.get('compensation_index')} "
+                f"reaksiyon={depth_res.get('reaction_formation_index')}"
+            )
+        except Exception as e:
+            self._log("WARNING", f"[{task_id}] Derinlik motoru atlandı: {str(e)[:80]}")
+
+        # HÜKÜM-MÜHÜR: derinlik özeti kanonik kanıta yazılır (salt-okur
+        # Aspasia okuması için). evidence_type forensic_digest ->
+        # overall_confidence hesabına KATILMAZ (sayı şişirmez).
+        try:
+            _depth_doc = input_data.get("psychodynamic_depth")
+            if isinstance(_depth_doc, dict) and _depth_doc.get("verdict") == "ok":
+                status.evidence_chain.append({
+                    "agent": "psychodynamic_depth",
+                    "evidence_type": "forensic_digest",
+                    "result": {"depth": _depth_doc,
+                               "confidence": _depth_doc.get("confidence")},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "provenance": {"engine": "psychodynamic_depth",
+                                   "deterministic": True},
+                })
+        except Exception as e:
+            self._log("WARNING", f"[{task_id}] Derinlik kanıtı yazılamadı: {str(e)[:80]}")
+
         imgs = input_data.get("target_profile", {}).get("images", [])
         if imgs and isinstance(imgs[0], str) and imgs[0].startswith("http"):
             downloaded = await self._download_images(imgs)
             input_data["target_profile"]["images"] = downloaded
             # [035] fix: task bitince (her çıkış yolunda) silinecekleri kaydet.
             input_data["_downloaded_temp_images"] = downloaded
+            # GÖREV 2 artığı: PIL varsa sahneleme doygunluğu yerel
+            # dosyalardan ölçülür (yoksa None+not aynen kalır).
+            try:
+                _depth = input_data.get("psychodynamic_depth")
+                if isinstance(_depth, dict):
+                    from agent_core.services.psychodynamic_depth import measure_saturation
+                    _sat = measure_saturation(downloaded)
+                    if _sat.get("mean_saturation") is not None:
+                        _sig = (_depth.get("channels") or {}).get("staging", {})
+                        _sig = (_sig or {}).get("signals", {})
+                        if isinstance(_sig, dict):
+                            _sig["color_saturation"] = _sat["mean_saturation"]
+                            _sig["saturation_note"] = _sat["note"]
+                            status.psychodynamic_depth = _depth
+            except Exception as e:
+                self._log("WARNING", f"[{task_id}] Doygunluk ölçümü atlandı: {str(e)[:80]}")
 
         # --- PINEAL DETERMINISTIC 7-PILLAR ---
         pillar_start = datetime.now(timezone.utc)

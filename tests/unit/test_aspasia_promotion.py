@@ -382,7 +382,11 @@ def test_chat_prompt_carries_oversight_digest():
     assert res.confidence_assessment == "high"  # AspasiaResponse sozlesmesi
     prompt = captured["prompt"]
     assert "DENETİM KATMANI" in prompt
-    assert "ROUTING[friction_detector]" in prompt
+    # FAZ 2-EK: bostaki sistemde (call_log bos) ROUTING satiri ADAY olarak
+    # etiketlenir; "calisti" izlenimi veren yalın ROUTING[...] bicimi YASAK.
+    assert "ROUTING-ADAY[friction_detector]" in prompt
+    assert "henüz çağrı yok" in prompt
+    assert "ROUTING[friction_detector]" not in prompt
     assert "MALİYET: harcama=$0.0100" in prompt
 
 

@@ -122,6 +122,12 @@ class AspasiaChief:
             halted_reason = getattr(snapshot, "halted_reason", None)
             agent_runs = getattr(snapshot, "agent_runs", {}) or {}
 
+        # [FAZ 2] Enum repr ("PipelineStatus.COMPLETED") kullaniciya sizmaz;
+        # durum degeri normalize edilir (interface._status_value ile ayni kural).
+        from agent_core.aspasia.interface import _status_value
+
+        status = _status_value(status) or "unknown"
+
         lines = [
             f"Görev: {task_id} | Durum: {status}",
             f"Aktif Ajan: {current_agent or 'Yok'}",
@@ -190,8 +196,10 @@ class AspasiaChief:
         oversight_block = (
             "\nDENETİM KATMANI (routing/kota/maliyet/komut — kaynaklı özet):\n"
             f"{oversight}\n"
-            "Bu özet tek doğruluk kaynağındaki gerçek kararlardır: kullanıcı routing, "
-            "kota, masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
+            "Bu özet iki tür satır içerir, karıştırma: ROUTING-ADAY satırları PLANLANAN "
+            "rotadır (henüz çalışmadı) — 'çalıştı/gerçekleşti' diye anlatma; TELEMETRİ/ "
+            "SONUÇ/KOMUT/HAFIZA-DISK satırları GÖZLEMLENMİŞ gerçektir (HAFIZA-DISK = RAM boşken diskten okunan kanonik kayıt). Kullanıcı routing, kota, "
+            "masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
         ) if oversight else ""
 
         context_prompt = f"""
