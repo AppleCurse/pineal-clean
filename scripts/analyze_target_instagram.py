@@ -30,6 +30,14 @@ async def main():
         with open(vault_file, "r", encoding="utf-8") as f:
             v = json.load(f)
             api_key = v.get("api_key")
+            if not api_key:
+                # KASA SEMASI: providers.{ad}.api_key (yerel envanter).
+                _provs = v.get("providers")
+                _or_entry = _provs.get("openrouter") if isinstance(_provs, dict) else None
+                if isinstance(_or_entry, dict):
+                    api_key = _or_entry.get("api_key")
+                elif isinstance(_or_entry, str):
+                    api_key = _or_entry
             if api_key:
                 executor.llm_gateway.set_key(api_key)
                 print(f"[KASA] LLM API Anahtarı yüklendi: {api_key[:12]}...")

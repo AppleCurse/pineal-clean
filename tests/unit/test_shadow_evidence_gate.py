@@ -27,8 +27,31 @@ async def test_shadow_empty_target_produces_no_fabricated_profile():
 
 
 @pytest.mark.asyncio
-async def test_shadow_with_real_target_still_produces_profile():
+async def test_shadow_with_lexical_input_only_produces_no_strategy():
+    """GÖREV 2.1: kelime-yuku trait gozlemi DEGILDIR; strateji uretilmez."""
     executor = ShadowExecutor()
+    result = await executor.execute({
+        "target_profile": {
+            "bio": "Mükemmel, mükemmel, mükemmel, mükemmel, eşsiz, eşsiz, olağanüstü, benzersiz, seçilmiş. Mükemmeliyetçi ve hırslı bir lider.",
+            "posts": ["Başarı tek seçenektir.", "Kontrol bende."],
+        },
+        "user_profile": {"rituals": ["kahve"], "music": "klasik", "envies": "derin bağ"},
+        "target_beliefs": ["kontrolü elde tutmak"],
+    })
+    assert result.data_confidence is False
+    assert result.message == ""
+    assert result.strategy == "unavailable"
+    assert result.fallback_reason == "dark_triad_markers_unobserved"
+
+
+async def test_shadow_with_observed_traits_still_synthesizes(monkeypatch):
+    """GÖREV 2.1 sonrasi yetenek kilidi: gozlem verilirse sentez uretir."""
+    from agent_core.psychology.dark_triad import DarkTriadProfile
+    executor = ShadowExecutor()
+    monkeypatch.setattr(
+        executor.dark_triad, "analyze",
+        lambda profile_data: DarkTriadProfile(narcissism=0.8),
+    )
     result = await executor.execute({
         "target_profile": {
             "bio": "Mükemmel, mükemmel, mükemmel, mükemmel, eşsiz, eşsiz, olağanüstü, benzersiz, seçilmiş. Mükemmeliyetçi ve hırslı bir lider.",
@@ -39,7 +62,7 @@ async def test_shadow_with_real_target_still_produces_profile():
     })
     assert result.data_confidence is True
     assert isinstance(result.message, str) and len(result.message) > 0
-    assert result.strategy != "unavailable"
+    assert result.strategy == "mirroring"
     assert len(result.nlp_sequence) == 3
 
 

@@ -21,9 +21,13 @@ def test_dark_triad_strategy_vector():
     analyzer = DarkTriadAnalyzer()
     res = analyzer.analyze({"posts": ["mükemmel benzersiz seçilmiş"], "bio": ""})
     strategy = analyzer.generate_strategy(res)
-    # Kanıtsız "empathy" üretilmez; eşik altı işaret dürüstçe "unobserved"
-    # işaretlenir. Eşik aşan işaretler gerçek strateji üretir.
-    assert strategy["vector"] in ("mirroring", "alliance", "thrill", "unobserved")
+    # GÖREV 2.1: statik sozluk kaldirildi; kelime tekrar metinden trait
+    # turetemez -> strateji gozlemlenemedi, yapi temalarda tasinir.
+    assert strategy["vector"] == "unavailable"
+    assert res.theme_analysis is not None
+    assert res.theme_analysis["n_texts"] == 1
+    # Esik mantigi acik profillerde aynen calisir (verbatim koruma).
+    assert analyzer.generate_strategy(DarkTriadProfile(narcissism=0.8))["vector"] == "mirroring"
 
 
 @pytest.mark.asyncio

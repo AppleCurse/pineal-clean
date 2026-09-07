@@ -100,11 +100,11 @@
     {
       "id": "google-gemini",
       "display_name": "Google Gemini API",
-      "protocol": "gemini_generate",
+      "protocol": "openai_chat",
       "access_method": "official_api",
       "connection_types": ["api_key"],
       "default_tier": "api_key",
-      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
       "aliases": ["gemini"],
       "passthrough_models": true,
       "support": "catalog_only",

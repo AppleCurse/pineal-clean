@@ -524,6 +524,116 @@ def _load_vault(vault_file: str = VAULT_FILE) -> dict:
     return data
 
 
+# KASA SEMASI — yerel .pineal_vault.json'daki GERCEK yapi:
+#   {"providers": {"<operator-adi>": {"api_key": "..."}, ...}}
+# Operator adlandirmasi serbest metindir ("gemini", "nvidia", "deepseek",
+# ...); normalize edilip gateway provider ID'sine cevrilir. Degerler ASLA
+# loglanmaz/isaretlenmez/dondurulmez — yalniz ID listeleri (ad/adet).
+_VAULT_PROVIDER_ALIASES: dict = {
+    "groq": "groq",
+    "deepseek": "deepseek",
+    "cerebras": "cerebras",
+    "nousresearch": "nous-research",
+    "nous": "nous-research",
+    "mistral": "mistral",
+    "together": "together",
+    "fireworks": "fireworks",
+    "alibabadashscope": "alibaba-dashscope",
+    "dashscope": "alibaba-dashscope",
+    "alibaba": "alibaba-dashscope",
+    "sambanova": "sambanova",
+    "nvidianim": "nvidia-nim",
+    "nvidiannim": "nvidia-nim",  # "NVIDIA NIM" yazimi
+    "nvidia": "nvidia-nim",
+    "nim": "nvidia-nim",
+    "huggingface": "huggingface",
+    "hf": "huggingface",
+    "deepinfra": "deepinfra",
+    "perplexity": "perplexity",
+    "google": "google-gemini",
+    "gemini": "google-gemini",
+    "googlegemini": "google-gemini",
+    "geminibackup": "google-gemini-backup",
+    "googlegeminibackup": "google-gemini-backup",
+    "vertex": "google-gemini-vertex",
+    "geminivertex": "google-gemini-vertex",
+    "googlegeminivertex": "google-gemini-vertex",
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "xai": "xai",
+    "grok": "xai",
+    "cohere": "cohere",
+    "azureopenai": "azure-openai",
+    "azure": "azure-openai",
+    "iflow": "iflow",
+    # OpenRouter ozel: legacy istemci anahtaridir (set_provider_key degil
+    # set_key yoluna duser); yalniz top-level `api_key` yoksa yedek olur.
+    "openrouter": "openrouter",
+    "or": "openrouter",
+}
+
+
+def _normalize_vault_provider_name(name: object) -> str:
+    """Kasa operator adini karsilastirilabilir forma indirir (kucuk harf;
+    bosluk/tire/alt-cizgi/nokta yoksayilir)."""
+    if not isinstance(name, str):
+        return ""
+    return "".join(ch for ch in name.strip().lower() if ch not in " -_.")
+
+
+def _extract_vault_provider_keys(vault: dict) -> tuple:
+    """Kasa dict'inden saglayici anahtarlarini cikarir (salt-okur ayristirma).
+
+    Kaynaklar (sirasiyla):
+      1. `providers.{ad}.api_key` — operator envanteri (GERCEK yerel sema).
+         Duz-metin deger (`{"deepseek": "sk-..."}`) uyumluluk icin kabul edilir.
+      2. `provider_keys.{pid}` — eski duz sozlesme; ayni dosyada varsa EZER
+         (acik override).
+
+    Donus: (uygulanan {pid: key}, openrouter_yedek_key|None,
+            {"unknown": [adlar], "malformed": [adlar]}).
+    Cagiran, donen ham dict'leri kasadan DUSURMELIDIR (sir hijyeni: degerler
+    oda durumunda barinmaz); bu fonksiyon kasa dict'ini DEGISTIRMEZ.
+    """
+    applied: dict = {}
+    openrouter_key = None
+    skipped: dict = {"unknown": [], "malformed": []}
+    if not isinstance(vault, dict):
+        return applied, openrouter_key, skipped
+    providers = vault.get("providers")
+    if isinstance(providers, dict):
+        for raw_name, entry in providers.items():
+            pid = _VAULT_PROVIDER_ALIASES.get(_normalize_vault_provider_name(raw_name))
+            if pid is None:
+                skipped["unknown"].append(str(raw_name))
+                continue
+            if isinstance(entry, dict):
+                key = entry.get("api_key")
+            elif isinstance(entry, str):
+                key = entry
+            else:
+                key = None
+            if not isinstance(key, str) or not key.strip():
+                skipped["malformed"].append(str(raw_name))
+                continue
+            if pid == "openrouter":
+                openrouter_key = key.strip()
+            else:
+                applied[pid] = key.strip()
+    flat = vault.get("provider_keys")
+    if isinstance(flat, dict):
+        for raw_pid, key in flat.items():
+            pid = raw_pid.strip().lower() if isinstance(raw_pid, str) else ""
+            if not pid or not isinstance(key, str) or not key.strip():
+                skipped["malformed"].append(str(raw_pid))
+                continue
+            if pid == "openrouter":
+                openrouter_key = key.strip()
+            else:
+                applied[pid] = key.strip()
+    return applied, openrouter_key, skipped
+
+
 # [AUDIT P0-4] Oda kayıt defteri sınırları. client_id istemcinin seçtiği,
 # doğrulanmayan bir string olduğu için sınırsız oda = sınırsız PinealExecutor +
 # sender task + kuyruk = OOM (ölçülen: 300 farklı client_id -> 300 kalıcı oda).
@@ -624,7 +734,15 @@ def get_room(client_id: str) -> dict:
         # Otomatik Kasa (.pineal_vault.json / .env) yüklemesi
         vault = _load_vault()
 
-        api_key = vault.pop("api_key", None) or os.getenv("OPENROUTER_API_KEY")
+        # KASA SEMASI: `providers.{ad}.api_key` (operator envanteri) + eski
+        # duz `provider_keys` (ayni dosyada varsa ezer). Ham dict'ler odada
+        # BARINMAZ: okunur okunmaz dusurulur (sir hijyeni), yalniz uygulanan/
+        # atlanan ID listeleri isaretlenir (deger asla).
+        file_provider_keys, file_or_key, file_skipped = _extract_vault_provider_keys(vault)
+        vault.pop("providers", None)
+        vault.pop("provider_keys", None)
+
+        api_key = vault.pop("api_key", None) or file_or_key or os.getenv("OPENROUTER_API_KEY")
         if api_key and not api_key.startswith("sk-or-v1-YOUR"):
             executor.llm_gateway.set_key(api_key)
             if shadow_executor is not None:
@@ -632,6 +750,31 @@ def get_room(client_id: str) -> dict:
             if dialogue_manager is not None:
                 dialogue_manager.llm.set_key(api_key)
             vault["or_key"] = True
+
+        # FAZ 3: dosyadan yuklenen dogrudan-saglayici anahtarlari (yukarida
+        # parse edildi; ham dict'ler odadan dusuruldu). Yalniz oda executor
+        # gateway'ine uygulanir (/api/vault'in aksine shadow/dialogue
+        # kapsanmaz — dosya yuklemesi oda-scoped'tur).
+        if file_provider_keys:
+            applied = []
+            for provider_id, provider_key in file_provider_keys.items():
+                try:
+                    executor.llm_gateway.set_provider_key(provider_id, provider_key)
+                    applied.append(str(provider_id))
+                except (ValueError, AttributeError):
+                    file_skipped["unknown"].append(str(provider_id))
+            if applied:
+                vault["provider_keys_set"] = sorted(set(applied))
+        if file_skipped["unknown"] or file_skipped["malformed"]:
+            vault["provider_keys_skipped"] = {
+                "unknown": sorted(set(file_skipped["unknown"])),
+                "malformed": sorted(set(file_skipped["malformed"])),
+            }
+            logger.warning(
+                "VAULT_PROVIDERS_SKIPPED: unknown=%s malformed=%s",
+                vault["provider_keys_skipped"]["unknown"],
+                vault["provider_keys_skipped"]["malformed"],
+            )
 
         tavily = vault.get("tavily_key") or os.getenv("TAVILY_API_KEY")
         # [FIX] .env.example/SearchEngine "SERPAPI_API_KEY" kullanır; eski
@@ -1693,6 +1836,9 @@ class VaultPayload(BaseModel):
     local_model: str = ""
     # Optional so omitted != explicit false (UI toggle must be able to turn local OFF).
     use_local: Optional[bool] = None
+    # FAZ 3: dogrudan-saglayici anahtarlari {provider_id: key}. Yalniz odaya
+    # ozel gateway bellegine yazilir; degerler asla loglanmaz/dondurulmez.
+    provider_keys: Optional[Dict[str, str]] = None
     
 @app.post("/api/vault")
 async def api_vault(req: VaultPayload):
@@ -1710,6 +1856,30 @@ async def api_vault(req: VaultPayload):
         vault["or_key"] = True
         broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif — canlı LLM kilidi açıldı.")
         
+    # FAZ 3: dogrudan-saglayici anahtarlari (oda gateway bellegi; degerler
+    # loglanmaz, yalniz uygulanan saglayici ID'leri isaretlenir).
+    if req.provider_keys:
+        applied = []
+        gateways = [executor.llm_gateway]
+        if shadow_executor is not None:
+            gateways.append(shadow_executor.llm_gateway)
+        if dialogue_manager is not None:
+            gateways.append(dialogue_manager.llm)
+        for provider_id, provider_key in req.provider_keys.items():
+            ok = True
+            for gateway in gateways:
+                try:
+                    gateway.set_provider_key(provider_id, provider_key)
+                except (ValueError, AttributeError):
+                    ok = False
+            if ok:
+                applied.append(str(provider_id))
+            else:
+                broadcast_log(req.client_id, "WARNING", f"KASA: saglayici anahtari uygulanamadi: {provider_id}")
+        if applied:
+            vault["provider_keys_set"] = sorted(set(applied))
+            broadcast_log(req.client_id, "INFO", f"KASA: {len(applied)} dogrudan-saglayici anahtari havuza eklendi.")
+
     if req.local_url or req.local_model or req.use_local is not None:
         active = bool(req.use_local) if req.use_local is not None else bool(vault.get("use_local", False))
         executor.llm_gateway.set_local_config(

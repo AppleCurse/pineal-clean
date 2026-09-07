@@ -42,15 +42,20 @@ def test_dark_triad_below_threshold_strategy_unobserved():
     assert strategy["vector"] == "unobserved"
 
 
-def test_dark_triad_observed_markers_still_score():
+def test_dark_triad_lexical_scoring_removed_themes_carry_structure():
+    """GÖREV 2.1: kelime-sayma trait uretmez; yapi temalarda yasar."""
     analyzer = DarkTriadAnalyzer()
     profile = analyzer.analyze({
         "bio": "Mükemmel mükemmel mükemmel mükemmel mükemmel mükemmel mükemmel mükemmel",
         "posts": [],
     })
-    assert profile.narcissism > 0.7
-    assert profile.exploitability == 0.9
-    assert analyzer.generate_strategy(profile)["vector"] == "mirroring"
+    assert profile.narcissism == 0.0
+    assert profile.exploitability == 0.0
+    assert analyzer.generate_strategy(profile)["vector"] == "unavailable"
+    themes = profile.theme_analysis
+    assert themes["n_texts"] == 1
+    assert themes["n_themes"] == 1
+    assert themes["repetition_score"] == 1.0
 
 
 # ------------------------------------------------------------------ #
@@ -81,9 +86,13 @@ async def test_shadow_no_fabricated_beliefs_without_input():
         },
         "user_profile": {"rituals": ["kahve"], "music": "klasik", "envies": "bağ"},
     })
-    # Kullanıcı inancı yok: varsayılan 'anlaşılmak'/'özel hissetmek' yok
+    # GÖREV 2.1: sozluk-skorlama kaldirildi; gozlemlenebilir strateji
+    # yoksa mesaj URETILMEZ (bos mesaj = inanctan da guclu garanti).
+    assert result.message == ""
     assert "anlaşılmak" not in result.message.lower()
-    assert result.data_confidence is True
+    assert result.data_confidence is False
+    assert result.strategy == "unavailable"
+    assert result.fallback_reason == "dark_triad_markers_unobserved"
 
 
 # ------------------------------------------------------------------ #

@@ -87,6 +87,15 @@ async def test_shadow_executor_deterministic_synthesis(monkeypatch):
     mock_pattern_res = MagicMock()
     mock_pattern_res.message = "Derin bir nefes al ve düşüncelerini durdur."
     monkeypatch.setattr(executor.pattern, "execute", AsyncMock(return_value=mock_pattern_res))
+
+    # GÖREV 2.1: sozluk-skorlama kaldirildi; sentez yolunu ACIK gozlemle
+    # besle (kelime->trait baglantisi artik yoktur; yoklugu govde
+    # testlerinde kilitlidir, sentez burada kilitlenir).
+    from agent_core.psychology.dark_triad import DarkTriadProfile
+    monkeypatch.setattr(
+        executor.dark_triad, "analyze",
+        lambda profile_data: DarkTriadProfile(narcissism=0.8),
+    )
     
     task_input = {
         "target_profile": {

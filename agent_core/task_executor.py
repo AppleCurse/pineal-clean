@@ -390,7 +390,8 @@ class PinealExecutor:
             self._log("INFO", f"[{task_id}] TAKİPÇİ DENETİMİ: {audit_res.verdict.upper()}")
             
             p_times = tp_info.get("post_times", [])
-            t_res = analyze_timing(p_times)
+            # GÖREV 2.2: hizali sayimlar yorungeye hiz-sinyali olarak verilir.
+            t_res = analyze_timing(p_times, engagement=posts_meta)
             if t_res:
                 input_data["timing_forensics"] = t_res
                 status.timing_forensics = t_res
@@ -419,6 +420,25 @@ class PinealExecutor:
                 self._log("INFO", f"[{task_id}] GÖRSEL KANIT: {visual_ev.visual_evidence_summary}")
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
+
+        # GÖREV 2.3/2.4: psikodinamik derinlik motoru (deterministik).
+        # Metin yoksa agirlik otomatik gorsel+zamansala kayar; motor ASLA
+        # halt etmez (hic kanal yoksa no_evidence verdict'i doner).
+        try:
+            from agent_core.services.psychodynamic_depth import analyze_depth
+            depth_res = analyze_depth(input_data)
+            input_data["psychodynamic_depth"] = depth_res
+            status.psychodynamic_depth = depth_res
+            _dw = depth_res.get("epistemic_weights", {})
+            self._log(
+                "INFO",
+                f"[{task_id}] DERİNLİK MOTORU: {depth_res.get('verdict')} "
+                f"guven={depth_res.get('confidence')} "
+                f"telafi={depth_res.get('compensation_index')} "
+                f"reaksiyon={depth_res.get('reaction_formation_index')}"
+            )
+        except Exception as e:
+            self._log("WARNING", f"[{task_id}] Derinlik motoru atlandı: {str(e)[:80]}")
 
         imgs = input_data.get("target_profile", {}).get("images", [])
         if imgs and isinstance(imgs[0], str) and imgs[0].startswith("http"):

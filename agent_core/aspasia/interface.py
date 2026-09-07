@@ -17,6 +17,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +27,36 @@ from agent_core.services.cognitive_router import GOAL_FOCUS
 # Goal sozlesmesi COGNITIVE_ROUTER'da turetilir (tek kaynak); Aspasia kendi
 # vocabulariesini ICATMAZ — Literal, gercek GOAL_FOCUS anahtarlarindan olusur.
 _GOAL_IDS = tuple(GOAL_FOCUS.keys())
+
+
+def _status_value(status: Any) -> Any:
+    """PipelineStatus/str/None -> karsilastirilabilir durum degeri.
+
+    [FAZ 2 / N1-ikizi] Python 3.11'de f"{PipelineStatus.COMPLETED}" ->
+    'PipelineStatus.COMPLETED' (deger degil, repr). Aspasia metinleri ve
+    /api/aspasia/state bununla normalize edilir; FastAPI zaten enum'u
+    value olarak serilestirdigi icin API JSON ciktisi DEGISTMEZ.
+    """
+    value = getattr(status, "value", status)
+    return str(value).lower() if value is not None else None
+
+
+def _normalize_target_url(url: Optional[str]) -> str:
+    """[FAZ 2] Paylasim artiklarini dusur, katiligi koru.
+
+    Mobil paylasim URL'leri (?igsh=, ?utm_source=, #fragman) ayni profile
+    isaret eder; _TARGET_RE eslesmesi oncesi dusurulur. Host/path kurali
+    DEGISMEZ: yalniz https + instagram.com|instagr.am + tek segment kabul
+    edilir (lookalike host ve hedefsiz komut yine reddedilir).
+    """
+    candidate = (url or "").strip()
+    try:
+        parts = urlsplit(candidate)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() != "https" or not parts.netloc:
+        return ""
+    return f"https://{parts.netloc}{parts.path}"
 
 # ---------------------------------------------------------------- inspectors
 
@@ -87,6 +118,23 @@ class RoutingInspector:
                         variants.append(entry)
             except Exception as exc:  # pragma: no cover
                 variants.append({"error": f"{type(exc).__name__}: {exc}"[:120]})
+        # FAZ 3: elenen saglayicilar + nedenleri (havuz gorunurlugu).
+        # route_diagnostics yoksa (eski sahte gateway) bos kalir; explain asla kirilmaz.
+        blocked: List[Dict[str, Any]] = []
+        if chain:
+            diagnostics = getattr(gw, "route_diagnostics", None)
+            if callable(diagnostics):
+                try:
+                    info = diagnostics(chain[0]) or {}
+                    for provider_id, entry in (info.get("skipped") or {}).items():
+                        if isinstance(entry, dict):
+                            blocked.append({
+                                "provider": provider_id,
+                                "reason": entry.get("reason"),
+                                "key_present": bool(entry.get("key_present")),
+                            })
+                except Exception:
+                    blocked = []
         return {
             "agent": agent_name,
             "task": task,
@@ -94,6 +142,7 @@ class RoutingInspector:
             "chain_source": source,
             "selected": variants[0] if variants else None,
             "alternatives": variants[1:],
+            "blocked": blocked,
             "fallback_rule": (
                 "gecici hata -> siradaki rota, o biterse siradaki model; "
                 "spend-cap/paid-escalation/unknown-pricing/substitution reddi -> ZINCIR DURUR"
@@ -182,7 +231,11 @@ class QuotaReader:
         else:
             try:
                 snap = gov.snapshot(provider)
-                status = getattr(snap.status, "name", str(snap.status))
+                # [FAZ 2] .name ("UNKNOWN") degil .value ("unknown"): digest
+                # uyelik testi ve limits "unknown" sozlesmesi lowercase'dir.
+                # Buyuk-harf ad, bilinmeyeni gozlemlenmis gibi gosteriyordu.
+                status = getattr(snap.status, "value", snap.status)
+                status = str(status) if status is not None else "unknown"
                 remaining = getattr(snap, "remaining_fraction", None)
                 source = getattr(snap, "source", None)
             except Exception:  # pragma: no cover
@@ -256,12 +309,15 @@ class AgentInspector:
                 "agent_runs": getattr(snapshot, "agent_runs", {}),
             }
         raw_status = snapshot.get("status")
+        # [FAZ 2] status normalize edilir (enum repr sizintisi yok); is_final
+        # ayni normalize degerden turetilir (cift-kaynak karsilastirma yok).
+        norm_status = _status_value(raw_status)
         return {
             "task_id": snapshot.get("task_id"),
-            "status": raw_status,
+            "status": norm_status,
             # Faz-6: snapshot terminal durumdaysa ARTIK CANLI degildir;
             # canliyi "bayat" diye etiketle — Aspasia kanonik kaynaga yonlendirilir.
-            "is_final": str(getattr(raw_status, "value", raw_status)) in FINAL_TASK_STATUSES,
+            "is_final": (norm_status or "") in FINAL_TASK_STATUSES,
             "planned": snapshot.get("planned_agents") or [],
             "completed": snapshot.get("completed_agents") or [],
             "current": snapshot.get("current_agent"),
@@ -390,7 +446,9 @@ class AspasiaCommandGateway:
             return AspasiaCommandResult(command_id=command_id, accepted=True,
                                         intent=intent.intent, reason="read_only")
         # run_profile_analysis — TEK yazma eylemi; hedef dogrulama sart.
-        url = (intent.target_url or "").strip()
+        # [FAZ 2] Eslesme normalize URL uzerinden (?igsh=/fragment dusmus);
+        # dispatch'e de normalize URL gider (asagi akis ayni hedefi gorur).
+        url = _normalize_target_url(intent.target_url)
         if not _TARGET_RE.match(url):
             self._record(command_id=command_id, status="rejected", intent=intent.intent,
                          reason="unsupported_or_missing_target")
@@ -428,9 +486,14 @@ class AspasiaCommandGateway:
 
 # Kanonik sonuc icin terminal durumlar (PipelineStatus degerleri) — snapshot
 # bunlardan birindeyse ARTIK CANLI degildir; kanonik kaynak CanonicalMemory'dir.
+# [FAZ 2] backend.api._TERMINAL_PIPELINE_STATES ile SENKRON tutulur: kullanici
+# iptali/durdurmasi (cancelled/canceled/halted_user) da terminaldir; eksik
+# kalirsa Aspasia bayat snapshot'i canli sanir ve SONUC satiri uretmez.
+# Senkron kilidi: tests/unit/test_aspasia_state_consistency.py.
 FINAL_TASK_STATUSES = {
     "completed", "partially_completed", "halted_evidence", "halted_critical",
     "halted_frequency", "failed",
+    "cancelled", "canceled", "halted_user",
 }
 
 
@@ -493,6 +556,78 @@ class MissionResultReader:
         }
 
 
+class DiskMemoryBridge:
+    """RAM bosken CanonicalMemory (disk) salt-okur koprusu — PARALEL STORE YOK.
+
+    Kaynak: executor.memory (CanonicalMemory SoT). Dizin LISTELENIR, her aday
+    inspect_task_memory ile fail-closed OKUNUR (bozuk dosya asla icerik gibi
+    sunulmaz; kayip dosya zaten listede yoktur). En fazla _MAX_INSPECT aday
+    incelenir (dosya-adi ters-sirasi oncelikli: op_YYYYMMDDHHMMSS_* kronolojiktir).
+    """
+
+    _MAX_INSPECT = 25
+    _MAX_REPORT = 3
+
+    def __init__(self, executor: Any = None):
+        self._executor = executor
+
+    def _storage_dir(self) -> Optional[str]:
+        memory = getattr(self._executor, "memory", None)
+        path = getattr(memory, "storage_path", None)
+        if not path or not isinstance(path, str):
+            return None
+        return path if os.path.isdir(path) else None
+
+    def latest(self) -> Dict[str, Any]:
+        """{'state': ok|empty|unsupported, 'tasks': [...], 'corrupted': N}."""
+        memory = getattr(self._executor, "memory", None)
+        inspect = getattr(memory, "inspect_task_memory", None)
+        storage = self._storage_dir()
+        if not callable(inspect) or storage is None:
+            return {"state": "unsupported", "tasks": [], "corrupted": 0}
+        try:
+            names = sorted(
+                (n for n in os.listdir(storage)
+                 if n.endswith(".json") and n != "learnings.json"),
+                reverse=True,
+            )
+        except OSError:
+            return {"state": "unsupported", "tasks": [], "corrupted": 0}
+        ready: List[Dict[str, Any]] = []
+        corrupted = 0
+        for name in names[: self._MAX_INSPECT]:
+            task_id = name[: -len(".json")]
+            # Karantina/yedek artefaktlari (*.corrupt.*, *.tmp) .json ile
+            # bitmedigi icin listeye girmez; task_id disi kokler atlanir.
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+                continue
+            try:
+                result = inspect(task_id)
+            except Exception:
+                corrupted += 1
+                continue
+            if not isinstance(result, dict):
+                continue
+            if result.get("state") == "CORRUPTED":
+                corrupted += 1
+                continue
+            if result.get("state") != "READY":
+                continue
+            data = result.get("data") or {}
+            evidence = data.get("evidence")
+            ready.append({
+                "task_id": task_id,
+                "last_updated": data.get("last_updated"),
+                "evidence_count": len(evidence) if isinstance(evidence, list) else None,
+                "confidence": data.get("confidence"),
+            })
+            if len(ready) >= self._MAX_REPORT:
+                break
+        if not ready and not corrupted:
+            return {"state": "empty", "tasks": [], "corrupted": 0}
+        return {"state": "ok", "tasks": ready, "corrupted": corrupted}
+
+
 def build_oversight_digest(
     gateway: Any,
     room_state: Any = None,
@@ -514,12 +649,28 @@ def build_oversight_digest(
         if chain:
             has_content = True
             selected = routing.get("selected") or {}
+            # FAZ 2-EK: aday rota, gozlemlenmis gercek gibi sunulmaz. Sistem
+            # bostayken (call_log'da bu ajana ait cagri yokken) uretilen
+            # ROUTING satiri PLAN'dir; Aspasia bunu "calisti" diye anlatirsa
+            # halusinasyondur. Cagri varsa son gozlem (model@provider) eklenir.
+            observed = TelemetryReader(gateway).recent(agent_id=str(routing.get("agent")))
+            if observed:
+                kind = "ROUTING"
+                last = observed[-1]
+                fact_suffix = (
+                    f" gozlemlenen={last.get('actual_model') or last.get('model')}"
+                    f"@{last.get('provider')}"
+                )
+            else:
+                kind = "ROUTING-ADAY"
+                fact_suffix = " (henüz çağrı yok; bu satır plan, gerçekleşmiş karar değil)"
             lines.append(
-                "ROUTING[" + str(routing.get("agent")) + "]: "
+                kind + "[" + str(routing.get("agent")) + "]: "
                 f"chain={'>'.join(chain)} kaynak={routing.get('chain_source')}"
-                + (f" secilen={selected.get('route_key')} ucan={selected.get('endpoint')}"
+                + (f" ilk-siradaki={selected.get('route_key')}"
                    if selected else "")
                 + (f" indirim={selected.get('discount_pct')}%" if selected.get("discount_pct") else "")
+                + fact_suffix
             )
     except Exception:  # pragma: no cover
         pass
@@ -610,6 +761,27 @@ def build_oversight_digest(
                 elif result.get("state") == "missing":
                     has_content = True
                     lines.append("SONUÇ: kanonik kayıt yok — görev henüz mühürlenmemiş olabilir")
+            # RAM-DISK KOPRUSU: odada canli/bitmis gorev YOKSA (RAM bos) ve
+            # diskte kanonik kayit VARSA, Aspasia diskten okur — RAM boslugu
+            # "hicbir sey olmadi" diye anlatilmaz. RAM doluysa satir eklenmez.
+            if not status.get("task_id") and not finished:
+                disk = DiskMemoryBridge(executor).latest()
+                if disk.get("state") == "ok":
+                    has_content = True
+                    chunks = []
+                    for task in disk.get("tasks") or []:
+                        conf = task.get("confidence")
+                        chunks.append(
+                            f"{task.get('task_id')}:kanıt={task.get('evidence_count')},"
+                            f"güven={('%.2f' % conf) if isinstance(conf, (int, float)) else '?'}"
+                        )
+                    suffix = ""
+                    if disk.get("corrupted"):
+                        suffix = f" bozuk={disk['corrupted']}(kurtarma-gerekir)"
+                    lines.append(
+                        "HAFIZA-DISK: " + (" | ".join(chunks) if chunks else "kayıt-yok")
+                        + suffix + " (RAM boş; diskten okundu)"
+                    )
         except Exception:  # pragma: no cover
             pass
     if command_gateway is not None:
