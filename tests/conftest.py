@@ -45,3 +45,13 @@ def _isolate_rate_limit_state():
     api._rate_buckets.clear()
     yield
     api._rate_buckets.clear()
+
+@pytest.fixture(autouse=True)
+def _clear_environment_secret_values_cache():
+    try:
+        from agent_core.utils.security import _extract_secrets_from_env
+    except ImportError:
+        yield
+        return
+    yield
+    _extract_secrets_from_env.cache_clear()

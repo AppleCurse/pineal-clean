@@ -9,3 +9,7 @@
 ## 2025-02-24 - Async SQLite Concurrency
 **Learning:** When offloading synchronous SQLite operations to threads using `asyncio.to_thread()`, running multiple writes concurrently via `asyncio.gather()` triggers SQLite locking issues because it spawns a separate thread for every item, violating SQLite concurrency limitations.
 **Action:** When batch writing to SQLite in an async context, collect the writes into a single synchronous function and offload the entire sequential batch loop to a single background thread using `asyncio.to_thread()`.
+
+## 2024-05-25 - Safe Environment Caching
+**Learning:** Caching static environment variables (like `_environment_secret_values()` without arguments) creates a security regression if secrets are dynamically modified at runtime (e.g. during testing or hot-reloads) as the new secrets bypass redaction.
+**Action:** When using `@functools.lru_cache` to speed up repetitive `os.environ` parsing, extract the logic to a parameterized function and pass `tuple(os.environ.items())` as the argument. This acts as a dynamic cache key that safely invalidates when the environment mutates.
