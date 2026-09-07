@@ -196,8 +196,10 @@ class AspasiaChief:
         oversight_block = (
             "\nDENETİM KATMANI (routing/kota/maliyet/komut — kaynaklı özet):\n"
             f"{oversight}\n"
-            "Bu özet tek doğruluk kaynağındaki gerçek kararlardır: kullanıcı routing, "
-            "kota, masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
+            "Bu özet iki tür satır içerir, karıştırma: ROUTING-ADAY satırları PLANLANAN "
+            "rotadır (henüz çalışmadı) — 'çalıştı/gerçekleşti' diye anlatma; TELEMETRİ/ "
+            "SONUÇ/KOMUT satırları GÖZLEMLENMİŞ gerçektir. Kullanıcı routing, kota, "
+            "masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
         ) if oversight else ""
 
         context_prompt = f"""

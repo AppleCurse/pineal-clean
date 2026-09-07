@@ -172,7 +172,7 @@ _AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
     ("fireworks", "FIREWORKS_API_KEY"),
     ("alibaba-dashscope", "DASHSCOPE_API_KEY"),
     ("sambanova", "SAMBANOVA_API_KEY"),
-    ("nvidia-nim", "NVIDIA_NIM_API_KEY"),
+    ("nvidia-nim", "NVIDIA_API_KEY"),
     ("huggingface", "HUGGINGFACE_API_KEY"),
     ("deepinfra", "DEEPINFRA_API_KEY"),
     ("perplexity", "PERPLEXITY_API_KEY"),
@@ -189,6 +189,13 @@ _DIAGNOSTIC_ONLY_PROVIDERS: tuple[tuple[str, str], ...] = (
     ("xai", "XAI_API_KEY"),
     ("cohere", "COHERE_API_KEY"),
     ("azure-openai", "AZURE_OPENAI_API_KEY"),
+    # FAZ 3-EK: operator envanterindeki ek anahtarlar. iflow = ozel ag
+    # gecidi (baz URL/protokol bilinmeden rota TEKLIF EDILMEZ); yedek/
+    # vertex gemini anahtarlari = tasiyici destegi yok (rotasyon ayri is).
+    # Hepsi tani ekraninda GORUNUR (sessiz yutma yok).
+    ("iflow", "IFLOW_API_KEY"),
+    ("google-gemini-backup", "GEMINI_BACKUP_API_KEY"),
+    ("google-gemini-vertex", "GEMINI_VERTEX_TOKEN"),
 )
 
 _KNOWN_PROVIDER_KEY_IDS: frozenset = frozenset(

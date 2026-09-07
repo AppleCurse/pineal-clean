@@ -28,7 +28,8 @@ def _all_key_envs():
     envs += [env for _, env in _DIAGNOSTIC_ONLY_PROVIDERS]
     envs += ["OPENROUTER_API_KEY", "PINEAL_ALLOW_PAID_ESCALATION",
              "PINEAL_ALLOW_UNPRICED_MODELS", "OPENROUTER_MAX_SPEND_USD",
-             "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR"]
+             "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR",
+             "NVIDIA_NIM_API_KEY"]  # eski ad; okunmamali (asagida kilitli)
     for pid, _ in _AGENT_DIRECT_PROVIDER_KEYS:
         envs.append("PINEAL_PROVIDER_MODELS_" + pid.upper().replace("-", "_"))
     return envs
@@ -299,3 +300,39 @@ def test_explain_without_diagnostics_stays_compatible():
 
     view = RoutingInspector(_LegacyGW()).explain("friction_detector")
     assert view["blocked"] == []
+
+
+# ------------------------------------------------------------------ #
+# FAZ 3-EK: gercek envanter adlari + tasiyicisiz gorunurluk
+# ------------------------------------------------------------------ #
+def test_nvidia_standard_env_name_recognized(monkeypatch):
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvapi-x")
+    gw = LLMGateway()
+    entry = gw.route_diagnostics("vendor/x7")["skipped"]["nvidia-nim"]
+    assert entry["key_present"] is True
+    assert entry["key_source"] == "env"
+
+
+def test_nvidia_legacy_env_name_not_read(monkeypatch):
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "legacy-x")
+    gw = LLMGateway()
+    entry = gw.route_diagnostics("vendor/x7")["skipped"]["nvidia-nim"]
+    assert entry["reason"] == "no_key"
+    assert entry["key_present"] is False
+
+
+def test_inventory_keys_visible_as_diagnostic_only(monkeypatch):
+    monkeypatch.setenv("IFLOW_API_KEY", "if-x")
+    monkeypatch.setenv("GEMINI_BACKUP_API_KEY", "gb-x")
+    monkeypatch.setenv("GEMINI_VERTEX_TOKEN", "gv-x")
+    gw = LLMGateway()
+    diag = gw.route_diagnostics("vendor/x7")
+    for pid in ("iflow", "google-gemini-backup", "google-gemini-vertex"):
+        assert diag["skipped"][pid]["reason"] == "transport_unsupported"
+        assert diag["skipped"][pid]["key_present"] is True
+    # tasiyicisiz anahtar asla rota teklif etmez
+    offered_providers = {o["provider"] for o in diag["offered"]}
+    assert not (offered_providers & {"iflow", "google-gemini-backup", "google-gemini-vertex"})
+    # ...ama kasa/vault kabul eder (gorunurluk icin)
+    gw.set_provider_key("iflow", "k")
+    assert gw._provider_key_source("iflow", "IFLOW_API_KEY") == "instance"

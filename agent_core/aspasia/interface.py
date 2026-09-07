@@ -577,12 +577,28 @@ def build_oversight_digest(
         if chain:
             has_content = True
             selected = routing.get("selected") or {}
+            # FAZ 2-EK: aday rota, gozlemlenmis gercek gibi sunulmaz. Sistem
+            # bostayken (call_log'da bu ajana ait cagri yokken) uretilen
+            # ROUTING satiri PLAN'dir; Aspasia bunu "calisti" diye anlatirsa
+            # halusinasyondur. Cagri varsa son gozlem (model@provider) eklenir.
+            observed = TelemetryReader(gateway).recent(agent_id=str(routing.get("agent")))
+            if observed:
+                kind = "ROUTING"
+                last = observed[-1]
+                fact_suffix = (
+                    f" gozlemlenen={last.get('actual_model') or last.get('model')}"
+                    f"@{last.get('provider')}"
+                )
+            else:
+                kind = "ROUTING-ADAY"
+                fact_suffix = " (henüz çağrı yok; bu satır plan, gerçekleşmiş karar değil)"
             lines.append(
-                "ROUTING[" + str(routing.get("agent")) + "]: "
+                kind + "[" + str(routing.get("agent")) + "]: "
                 f"chain={'>'.join(chain)} kaynak={routing.get('chain_source')}"
-                + (f" secilen={selected.get('route_key')} ucan={selected.get('endpoint')}"
+                + (f" ilk-siradaki={selected.get('route_key')}"
                    if selected else "")
                 + (f" indirim={selected.get('discount_pct')}%" if selected.get("discount_pct") else "")
+                + fact_suffix
             )
     except Exception:  # pragma: no cover
         pass

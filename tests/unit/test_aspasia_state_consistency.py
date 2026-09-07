@@ -189,3 +189,62 @@ def test_digest_omits_quota_line_when_nothing_observed():
 def test_digest_shows_quota_line_when_observed():
     digest = build_oversight_digest(_QuotaGW(QuotaStatus.HEALTHY), None, None, None)
     assert "KOTA: groq:healthy | cerebras:healthy" in digest
+
+
+# ------------------------------------------------------------------ #
+# B5. aday rota gozlemlenmis gercek gibi sunulmaz (halusinasyon kilidi)
+# ------------------------------------------------------------------ #
+class _RoutingGW:
+    """ROUTING satiri icin minimal stub; call_log ile oynanabilir."""
+
+    AGENT_CHAINS = {"friction_detector": ["m1"]}
+    MODEL_PRICING = {}
+    openrouter_base_url = "https://openrouter.ai/api/v1"
+
+    def __init__(self, call_log):
+        self.call_log = call_log
+
+    def get_agent_chain(self, agent, task):
+        return ["m1"]
+
+    def agent_route_variants(self, model):
+        return [None]
+
+    def budget_status(self):
+        raise RuntimeError("no budget")
+
+
+def test_idle_digest_labels_routing_as_candidate():
+    digest = build_oversight_digest(_RoutingGW([]), None, None, None)
+    assert "ROUTING-ADAY[friction_detector]" in digest
+    assert "henüz çağrı yok" in digest
+    assert "ROUTING[friction_detector]" not in digest
+
+
+def test_digest_after_observed_call_states_fact():
+    call_log = [{
+        "call_id": "c1", "agent_id": "friction_detector", "model": "m1",
+        "requested_model": "m1", "actual_model": "m1-real",
+        "provider": "groq",
+    }]
+    digest = build_oversight_digest(_RoutingGW(call_log), None, None, None)
+    assert "ROUTING[friction_detector]" in digest
+    assert "ROUTING-ADAY" not in digest
+    assert "gozlemlenen=m1-real@groq" in digest
+
+
+def test_chat_instruction_distinguishes_candidate_from_observed():
+    captured = {}
+
+    class _ChatGW(_RoutingGW):
+        async def query_chain(self, **kwargs):
+            captured.update(kwargs)
+            return "Elbette Mösyö."
+
+    chief = AspasiaChief(llm_gateway=_ChatGW([]))
+    import asyncio
+    asyncio.run(chief.chat("routing neden boyle?", room_state=None))
+    prompt = captured["prompt"]
+    assert "ROUTING-ADAY" in prompt
+    assert "PLANLANAN" in prompt
+    assert "GÖZLEMLENMİŞ" in prompt
