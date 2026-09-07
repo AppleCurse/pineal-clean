@@ -992,7 +992,6 @@ class LLMGateway:
         With no direct credentials configured this returns ``[None]``, so the
         default production behavior is byte-for-byte the legacy path.
         """
-        import os
         from types import SimpleNamespace
 
         def _price_sum(pricing: "Optional[dict[str, float]]") -> float:

@@ -12,8 +12,6 @@ Kapsam:
 Dogruluk ilkesi: esik-altı gozlem strateji uretmez; olculmeyen None kalir.
 """
 
-import sys
-
 import pytest
 
 from agent_core.psychology.dark_triad import (
