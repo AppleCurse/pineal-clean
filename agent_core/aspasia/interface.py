@@ -497,6 +497,69 @@ FINAL_TASK_STATUSES = {
 }
 
 
+def extract_depth_digest(evidence: Any) -> Optional[Dict[str, Any]]:
+    """HÜKÜM: kanıt zincirinden derinlik özetini OKUR (hesaplamaz).
+
+    verdict ok + sayısal telafi/reaksiyon yoksa None döner (Aspasia susar;
+    eksik özet sayı uydurularak tamamlanmaz). Birden çok mühür varsa SON
+    mühür geçerlidir (zincir sırası = zaman sırası).
+    """
+    if not isinstance(evidence, list):
+        return None
+    sealed: Any = None
+    for entry in evidence:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("agent") != "psychodynamic_depth":
+            continue
+        result = entry.get("result")
+        depth = result.get("depth") if isinstance(result, dict) else None
+        if isinstance(depth, dict):
+            sealed = depth
+    if not isinstance(sealed, dict) or sealed.get("verdict") != "ok":
+        return None
+    comp = sealed.get("compensation_index")
+    react = sealed.get("reaction_formation_index")
+    if not isinstance(comp, (int, float)) or isinstance(comp, bool):
+        return None
+    if not isinstance(react, (int, float)) or isinstance(react, bool):
+        return None
+    channels = sealed.get("channels")
+    rhythm = channels.get("rhythm") if isinstance(channels, dict) else None
+    rsig = rhythm.get("signals") if isinstance(rhythm, dict) else None
+    rsig = rsig if isinstance(rsig, dict) else {}
+    kinds = rsig.get("rupture_kinds")
+    return {
+        "verdict": "ok",
+        "confidence": sealed.get("confidence"),
+        "compensation_index": comp,
+        "reaction_formation_index": react,
+        "epistemic_weights": sealed.get("epistemic_weights"),
+        "n_ruptures": rsig.get("n_ruptures"),
+        "n_regimes": rsig.get("n_regimes"),
+        "rupture_kinds": list(kinds) if isinstance(kinds, list) else [],
+        "reason": sealed.get("reason"),
+    }
+
+
+def _depth_digest_line(depth: Any, sep: str = " derinlik: ") -> str:
+    """Derinlik özeti -> olgu soneki; özet yoksa '' (Aspasia susar)."""
+    if not isinstance(depth, dict):
+        return ""
+    comp = depth.get("compensation_index")
+    react = depth.get("reaction_formation_index")
+    n_rup = depth.get("n_ruptures")
+    kinds = depth.get("rupture_kinds") or []
+    if not isinstance(comp, (int, float)) or isinstance(comp, bool):
+        return ""
+    if not isinstance(react, (int, float)) or isinstance(react, bool):
+        return ""
+    kinds_txt = "+".join(k for k in kinds if isinstance(k, str)) if kinds else "-"
+    n_txt = n_rup if isinstance(n_rup, int) and not isinstance(n_rup, bool) else "?"
+    return (f"{sep}telafi={comp:.2f} reaksiyon={react:.2f} "
+            f"kırılma={n_txt} [{kinds_txt}]")
+
+
 class MissionResultReader:
     """CanonicalMemory uzerinden salt-okur sonuc ozeti — PARALEL STORE YOK.
 
@@ -553,6 +616,7 @@ class MissionResultReader:
             "overall_confidence": doc.get("confidence"),
             "evidence_count": len(evidence),
             "agents": agents,
+            "depth": extract_depth_digest(evidence),
         }
 
 
@@ -620,6 +684,7 @@ class DiskMemoryBridge:
                 "last_updated": data.get("last_updated"),
                 "evidence_count": len(evidence) if isinstance(evidence, list) else None,
                 "confidence": data.get("confidence"),
+                "depth": extract_depth_digest(evidence),
             })
             if len(ready) >= self._MAX_REPORT:
                 break
@@ -751,6 +816,7 @@ def build_oversight_digest(
                         f"SONUÇ[{result.get('task_id')}]: güven={'%.2f' % conf if isinstance(conf, (int, float)) else '?'} "
                         f"kanıt={result.get('evidence_count')} "
                         f"ajanlar={','.join(result.get('agents') or []) or '-'} (CanonicalMemory)"
+                        + _depth_digest_line(result.get("depth"))
                     )
                 elif result.get("state") == "corrupted":
                     has_content = True
@@ -774,6 +840,7 @@ def build_oversight_digest(
                         chunks.append(
                             f"{task.get('task_id')}:kanıt={task.get('evidence_count')},"
                             f"güven={('%.2f' % conf) if isinstance(conf, (int, float)) else '?'}"
+                            + _depth_digest_line(task.get("depth"), sep=",derinlik=")
                         )
                     suffix = ""
                     if disk.get("corrupted"):
