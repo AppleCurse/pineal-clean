@@ -122,6 +122,12 @@ class AspasiaChief:
             halted_reason = getattr(snapshot, "halted_reason", None)
             agent_runs = getattr(snapshot, "agent_runs", {}) or {}
 
+        # [FAZ 2] Enum repr ("PipelineStatus.COMPLETED") kullaniciya sizmaz;
+        # durum degeri normalize edilir (interface._status_value ile ayni kural).
+        from agent_core.aspasia.interface import _status_value
+
+        status = _status_value(status) or "unknown"
+
         lines = [
             f"Görev: {task_id} | Durum: {status}",
             f"Aktif Ajan: {current_agent or 'Yok'}",

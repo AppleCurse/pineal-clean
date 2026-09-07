@@ -17,6 +17,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Literal, Optional
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +27,36 @@ from agent_core.services.cognitive_router import GOAL_FOCUS
 # Goal sozlesmesi COGNITIVE_ROUTER'da turetilir (tek kaynak); Aspasia kendi
 # vocabulariesini ICATMAZ — Literal, gercek GOAL_FOCUS anahtarlarindan olusur.
 _GOAL_IDS = tuple(GOAL_FOCUS.keys())
+
+
+def _status_value(status: Any) -> Any:
+    """PipelineStatus/str/None -> karsilastirilabilir durum degeri.
+
+    [FAZ 2 / N1-ikizi] Python 3.11'de f"{PipelineStatus.COMPLETED}" ->
+    'PipelineStatus.COMPLETED' (deger degil, repr). Aspasia metinleri ve
+    /api/aspasia/state bununla normalize edilir; FastAPI zaten enum'u
+    value olarak serilestirdigi icin API JSON ciktisi DEGISTMEZ.
+    """
+    value = getattr(status, "value", status)
+    return str(value).lower() if value is not None else None
+
+
+def _normalize_target_url(url: Optional[str]) -> str:
+    """[FAZ 2] Paylasim artiklarini dusur, katiligi koru.
+
+    Mobil paylasim URL'leri (?igsh=, ?utm_source=, #fragman) ayni profile
+    isaret eder; _TARGET_RE eslesmesi oncesi dusurulur. Host/path kurali
+    DEGISMEZ: yalniz https + instagram.com|instagr.am + tek segment kabul
+    edilir (lookalike host ve hedefsiz komut yine reddedilir).
+    """
+    candidate = (url or "").strip()
+    try:
+        parts = urlsplit(candidate)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() != "https" or not parts.netloc:
+        return ""
+    return f"https://{parts.netloc}{parts.path}"
 
 # ---------------------------------------------------------------- inspectors
 
@@ -182,7 +213,11 @@ class QuotaReader:
         else:
             try:
                 snap = gov.snapshot(provider)
-                status = getattr(snap.status, "name", str(snap.status))
+                # [FAZ 2] .name ("UNKNOWN") degil .value ("unknown"): digest
+                # uyelik testi ve limits "unknown" sozlesmesi lowercase'dir.
+                # Buyuk-harf ad, bilinmeyeni gozlemlenmis gibi gosteriyordu.
+                status = getattr(snap.status, "value", snap.status)
+                status = str(status) if status is not None else "unknown"
                 remaining = getattr(snap, "remaining_fraction", None)
                 source = getattr(snap, "source", None)
             except Exception:  # pragma: no cover
@@ -256,12 +291,15 @@ class AgentInspector:
                 "agent_runs": getattr(snapshot, "agent_runs", {}),
             }
         raw_status = snapshot.get("status")
+        # [FAZ 2] status normalize edilir (enum repr sizintisi yok); is_final
+        # ayni normalize degerden turetilir (cift-kaynak karsilastirma yok).
+        norm_status = _status_value(raw_status)
         return {
             "task_id": snapshot.get("task_id"),
-            "status": raw_status,
+            "status": norm_status,
             # Faz-6: snapshot terminal durumdaysa ARTIK CANLI degildir;
             # canliyi "bayat" diye etiketle — Aspasia kanonik kaynaga yonlendirilir.
-            "is_final": str(getattr(raw_status, "value", raw_status)) in FINAL_TASK_STATUSES,
+            "is_final": (norm_status or "") in FINAL_TASK_STATUSES,
             "planned": snapshot.get("planned_agents") or [],
             "completed": snapshot.get("completed_agents") or [],
             "current": snapshot.get("current_agent"),
@@ -390,7 +428,9 @@ class AspasiaCommandGateway:
             return AspasiaCommandResult(command_id=command_id, accepted=True,
                                         intent=intent.intent, reason="read_only")
         # run_profile_analysis — TEK yazma eylemi; hedef dogrulama sart.
-        url = (intent.target_url or "").strip()
+        # [FAZ 2] Eslesme normalize URL uzerinden (?igsh=/fragment dusmus);
+        # dispatch'e de normalize URL gider (asagi akis ayni hedefi gorur).
+        url = _normalize_target_url(intent.target_url)
         if not _TARGET_RE.match(url):
             self._record(command_id=command_id, status="rejected", intent=intent.intent,
                          reason="unsupported_or_missing_target")
@@ -428,9 +468,14 @@ class AspasiaCommandGateway:
 
 # Kanonik sonuc icin terminal durumlar (PipelineStatus degerleri) — snapshot
 # bunlardan birindeyse ARTIK CANLI degildir; kanonik kaynak CanonicalMemory'dir.
+# [FAZ 2] backend.api._TERMINAL_PIPELINE_STATES ile SENKRON tutulur: kullanici
+# iptali/durdurmasi (cancelled/canceled/halted_user) da terminaldir; eksik
+# kalirsa Aspasia bayat snapshot'i canli sanir ve SONUC satiri uretmez.
+# Senkron kilidi: tests/unit/test_aspasia_state_consistency.py.
 FINAL_TASK_STATUSES = {
     "completed", "partially_completed", "halted_evidence", "halted_critical",
     "halted_frequency", "failed",
+    "cancelled", "canceled", "halted_user",
 }
 
 
