@@ -14,12 +14,27 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+
+
+# --- Faz 1: post-detay zenginleştirme anahtarları (kontrollü, geri alınabilir) ---
+def _post_detail_enabled() -> bool:
+    """PINEAL_POST_DETAIL_ENABLED=false ise grid-verisiyle yetin (eski davranış)."""
+    return os.getenv("PINEAL_POST_DETAIL_ENABLED", "true").strip().lower() == "true"
+
+
+def _post_detail_limit() -> int:
+    """Zenginleştirilecek en fazla post sayısı (1..12, varsayılan 12)."""
+    try:
+        return max(0, min(12, int(os.getenv("PINEAL_POST_DETAIL_LIMIT", "12"))))
+    except (TypeError, ValueError):
+        return 12
 
 
 # --- Anti-Halüsinasyon Çekirdeği ---
@@ -93,6 +108,39 @@ class InstagramGhostScraper:
         """
         await asyncio.sleep(random.uniform(2.0, 5.0))
 
+    async def _post_detail_delay(self):
+        """[FAZ 1] Post-detay istekleri arası kısa, kibar bekleme (1.0-2.5 sn).
+
+        Profil sayfası nav'inden kısadır çünkü aynı oturumda 12'ye kadar
+        istek atılır; toplam süre görev zaman aşımını (varsayılan 300 sn)
+        zorlamaz. Event loop kilitlenmez (asyncio.sleep).
+        """
+        await asyncio.sleep(random.uniform(1.0, 2.5))
+
+    @staticmethod
+    def _parse_dt(value: Any) -> Optional[datetime]:
+        """[FAZ 1] Tek zaman-parse uygulaması (DRY: grid + detay yolu paylaşır).
+
+        Kabul: unix epoch (sn/ms, int/float/digit-str), ISO-8601.
+        Red: bool, None, parse edilemeyen -> None (uydurma yok).
+        """
+        if isinstance(value, bool) or value is None:
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            except (ValueError, OSError, OverflowError):
+                return None
+        if isinstance(value, str):
+            if value.isdigit():
+                return InstagramGhostScraper._parse_dt(int(value))
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+        return None
+
     def _extract_from_html(self, html: str, username: str) -> Dict[str, Any]:
         """
         Instagram'ın sayfa içine gömdüğü JSON'u veya public meta tag'lerini bul.
@@ -148,22 +196,9 @@ class InstagramGhostScraper:
             return None
 
         def _to_datetime(value: Any) -> Optional[datetime]:
-            if isinstance(value, bool) or value is None:
-                return None
-            if isinstance(value, (int, float)):
-                try:
-                    return datetime.fromtimestamp(float(value), tz=timezone.utc)
-                except (ValueError, OSError, OverflowError):
-                    return None
-            if isinstance(value, str):
-                if value.isdigit():
-                    return _to_datetime(int(value))
-                try:
-                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-                except ValueError:
-                    return None
-            return None
+            # [FAZ 1] Tek uygulamaya delege (InstagramGhostScraper._parse_dt);
+            # davranış birebir aynı, grid + detay yolu aynı parse'ı kullanır.
+            return InstagramGhostScraper._parse_dt(value)
 
         def _count_of(node: Dict[str, Any], *keys: str) -> Optional[int]:
             for key in keys:
@@ -286,8 +321,13 @@ class InstagramGhostScraper:
                     continue
 
             if not posts:
-                shortcodes = re.findall(r'"shortcode":"([A-Za-z0-9_-]+)"', html) or re.findall(r'/p/([A-Za-z0-9_-]+)/', html)
-                display_urls = re.findall(r'"display_url":"([^"]+)"', html)
+                sc_matches = list(re.finditer(r'"shortcode":"([A-Za-z0-9_-]+)"', html))
+                if not sc_matches:
+                    sc_matches = list(re.finditer(r'/p/([A-Za-z0-9_-]+)/', html))
+                url_matches = list(re.finditer(r'"display_url":"([^"]+)"', html))
+
+                display_urls = [m.group(1) for m in url_matches]
+                url_positions = [m.start() for m in url_matches]
 
                 # Ekstra yüksek çözünürlüklü fotoğraflar
                 if not display_urls:
@@ -295,6 +335,34 @@ class InstagramGhostScraper:
                         url = m.group(0).replace("&amp;", "&").replace("\\u0026", "&")
                         if url not in display_urls and ("s150x150" not in url and "s320x320" not in url):
                             display_urls.append(url)
+                            url_positions.append(m.start())
+
+                # [FAZ 1] Konum bazli shortcode eslesmesi: her gorsel, kendinden
+                # once gelen en yakin shortcode ile eslenir (5000 karakter
+                # penceresi). Eski index-zip (shortcodes[i] <-> display_urls[i]),
+                # listelerden biri eksik/fazla eslestiginde captioni baska
+                # postun gorseliyle eslestiriyordu. Belge sirasi korunur;
+                # eslesmeyen gorsel kurtarma amacli `post_N` olur.
+                _PAIR_WINDOW = 5000
+                _used_sc: set = set()
+                shortcodes: List[str] = []
+                _placeholder_n = 0
+                for _url_pos in url_positions:
+                    _best_idx = -1
+                    _best_start = -1
+                    for _idx, _sc_m in enumerate(sc_matches):
+                        if _idx in _used_sc:
+                            continue
+                        _gap = _url_pos - _sc_m.start()
+                        if 0 <= _gap <= _PAIR_WINDOW and _sc_m.start() > _best_start:
+                            _best_idx = _idx
+                            _best_start = _sc_m.start()
+                    if _best_idx >= 0:
+                        _used_sc.add(_best_idx)
+                        shortcodes.append(sc_matches[_best_idx].group(1))
+                    else:
+                        _placeholder_n += 1
+                        shortcodes.append(f"post_{_placeholder_n}")
 
                 # Captions are often still present near the shortcode in the
                 # rendered HTML. Recover only a uniquely adjacent caption;
@@ -361,6 +429,167 @@ class InstagramGhostScraper:
             # Beklenmedik parse hatası -> halüsinasyon yapma, halt et
             raise InsufficientEvidenceError(f"Instagram parse hatası, veri uydurmuyorum: {username} - {str(e)}")
 
+    # ------------------------------------------------------------------ #
+    # FAZ 1: post-detay zenginlestirme (caption/tarih/sira)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _extract_post_detail(post_html: str, shortcode: str) -> Dict[str, Any]:
+        """Tek post sayfasinin HTML'inden kanit alanlarini cikarir (saf fonksiyon).
+
+        Kaynaklar (oncelik sirasiyla):
+        1. Gomulu JSON'da bu shortcode'a ait dugum (taken_at/caption/counts).
+        2. JSON-LD `uploadDate|datePublished|dateCreated` -> taken_at,
+           JSON-LD `caption` -> caption (yalniz acik `caption` anahtari;
+           `description` sablonlu/kirpik olabilir, alinmaz).
+        3. `<meta property="article:published_time">` -> taken_at.
+
+        Sozlesme: bulunan alanlar doner, bulunamayan ASLA uydurulmaz (anahtar
+        eksik kalir). Login duvari / "sayfa yok" / shortcode eslesmezse BOS
+        dict (yanlis posta ait veri birlestirilmez).
+        """
+        detail: Dict[str, Any] = {}
+        if not post_html or not shortcode or shortcode.startswith("post_"):
+            return detail
+        # Duvar / yanlis sayfa kontrolleri (profil yoluyla ayni kural).
+        if "Login \u2022 Instagram" in post_html or ('name="username"' in post_html and 'name="password"' in post_html):
+            return detail
+        if "Sorry, this page isn't available" in post_html:
+            return detail
+        if shortcode not in post_html:
+            # Gercel post sayfasi og:url + JSON'da shortcode tasir; yoksa yanlis sayfa.
+            return detail
+
+        # 1) Gomulu JSON: yalniz bu shortcode'un dugumu alinir.
+        for pattern in (
+            r'window\._sharedData\s*=\s*({.*?});</script>',
+            r'"ProfilePage":\s*\[({.*?})\]',
+            r'"userData":\s*({.*?}),"',
+        ):
+            match = re.search(pattern, post_html, re.DOTALL)
+            if not match:
+                continue
+            try:
+                blob = json.loads(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            matched = None
+            for node in InstagramGhostScraper._collect_structured_posts(blob):
+                if node.get("shortcode") == shortcode:
+                    matched = node
+                    break
+            if matched is not None:
+                for key in ("caption", "taken_at", "like_count", "comment_count"):
+                    if matched.get(key) is not None:
+                        detail[key] = matched[key]
+                if matched.get("is_video"):
+                    detail["is_video"] = True
+                break
+
+        # 2) JSON-LD: tarih + acik caption.
+        if "taken_at" not in detail or "caption" not in detail:
+            for ld_match in re.finditer(
+                r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
+                post_html, re.DOTALL | re.IGNORECASE,
+            ):
+                try:
+                    ld = json.loads(ld_match.group(1).strip())
+                except (TypeError, ValueError):
+                    continue
+                candidates = ld if isinstance(ld, list) else [ld]
+                for entry in candidates:
+                    if not isinstance(entry, dict):
+                        continue
+                    if "taken_at" not in detail:
+                        for date_key in ("uploadDate", "datePublished", "dateCreated"):
+                            parsed = InstagramGhostScraper._parse_dt(entry.get(date_key))
+                            if parsed is not None:
+                                detail["taken_at"] = parsed
+                                break
+                    if "caption" not in detail:
+                        cap = entry.get("caption")
+                        if isinstance(cap, str) and cap.strip():
+                            detail["caption"] = cap.strip()[:2200]
+
+        # 3) article:published_time meta.
+        if "taken_at" not in detail:
+            pub = re.search(
+                r'<meta[^>]*property="article:published_time"[^>]*content="([^"]+)"',
+                post_html, re.IGNORECASE,
+            )
+            if pub:
+                parsed = InstagramGhostScraper._parse_dt(pub.group(1))
+                if parsed is not None:
+                    detail["taken_at"] = parsed
+        return detail
+
+    async def _enrich_posts_with_details(self, playwright_page, posts: List[InstagramPost]) -> List[InstagramPost]:
+        """[FAZ 1] Grid postlarini tekil post sayfalarindan zenginlestirir.
+
+        - Yalniz eksik alani olan + gercek shortcode'lu postlar ziyaret edilir
+          (yer tutucu `post_N` icin URL kurulamaz -> atlanir; tam kanitli
+          grid postu tekrar ziyaret edilmez).
+        - Post basina TEK deneme; hata/duvar -> post grid verisiyle kalir,
+          profil kazimasi ASLA oldurulmez.
+        - Birlesme kurali: yalniz None alanlar doldurulur; grid'deki gercek
+          degerin ustune yazilmaz. Sira korunur (belge sirasi).
+        """
+        if not _post_detail_enabled():
+            return posts
+        limit = _post_detail_limit()
+        if limit <= 0 or not posts:
+            return posts
+
+        def _needs_detail(p: InstagramPost) -> bool:
+            if p.shortcode.startswith("post_"):
+                return False
+            return p.taken_at is None or p.caption is None or p.like_count is None
+
+        targets = [(i, p) for i, p in enumerate(posts) if _needs_detail(p)][:limit]
+        if not targets:
+            return posts
+
+        enriched = list(posts)
+        first = True
+        for idx, post in targets:
+            if not first:
+                try:
+                    await self._post_detail_delay()
+                except Exception:
+                    pass
+            first = False
+            try:
+                await playwright_page.goto(
+                    f"{self.base_url}/p/{post.shortcode}/",
+                    wait_until="domcontentloaded", timeout=15000,
+                )
+                post_html = await playwright_page.content()
+            except Exception:
+                logging.warning(f"Post detay atlandi ({post.shortcode}): nav hatasi")
+                continue
+            try:
+                detail = self._extract_post_detail(post_html, post.shortcode)
+            except Exception:
+                continue
+            if not detail:
+                continue
+            update: Dict[str, Any] = {}
+            if post.caption is None and detail.get("caption"):
+                update["caption"] = detail["caption"]
+            if post.taken_at is None and detail.get("taken_at") is not None:
+                update["taken_at"] = detail["taken_at"]
+            if post.like_count is None and detail.get("like_count") is not None:
+                update["like_count"] = detail["like_count"]
+            if post.comment_count is None and detail.get("comment_count") is not None:
+                update["comment_count"] = detail["comment_count"]
+            if not post.is_video and detail.get("is_video"):
+                update["is_video"] = True
+            if update:
+                try:
+                    enriched[idx] = post.model_copy(update=update)
+                except Exception:
+                    continue
+        return enriched
+
     async def scrape_async(self, username: str, playwright_page=None) -> InstagramProfile:
         """
         Ana metod - Playwright page dışarıdan verilir (X scraper ile aynı vault izolasyonu)
@@ -404,12 +633,32 @@ class InstagramGhostScraper:
         raw = self._extract_from_html(html, username)
         profile = self._parse_real_profile(raw, html, username)
 
+        # [FAZ 1] Post-detay zenginlestirme: grid'de eksik kalan caption /
+        # taken_at / counts, tekil post sayfalarindan tamamlanir. Bu adim
+        # profil kazimasini ASLA oldurmez (hata -> grid verisiyle devam).
+        try:
+            profile.posts = await self._enrich_posts_with_details(playwright_page, profile.posts)
+        except Exception as e:
+            logging.warning(f"Post detay zenginlestirme atlandi ({username}): {type(e).__name__}")
+
         return profile
+
+    @staticmethod
+    def temporal_coverage(profile: InstagramProfile) -> float:
+        """[FAZ 1] Tarih tasiyan post orani (0.0-1.0). Post yoksa 0.0."""
+        total = len(profile.posts)
+        if total == 0:
+            return 0.0
+        dated = sum(1 for p in profile.posts if p.taken_at is not None)
+        return round(dated / total, 3)
 
     def evaluate_confidence(self, profile: InstagramProfile) -> float:
         """
         Uncertainty Engine için güven skoru.
         Düşükse HALT.
+        [FAZ 1] Zamansal bonus: postlarin yarisi+ tarihliyse +0.1.
+        Bonus-only'dir: tarihsiz guclu profilin skoru DUSMEZ (mevcut 0.6
+        esigi sozlesmeleri korunur), tarihli profil odullendirilir.
         """
         score = 0.0
         if profile.follower_count is not None:
@@ -420,9 +669,11 @@ class InstagramGhostScraper:
             score += 0.4
         elif len(profile.posts) >= 1:
             score += 0.2
-        
+        if profile.posts and self.temporal_coverage(profile) >= 0.5:
+            score += 0.1
+
         if profile.is_private:
             score = min(score, 0.4)  # Private ise max 0.4 - yetersiz kanıt
 
         # Eğer skor < 0.6 ise, task_executor bunu halt etmeli
-        return round(score, 2)
+        return round(min(score, 1.0), 2)
