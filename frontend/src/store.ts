@@ -64,8 +64,21 @@ export function wsUrl(clientId: string): string {
   return `${WS_BASE}/ws/${clientId}`;
 }
 
-// Benzersiz bir istemci kimliği (session boyunca sabit)
-export const clientId = writable(`client_${Math.random().toString(36).substring(2, 9)}`);
+// Benzersiz bir istemci kimliği (session/tarayıcı boyunca sabit kalır)
+function getOrCreateClientId(): string {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      let stored = localStorage.getItem('pineal_client_id');
+      if (!stored) {
+        stored = `client_${Math.random().toString(36).substring(2, 9)}`;
+        localStorage.setItem('pineal_client_id', stored);
+      }
+      return stored;
+    }
+  } catch (_e) {}
+  return `client_${Math.random().toString(36).substring(2, 9)}`;
+}
+export const clientId = writable(getOrCreateClientId());
 
 // Global state
 export const logs = writable<Array<{ts: string, level: string, msg: string}>>([]);

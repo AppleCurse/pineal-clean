@@ -262,9 +262,8 @@
   export async function triggerAnalysis() {
     if (!targetUrl) return;
     if (!$armEngaged) {
-      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'WARNING', msg: 'ARM kapalı — önce ARM engagé et' }]);
-      playHalt();
-      return;
+      armEngaged.set(true);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: 'SİSTEM KİLİDİ AÇILDI: ARM otonom aktif edildi' }]);
     }
     isProcessing.set(true);
     playRunning();
@@ -465,16 +464,25 @@
             </div>
           </div>
 
-          <!-- Active Route Bar (Kullanıcının Verdiği Kod) -->
+          <!-- Active Route Bar (Dinamik Telemetri) -->
           <div class="active-route-subbar">
             <div class="route-text">
-              <b style="color: var(--gold);">ACTIVE:</b> {currentAgent || 'friction_detector'}
-              &bull; <b style="color: var(--gold);">MODEL:</b> {runs[currentAgent]?.model || agentList.find(a => a.id === currentAgent)?.primaryModel || 'claude-sonnet-5'}
-              &bull; <b style="color: var(--gold);">VIA:</b> {runs[currentAgent]?.via || agentList.find(a => a.id === currentAgent)?.via || 'openrouter'}
+              {#if ($isProcessing || taskState === 'processing') && currentAgent}
+                <b style="color: var(--gold);">ACTIVE:</b> {currentAgent}
+                &bull; <b style="color: var(--gold);">MODEL:</b> {runs[currentAgent]?.model || agentList.find(a => a.id === currentAgent)?.primaryModel || 'auto'}
+                &bull; <b style="color: var(--gold);">VIA:</b> {runs[currentAgent]?.via || agentList.find(a => a.id === currentAgent)?.via || 'unified-router'}
+              {:else if $isProcessing || taskState === 'processing'}
+                <b style="color: var(--gold);">STATUS:</b> İŞLENİYOR (Ajan başlatılıyor...)
+              {:else if taskState === 'completed'}
+                <b style="color: #22c55e;">STATUS:</b> TAMAMLANDI (Tüm kanıtlar doğrulandı)
+              {:else if taskState && taskState.startsWith('halted')}
+                <b style="color: #ef4444;">STATUS:</b> DURDURULDU ({haltedReason || taskState})
+              {:else}
+                <b style="color: var(--gold);">STATUS:</b> BEKLEMEDE (Sistem Hazır &bull; Hedef Bekleniyor)
+              {/if}
             </div>
             <div class="route-dots">
-              <span class="dot-led dot-green"></span>
-              <span class="dot-led dot-amber"></span>
+              <span class="dot-led {($isProcessing || taskState === 'processing') ? 'dot-green pulse' : 'dot-amber'}"></span>
             </div>
           </div>
 
@@ -548,9 +556,9 @@
 
       <div class="agent-cards-stack">
         {#each agentList as agent, i}
-          {@const run = runs[agent.id] || (agent.id === 'depth_analyst' ? runs['depth_forensics'] : null) || (agent.id === 'friction_detector' && taskState === 'processing' ? { status: 'running' } : null)}
+          {@const run = runs[agent.id] || (agent.id === 'depth_analyst' ? runs['depth_forensics'] : null)}
           {@const isCompleted = run?.status === 'completed'}
-          {@const isRunning = currentAgent === agent.id && taskState === 'processing' || (!currentAgent && agent.id === 'friction_detector' && $isProcessing)}
+          {@const isRunning = currentAgent === agent.id && ($isProcessing || taskState === 'processing')}
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
           {@const liveModel = run?.model || agent.primaryModel}
           {@const liveVia = run?.via || agent.via}

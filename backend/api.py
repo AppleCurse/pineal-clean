@@ -1261,12 +1261,19 @@ def _enqueue(client_id: str, item: tuple):
                 _record_queue_drop(room, item[0])
 
 async def _send_ws(room: dict, payload: str):
-    ws_set = room["websockets"]
-    for ws in list(ws_set):
+    ws_set = room.get("websockets", set())
+    all_ws = set(ws_set)
+    rooms = getattr(app.state, "rooms", {})
+    if isinstance(rooms, dict):
+        for r in rooms.values():
+            if isinstance(r, dict) and "websockets" in r:
+                all_ws.update(r["websockets"])
+    for ws in list(all_ws):
         try:
             await ws.send_text(payload)
         except Exception:
-            ws_set.discard(ws)
+            if ws in ws_set:
+                ws_set.discard(ws)
 
 async def _send_log(room: dict, payload: tuple):
     level, msg = payload
