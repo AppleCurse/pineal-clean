@@ -104,6 +104,7 @@ class TaskSnapshot(BaseModel):
     holistic_profile: Optional[HolisticProfile] = None
     follower_audit: Optional[Dict[str, Any]] = None
     timing_forensics: Optional[Dict[str, Any]] = None
+    psychodynamic_depth: Optional[Dict[str, Any]] = None  # GÖREV 2.3/2.4
     depth_report: Optional[Dict[str, Any]] = None
     visual_evidence: Optional[Dict[str, Any]] = None
     shadow_profile: Optional[Dict[str, Any]] = None

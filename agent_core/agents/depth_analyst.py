@@ -57,6 +57,8 @@ class DepthAnalyst:
             f"GÖRSEL KANITLAR: {json.dumps(visual, ensure_ascii=False)}\n"
             f"TAKİPÇİ DENETİMİ (P9): {json.dumps(audit, ensure_ascii=False)}\n"
             f"ZAMAN FORENSİĞİ (Saatler): {json.dumps(timing, ensure_ascii=False)}\n"
+            f"DERİNLİK MOTORU (4 kanal beyan/sahneleme/ritim/sosyal + capraz gerilim): "
+            f"{json.dumps(input_data.get('psychodynamic_depth', {}), ensure_ascii=False)}\n"
         )
 
         try:

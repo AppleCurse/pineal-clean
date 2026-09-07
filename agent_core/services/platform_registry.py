@@ -136,6 +136,9 @@ def ig_target_profile_update(ig_data: Any) -> dict:
     - posts / post_times / posts_meta AYNI post sırasıyla index-hizalıdır;
       frequency_engine index bazlı eşleştirme yapar, hizasız listeler
       caption'a başka postun zamanını yanlış eşleştirebilir.
+    - [GÖREV 1] post_types AYNI hizaya katilir (image/video/carousel/reel;
+      bilinmiyorsa "unknown"). posts_meta'nin anahtar kumesi DEGISTIRILMEZ
+      ([025] esitlik kilidi); tur bilgisi bu yeni paralel listeden akar.
     - following=None "ölçülmedi" demektir; 0 ölçümdür, birbirine karışmaz.
     """
     posts = ig_data.posts or []
@@ -150,6 +153,7 @@ def ig_target_profile_update(ig_data: Any) -> dict:
             {"like_count": p.like_count, "comment_count": p.comment_count}
             for p in posts
         ],
+        "post_types": [p.post_type or "unknown" for p in posts],
         "images": [p.display_url for p in posts],
         "followers": ig_data.follower_count or 0,
         "following": ig_data.following_count,  # None = ölçülmedi ([024])

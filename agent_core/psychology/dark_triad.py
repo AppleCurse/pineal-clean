@@ -1,49 +1,52 @@
+"""Karanlik uclu: GÖREV 2.1 sonrasi sozluk-suz govde.
+
+KALDIRILDI: statik MARKERS sozlugu + kelime-sayma skorlamasi ("mükemmel"
+saymak narsisizm olcumu degildir). analyze() artik trait skoru URETMEZ;
+uc trait + exploitability gozlemlenmemis (0.0) doner ve metinlerin
+DENETIMSUZ temasal yapisi (theme_analysis) tasinir.
+
+generate_strategy() esik mantigi VERBATIM korunur: acikca verilen
+sifir-disi profillere ayni vektorler dondurulur; analyze() ciktisi
+(sifirlar) 'unavailable' uretir ve shadow mesaji uretilmez.
+Tema->vektor eslemesi YAPILMAZ (keyfi esleme uydurma olur); strateji
+vektorlerinin yeni derinlik-motoru skorlarina baglanmasi ayri bir
+tasarim kararidir.
+"""
+
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel, ConfigDict
-from typing import Dict
+
+from agent_core.services.theme_cluster import cluster_texts
+
 
 class DarkTriadProfile(BaseModel):
     machiavellianism: float = 0.0
     narcissism: float = 0.0
     psychopathy: float = 0.0
     exploitability: float = 0.0
-    
+    theme_analysis: Optional[Dict[str, Any]] = None
+
     model_config = ConfigDict(extra="forbid")
+
 
 class DarkTriadAnalyzer:
     """
-    NOT: Bu heuristik model ağırlıklı olarak TR markerlara dayanır.
-    Dil-agnostik kullanım için genişletilebilir.
+    NOT: v1 sozluk-skorlamasi GÖREV 2.1 ile kaldirildi. Trait alanlari
+    geriye-uyumluluk icin korunur; deger yalnizca acik profillerden
+    (test/legacy) gelebilir, metinden turetilemez.
     """
-    MARKERS = {
-        'machiavellianism': ['strateji', 'taktik', 'oyun', 'kontrol', 'piyon'],
-        'narcissism': ['mükemmel', 'eşsiz', 'olağanüstü', 'benzersiz', 'seçilmiş'],
-        'psychopathy': ['risk', 'tehlike', 'sınır', 'çılgın', 'kural']
-    }
-    
+
     def analyze(self, profile_data: Dict) -> DarkTriadProfile:
-        text = ' '.join(profile_data.get('posts', []) + [profile_data.get('bio', '')]).lower()
-        
-        scores = {
-            trait: sum(text.count(word) for word in words) * 0.1 
-            for trait, words in self.MARKERS.items()
-        }
-        
-        # Exploitability hesapla: markör YOKSA 0.0 (sahte "nötr 0.5" üretilmez).
-        # Ek bulanıklaştırma işaretleri yok; skor yalnızca gerçek kelime
-        # işaretlerinden türetilir.
-        exploit = 0.0
-        if scores['narcissism'] > 0.7 and scores['machiavellianism'] < 0.4:
-            exploit = 0.9
-        elif scores['machiavellianism'] > 0.6:
-            exploit = 0.3
-            
-        return DarkTriadProfile(
-            machiavellianism=min(scores['machiavellianism'], 1.0),
-            narcissism=min(scores['narcissism'], 1.0),
-            psychopathy=min(scores['psychopathy'], 1.0),
-            exploitability=exploit
-        )
-    
+        raw_posts = (profile_data or {}).get("posts") or []
+        if isinstance(raw_posts, str):
+            raw_posts = [raw_posts]
+        posts = [p for p in raw_posts if isinstance(p, str) and p.strip()]
+        bio = (profile_data or {}).get("bio") or ""
+        texts = ([bio] if isinstance(bio, str) and bio.strip() else []) + posts
+        themes = cluster_texts(texts)
+        return DarkTriadProfile(theme_analysis=themes)
+
     def generate_strategy(self, profile: DarkTriadProfile) -> Dict:
         if all(getattr(profile, t, 0.0) == 0.0 for t in ("machiavellianism", "narcissism", "psychopathy")):
             # Hiç gözlemlenebilir işaret yok; strateji ÜRETİLMEZ.

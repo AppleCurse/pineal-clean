@@ -8,6 +8,10 @@ Halüsinasyon = 0. Kanıt yoksa HALT.
 
 Bu modül asla veri uydurmaz. Instagram'ın döndüğü gerçek JSON'u alır,
 Pydantic V2 ile doğrular, güven düşükse InsufficientEvidenceError fırlatır.
+
+[GÖREV 1] Tamamlayici kazima: /reel/ + video yakalama, 1-to-1 dogrulanmis
+post nesneleri (capraz-liste eslesmesi yasak), taken_at/like/comment parse,
+kronolojik siralama t_0 -> t_N.
 """
 
 from __future__ import annotations
@@ -45,7 +49,7 @@ class InsufficientEvidenceError(Exception):
 # --- Pydantic V2 Şemalar (ConfigDict, extra="forbid" - halüsinasyon filtresi) ---
 class InstagramPost(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    
+
     shortcode: str = Field(..., description="Post ID, örn: C123...")
     caption: Optional[str] = Field(None, max_length=2200)
     display_url: str = Field(..., description="Fotoğrafın gerçek URL'i, uydurma değil")
@@ -54,6 +58,14 @@ class InstagramPost(BaseModel):
     taken_at: Optional[datetime] = None
     like_count: Optional[int] = None
     comment_count: Optional[int] = None
+    # [GÖREV 1] Medya turu + ham video URL'i. None = "bilinmiyor/olcülmedi";
+    # tur bilinmiyorsa "image" varsayilmaz (uydurma yasak).
+    post_type: Optional[str] = Field(
+        None, description="image | video | carousel | reel; None = bilinmiyor"
+    )
+    video_url: Optional[str] = Field(
+        None, description="Video dosyasinin gercek URL'i (mp4), varsa"
+    )
 
     @field_validator("display_url")
     @classmethod
@@ -65,7 +77,7 @@ class InstagramPost(BaseModel):
 
 class InstagramProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    
+
     username: str
     full_name: Optional[str] = None
     biography: Optional[str] = None
@@ -92,6 +104,17 @@ class InstagramGhostScraper:
     X scraper.py ile aynı mimari: Playwright, vault'tan cookie, stealth.
     Asla veri uydurmaz.
     """
+
+    # [GÖREV 1] Yapisal dugum -> post_type eslemesi (IG __typename/product_type).
+    _TYPENAME_MAP = {
+        "GraphImage": "image",
+        "GraphVideo": "video",
+        "GraphSidecar": "carousel",
+    }
+    _PRODUCT_TYPE_MAP = {
+        "reels": "reel",
+        "clips": "reel",
+    }
 
     def __init__(self, vault_cookies: Optional[Dict[str, str]] = None):
         self.vault_cookies = vault_cookies or {}
@@ -150,7 +173,7 @@ class InstagramGhostScraper:
             r'"ProfilePage":\s*\[({.*?})\]',
             r'"userData":\s*({.*?}),"',
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, html, re.DOTALL)
             if match:
@@ -161,7 +184,7 @@ class InstagramGhostScraper:
                     import logging
                     logging.warning(f"Failed to parse JSON in instagram_ghost: {e}")
                     continue
-        
+
         # Meta tag fallback (Modern Instagram web sayfaları)
         if "og:description" in html or "og:title" in html:
             return {"_source": "meta_tags"}
@@ -176,6 +199,8 @@ class InstagramGhostScraper:
         gerçekten varsa alınır; eksik alan ASLA tamamlanmaz (None kalır).
         Düğüm hem shortcode hem display_url taşımalıdır;aksi halde regex
         yoluna düşülür.
+        [GÖREV 1] Dugumden post_type (__typename/product_type) + video_url
+        de alinir; yoksa None kalir (tur varsayilmaz).
         """
         found: List[Dict[str, Any]] = []
 
@@ -211,6 +236,26 @@ class InstagramGhostScraper:
                     return holder
             return None
 
+        def _post_type_of(node: Dict[str, Any]) -> Optional[str]:
+            # [GÖREV 1] product_type reels/clips dogrudan "reel"dir ve
+            # __typename'den once gelir (reel dugumu GraphVideo tasir).
+            product = node.get("product_type")
+            if isinstance(product, str):
+                mapped = InstagramGhostScraper._PRODUCT_TYPE_MAP.get(product.lower())
+                if mapped:
+                    return mapped
+            typename = node.get("__typename")
+            if isinstance(typename, str):
+                return InstagramGhostScraper._TYPENAME_MAP.get(typename)
+            return None
+
+        def _video_url_of(node: Dict[str, Any]) -> Optional[str]:
+            # [GÖREV 1] Yalniz gercek (http) video URL'i alinir.
+            raw = node.get("video_url")
+            if isinstance(raw, str) and raw.startswith("http"):
+                return raw.replace("\\u0026", "&")
+            return None
+
         def _walk(obj: Any, depth: int = 0) -> None:
             if depth > 14 or len(found) >= 24:
                 return
@@ -237,6 +282,8 @@ class InstagramGhostScraper:
                     "like_count": _count_of(obj, "edge_liked_by", "edge_media_preview_like", "like_count"),
                     "comment_count": _count_of(obj, "edge_media_to_comment", "comment_count"),
                     "is_video": bool(obj.get("is_video", False)),
+                    "post_type": _post_type_of(obj),
+                    "video_url": _video_url_of(obj),
                 })
             for value in obj.values():
                 _walk(value, depth + 1)
@@ -267,7 +314,7 @@ class InstagramGhostScraper:
 
         try:
             is_private = '"is_private":true' in html or '"isPrivate":true' in html or 'Bu hesap gizli' in html or 'This account is private' in html
-            
+
             follower_count = None
             following_count = None
             post_count = None
@@ -321,9 +368,24 @@ class InstagramGhostScraper:
                     continue
 
             if not posts:
-                sc_matches = list(re.finditer(r'"shortcode":"([A-Za-z0-9_-]+)"', html))
-                if not sc_matches:
-                    sc_matches = list(re.finditer(r'/p/([A-Za-z0-9_-]+)/', html))
+                # [GÖREV 1] 1-to-1 dogrulanmis post nesneleri: her gorsel URL'i
+                # icin {shortcode, video_url, caption, tur} TEK post nesnesinde
+                # birlesir. Capraz-liste eslesmesi (baska postun captionsini/
+                #URLsini odunc alma) YASAKTIR.
+                #
+                # Shortcode kaynaklari (oncelik sirasiyla):
+                #   1. Gomulu JSON "shortcode" alanlari (tur bilinmez -> None).
+                #   2. /p/<code>/ ve /reel/<code>/ URL'leri (belge sirasinda).
+                #      /reel/ tanimi geregi videodur (post_type="reel").
+                sc_units: List[tuple] = []  # (start, end, code, kind)
+                for m in re.finditer(r'"shortcode":"([A-Za-z0-9_-]+)"', html):
+                    sc_units.append((m.start(), m.end(), m.group(1), "json"))
+                if not sc_units:
+                    for m in re.finditer(r'/p/([A-Za-z0-9_-]+)/', html):
+                        sc_units.append((m.start(), m.end(), m.group(1), "post"))
+                    for m in re.finditer(r'/reel/([A-Za-z0-9_-]+)/', html):
+                        sc_units.append((m.start(), m.end(), m.group(1), "reel"))
+                    sc_units.sort(key=lambda u: u[0])
                 url_matches = list(re.finditer(r'"display_url":"([^"]+)"', html))
 
                 display_urls = [m.group(1) for m in url_matches]
@@ -337,42 +399,73 @@ class InstagramGhostScraper:
                             display_urls.append(url)
                             url_positions.append(m.start())
 
+                # [GÖREV 1] Video URL adaylari. Yalniz (shortcode, gorsel) span'i
+                # ICINDE kalan video o posta aittir; span disi video baska posta
+                # odunc verilmez (tek kullanim,tukenince biter).
+                video_matches: List[tuple] = []  # (pos, url)
+                for m in re.finditer(r'"video_url":"([^"]+)"', html):
+                    video_matches.append((
+                        m.start(),
+                        m.group(1).replace("&amp;", "&").replace("\\u0026", "&"),
+                    ))
+
                 # [FAZ 1] Konum bazli shortcode eslesmesi: her gorsel, kendinden
                 # once gelen en yakin shortcode ile eslenir (5000 karakter
                 # penceresi). Eski index-zip (shortcodes[i] <-> display_urls[i]),
                 # listelerden biri eksik/fazla eslestiginde captioni baska
                 # postun gorseliyle eslestiriyordu. Belge sirasi korunur;
                 # eslesmeyen gorsel kurtarma amacli `post_N` olur.
+                # [GÖREV 1] Ayni kural korunur; ek olarak tur (kind) + video_url
+                # ayni dogrulanmis birime baglanir.
                 _PAIR_WINDOW = 5000
                 _used_sc: set = set()
+                _used_vid: set = set()
                 shortcodes: List[str] = []
+                sc_kinds: List[Optional[str]] = []
+                post_videos: List[Optional[str]] = []
                 _placeholder_n = 0
                 for _url_pos in url_positions:
                     _best_idx = -1
                     _best_start = -1
-                    for _idx, _sc_m in enumerate(sc_matches):
+                    for _idx, (_sc_start, _sc_end, _sc_code, _sc_kind) in enumerate(sc_units):
                         if _idx in _used_sc:
                             continue
-                        _gap = _url_pos - _sc_m.start()
-                        if 0 <= _gap <= _PAIR_WINDOW and _sc_m.start() > _best_start:
+                        _gap = _url_pos - _sc_start
+                        if 0 <= _gap <= _PAIR_WINDOW and _sc_start > _best_start:
                             _best_idx = _idx
-                            _best_start = _sc_m.start()
+                            _best_start = _sc_start
                     if _best_idx >= 0:
                         _used_sc.add(_best_idx)
-                        shortcodes.append(sc_matches[_best_idx].group(1))
+                        _unit = sc_units[_best_idx]
+                        shortcodes.append(_unit[2])
+                        sc_kinds.append(_unit[3])
+                        _span_start = _unit[0]
+                        _vid: Optional[str] = None
+                        for _v_i, (_v_pos, _v_url) in enumerate(video_matches):
+                            if _v_i in _used_vid:
+                                continue
+                            if _span_start < _v_pos < _url_pos:
+                                _vid = _v_url
+                                _used_vid.add(_v_i)
+                                break
+                        post_videos.append(_vid)
                     else:
                         _placeholder_n += 1
                         shortcodes.append(f"post_{_placeholder_n}")
+                        sc_kinds.append(None)
+                        post_videos.append(None)
 
                 # Captions are often still present near the shortcode in the
                 # rendered HTML. Recover only a uniquely adjacent caption;
                 # otherwise keep None rather than guessing across posts.
+                # [GÖREV 1] Ayni bitisiklik kurali /p/ ve /reel/ birimleri icin
+                # de gecerlidir (pencere: eslesme bitiminden +3000 karakter).
                 caption_by_shortcode: Dict[str, str] = {}
-                for match in re.finditer(r'"shortcode":"([A-Za-z0-9_-]+)"', html):
-                    shortcode = match.group(1)
+                for (_c_start, _c_end, _c_code, _c_kind) in sc_units:
+                    shortcode = _c_code
                     if shortcode in caption_by_shortcode:
                         continue
-                    window = html[match.end():match.end() + 3000]
+                    window = html[_c_end:_c_end + 3000]
                     caption_match = re.search(
                         r'"edge_media_to_caption":\{"edges":\[\{"node":\{"text":"((?:[^"\\]|\\.)+)"',
                         window,
@@ -390,11 +483,14 @@ class InstagramGhostScraper:
                     try:
                         sc = shortcodes[i] if i < len(shortcodes) else f"post_{i+1}"
                         url = display_urls[i].replace("\\u0026", "&")
+                        kind = sc_kinds[i] if i < len(sc_kinds) else None
                         posts.append(InstagramPost(
                             shortcode=sc,
                             display_url=url,
                             caption=caption_by_shortcode.get(sc),
-                            is_video=False
+                            is_video=(kind == "reel"),
+                            post_type=("reel" if kind == "reel" else None),
+                            video_url=post_videos[i] if i < len(post_videos) else None,
                         ))
                     except Exception:
                         continue
@@ -443,6 +539,9 @@ class InstagramGhostScraper:
            `description` sablonlu/kirpik olabilir, alinmaz).
         3. `<meta property="article:published_time">` -> taken_at.
 
+        [GÖREV 1] Ayrica: dugumden post_type + video_url; JSON-LD
+        @type VideoObject/ImageObject -> post_type (+video ise is_video).
+
         Sozlesme: bulunan alanlar doner, bulunamayan ASLA uydurulmaz (anahtar
         eksik kalir). Login duvari / "sayfa yok" / shortcode eslesmezse BOS
         dict (yanlis posta ait veri birlestirilmez).
@@ -478,7 +577,8 @@ class InstagramGhostScraper:
                     matched = node
                     break
             if matched is not None:
-                for key in ("caption", "taken_at", "like_count", "comment_count"):
+                for key in ("caption", "taken_at", "like_count", "comment_count",
+                            "post_type", "video_url"):
                     if matched.get(key) is not None:
                         detail[key] = matched[key]
                 if matched.get("is_video"):
@@ -486,7 +586,7 @@ class InstagramGhostScraper:
                 break
 
         # 2) JSON-LD: tarih + acik caption.
-        if "taken_at" not in detail or "caption" not in detail:
+        if "taken_at" not in detail or "caption" not in detail or "post_type" not in detail:
             for ld_match in re.finditer(
                 r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
                 post_html, re.DOTALL | re.IGNORECASE,
@@ -509,6 +609,15 @@ class InstagramGhostScraper:
                         cap = entry.get("caption")
                         if isinstance(cap, str) and cap.strip():
                             detail["caption"] = cap.strip()[:2200]
+                    # [GÖREV 1] JSON-LD @type acik medya turu kanitidir.
+                    if "post_type" not in detail:
+                        ld_type = {"VideoObject": "video", "ImageObject": "image"}.get(
+                            entry.get("@type")
+                        )
+                        if ld_type:
+                            detail["post_type"] = ld_type
+                            if ld_type == "video":
+                                detail["is_video"] = True
 
         # 3) article:published_time meta.
         if "taken_at" not in detail:
@@ -532,6 +641,10 @@ class InstagramGhostScraper:
           profil kazimasi ASLA oldurulmez.
         - Birlesme kurali: yalniz None alanlar doldurulur; grid'deki gercek
           degerin ustune yazilmaz. Sira korunur (belge sirasi).
+        [GÖREV 1] Detay URL'i /p/<shortcode>/ olarak korunur: IG shortcode
+        uzayi tektir (/p/X/ reel shortcode'leri icin de cozulur); ayrica
+        hedef URL kilidi (goto sirasi) Faz-1 sozlesmesidir. Birlesmeye
+        post_type + video_url eklendi (None-doldurma kurali aynidir).
         """
         if not _post_detail_enabled():
             return posts
@@ -583,12 +696,31 @@ class InstagramGhostScraper:
                 update["comment_count"] = detail["comment_count"]
             if not post.is_video and detail.get("is_video"):
                 update["is_video"] = True
+            if post.post_type is None and detail.get("post_type"):
+                update["post_type"] = detail["post_type"]
+            if post.video_url is None and detail.get("video_url"):
+                update["video_url"] = detail["video_url"]
             if update:
                 try:
                     enriched[idx] = post.model_copy(update=update)
                 except Exception:
                     continue
         return enriched
+
+    @staticmethod
+    def _sort_chronological(posts: List[InstagramPost]) -> List[InstagramPost]:
+        """[GÖREV 1.3] Postlari kronolojik siralar: t_0 -> t_N (artan).
+
+        Stabil siralama: tarihsiz postlar SONA duser ve kendi aralarindaki
+        belge sirasi korunur (tarih uydurulmaz, tarihsiz post one cekilmez).
+        """
+        return sorted(
+            posts,
+            key=lambda p: (
+                p.taken_at is None,
+                p.taken_at.timestamp() if p.taken_at is not None else 0.0,
+            ),
+        )
 
     async def scrape_async(self, username: str, playwright_page=None) -> InstagramProfile:
         """
@@ -615,7 +747,7 @@ class InstagramGhostScraper:
                 if not is_transient:
                     logging.error(f"Playwright permanent error on attempt {attempt+1}: {e}")
                     raise InsufficientEvidenceError(f"Scraper kalıcı hatası: {username} - {str(e)}") from e
-                
+
                 logging.warning(f"Playwright transient failure (attempt {attempt+1}/{max_retries}), Reason: {e}")
                 if attempt == max_retries - 1:
                     logging.error(f"Playwright final failure after {max_retries} attempts.")
@@ -640,6 +772,10 @@ class InstagramGhostScraper:
             profile.posts = await self._enrich_posts_with_details(playwright_page, profile.posts)
         except Exception as e:
             logging.warning(f"Post detay zenginlestirme atlandi ({username}): {type(e).__name__}")
+
+        # [GÖREV 1.3] Kronolojik siralama t_0 -> t_N. Zenginlestirmeden SONRA
+        # uygulanir (goto sirasi belge sirasinda kalir; sira kilidi bozulmaz).
+        profile.posts = self._sort_chronological(profile.posts)
 
         return profile
 
