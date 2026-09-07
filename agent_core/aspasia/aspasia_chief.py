@@ -198,7 +198,7 @@ class AspasiaChief:
             f"{oversight}\n"
             "Bu özet iki tür satır içerir, karıştırma: ROUTING-ADAY satırları PLANLANAN "
             "rotadır (henüz çalışmadı) — 'çalıştı/gerçekleşti' diye anlatma; TELEMETRİ/ "
-            "SONUÇ/KOMUT satırları GÖZLEMLENMİŞ gerçektir. Kullanıcı routing, kota, "
+            "SONUÇ/KOMUT/HAFIZA-DISK satırları GÖZLEMLENMİŞ gerçektir (HAFIZA-DISK = RAM boşken diskten okunan kanonik kayıt). Kullanıcı routing, kota, "
             "masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
         ) if oversight else ""
 

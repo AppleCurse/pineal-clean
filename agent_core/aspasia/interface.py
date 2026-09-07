@@ -556,6 +556,78 @@ class MissionResultReader:
         }
 
 
+class DiskMemoryBridge:
+    """RAM bosken CanonicalMemory (disk) salt-okur koprusu — PARALEL STORE YOK.
+
+    Kaynak: executor.memory (CanonicalMemory SoT). Dizin LISTELENIR, her aday
+    inspect_task_memory ile fail-closed OKUNUR (bozuk dosya asla icerik gibi
+    sunulmaz; kayip dosya zaten listede yoktur). En fazla _MAX_INSPECT aday
+    incelenir (dosya-adi ters-sirasi oncelikli: op_YYYYMMDDHHMMSS_* kronolojiktir).
+    """
+
+    _MAX_INSPECT = 25
+    _MAX_REPORT = 3
+
+    def __init__(self, executor: Any = None):
+        self._executor = executor
+
+    def _storage_dir(self) -> Optional[str]:
+        memory = getattr(self._executor, "memory", None)
+        path = getattr(memory, "storage_path", None)
+        if not path or not isinstance(path, str):
+            return None
+        return path if os.path.isdir(path) else None
+
+    def latest(self) -> Dict[str, Any]:
+        """{'state': ok|empty|unsupported, 'tasks': [...], 'corrupted': N}."""
+        memory = getattr(self._executor, "memory", None)
+        inspect = getattr(memory, "inspect_task_memory", None)
+        storage = self._storage_dir()
+        if not callable(inspect) or storage is None:
+            return {"state": "unsupported", "tasks": [], "corrupted": 0}
+        try:
+            names = sorted(
+                (n for n in os.listdir(storage)
+                 if n.endswith(".json") and n != "learnings.json"),
+                reverse=True,
+            )
+        except OSError:
+            return {"state": "unsupported", "tasks": [], "corrupted": 0}
+        ready: List[Dict[str, Any]] = []
+        corrupted = 0
+        for name in names[: self._MAX_INSPECT]:
+            task_id = name[: -len(".json")]
+            # Karantina/yedek artefaktlari (*.corrupt.*, *.tmp) .json ile
+            # bitmedigi icin listeye girmez; task_id disi kokler atlanir.
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+                continue
+            try:
+                result = inspect(task_id)
+            except Exception:
+                corrupted += 1
+                continue
+            if not isinstance(result, dict):
+                continue
+            if result.get("state") == "CORRUPTED":
+                corrupted += 1
+                continue
+            if result.get("state") != "READY":
+                continue
+            data = result.get("data") or {}
+            evidence = data.get("evidence")
+            ready.append({
+                "task_id": task_id,
+                "last_updated": data.get("last_updated"),
+                "evidence_count": len(evidence) if isinstance(evidence, list) else None,
+                "confidence": data.get("confidence"),
+            })
+            if len(ready) >= self._MAX_REPORT:
+                break
+        if not ready and not corrupted:
+            return {"state": "empty", "tasks": [], "corrupted": 0}
+        return {"state": "ok", "tasks": ready, "corrupted": corrupted}
+
+
 def build_oversight_digest(
     gateway: Any,
     room_state: Any = None,
@@ -689,6 +761,27 @@ def build_oversight_digest(
                 elif result.get("state") == "missing":
                     has_content = True
                     lines.append("SONUÇ: kanonik kayıt yok — görev henüz mühürlenmemiş olabilir")
+            # RAM-DISK KOPRUSU: odada canli/bitmis gorev YOKSA (RAM bos) ve
+            # diskte kanonik kayit VARSA, Aspasia diskten okur — RAM boslugu
+            # "hicbir sey olmadi" diye anlatilmaz. RAM doluysa satir eklenmez.
+            if not status.get("task_id") and not finished:
+                disk = DiskMemoryBridge(executor).latest()
+                if disk.get("state") == "ok":
+                    has_content = True
+                    chunks = []
+                    for task in disk.get("tasks") or []:
+                        conf = task.get("confidence")
+                        chunks.append(
+                            f"{task.get('task_id')}:kanıt={task.get('evidence_count')},"
+                            f"güven={('%.2f' % conf) if isinstance(conf, (int, float)) else '?'}"
+                        )
+                    suffix = ""
+                    if disk.get("corrupted"):
+                        suffix = f" bozuk={disk['corrupted']}(kurtarma-gerekir)"
+                    lines.append(
+                        "HAFIZA-DISK: " + (" | ".join(chunks) if chunks else "kayıt-yok")
+                        + suffix + " (RAM boş; diskten okundu)"
+                    )
         except Exception:  # pragma: no cover
             pass
     if command_gateway is not None:

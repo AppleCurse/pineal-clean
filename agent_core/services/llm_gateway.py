@@ -159,9 +159,12 @@ _FALLBACK_GUARD_MARKERS = (
 # acildi. Kume keyfi degil: routed_chat._OPTIONAL_OPENAI_CHAT_CONNECTIONS
 # ile ayni saglayicilar + ayni env adlari (tek sozlesme, iki yol) arti
 # katalogdaki diger openai_chat uzak saglayicilar. *-local ve base_url'suz
-# girdiler anahtar istemez (tasiyici degiller). openai/anthropic/gemini/xai/
-# cohere/azure listede YOK: tasiyicilari openai_chat degil (tani destegi
-# ayri is); anahtarlari route_diagnostics'te gorunur (transport_unsupported).
+# girdiler anahtar istemez (tasiyici degiller). openai/anthropic/xai/cohere/
+# azure listede YOK: tasiyicilari openai_chat degil (tani destegi ayri is);
+# anahtarlari route_diagnostics'te gorunur (transport_unsupported).
+# google-gemini BURADA: Google'in resmi OpenAI-uyumlu endpoint'i
+# (.../v1beta/openai/) katalogda openai_chat isaretli; sifir yeni transport
+# koduyla ayni AsyncOpenAI tasmasi kullanilir (canli dogrulama ayri is).
 _AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
     ("groq", "GROQ_API_KEY"),
     ("deepseek", "DEEPSEEK_API_KEY"),
@@ -176,16 +179,16 @@ _AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
     ("huggingface", "HUGGINGFACE_API_KEY"),
     ("deepinfra", "DEEPINFRA_API_KEY"),
     ("perplexity", "PERPLEXITY_API_KEY"),
+    ("google-gemini", "GEMINI_API_KEY"),
 )
 
 # FAZ 3: tasiyicisi openai_chat olmayan uzak saglayicilar. Rota TEKLIF
 # EDILMEZ (transport yok); anahtarlari yalniz route_diagnostics'te
-# "gorunur" (key_present + transport_unsupported) — operator 16 anahtarin
+# "gorunur" (key_present + transport_unsupported) — operator envanterinin
 # akibetini tek ekranda gorur, sessiz yutma olmaz.
 _DIAGNOSTIC_ONLY_PROVIDERS: tuple[tuple[str, str], ...] = (
     ("openai", "OPENAI_API_KEY"),
     ("anthropic", "ANTHROPIC_API_KEY"),
-    ("google-gemini", "GEMINI_API_KEY"),
     ("xai", "XAI_API_KEY"),
     ("cohere", "COHERE_API_KEY"),
     ("azure-openai", "AZURE_OPENAI_API_KEY"),

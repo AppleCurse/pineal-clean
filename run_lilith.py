@@ -33,6 +33,14 @@ def resolve_credentials(model: str) -> tuple[str | None, str | None, str]:
             with open(".pineal_vault.json", "r", encoding="utf-8") as vf:
                 vdata = json.load(vf)
                 api_key = vdata.get("api_key") or vdata.get("openrouter_key")
+                if not api_key:
+                    # KASA SEMASI: providers.{ad}.api_key (yerel envanter).
+                    _provs = vdata.get("providers") if isinstance(vdata.get("providers"), dict) else {}
+                    _or_entry = _provs.get("openrouter")
+                    if isinstance(_or_entry, dict):
+                        api_key = _or_entry.get("api_key")
+                    elif isinstance(_or_entry, str):
+                        api_key = _or_entry
         except Exception:
             pass
 

@@ -8,6 +8,8 @@ B3. Paylasim-artikli gercek URL'ler (?igsh=, #fragman) kabul edilir;
     lookalike host ve hedefsiz komut yine reddedilir.
 B4. Kota statusu lowercase kanonik degerdir ("unknown"/"healthy");
     bilinmeyen kota gozlemlenmis gibi gosterilmez, KOTA gurultu satiri uretmez.
+B5. Aday rota gozlemlenmis gercek gibi sunulmaz (ROUTING-ADAY vs ROUTING).
+B6. RAM bosken diskteki CanonicalMemory okunur (HAFIZA-DISK koprusu).
 """
 
 import contextlib
@@ -248,3 +250,92 @@ def test_chat_instruction_distinguishes_candidate_from_observed():
     assert "ROUTING-ADAY" in prompt
     assert "PLANLANAN" in prompt
     assert "GÖZLEMLENMİŞ" in prompt
+
+
+# ------------------------------------------------------------------ #
+# B6. RAM-DISK KOPRUSU: RAM bosken disk okunur, uydurma yok
+# ------------------------------------------------------------------ #
+def _disk_executor(tmp_path, files):
+    import json as _json
+
+    from agent_core.services.canonical_memory import CanonicalMemory
+
+    for name, payload in files.items():
+        path = tmp_path / name
+        if isinstance(payload, str):
+            path.write_text(payload, encoding="utf-8")
+        else:
+            path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return SimpleNamespace(memory=CanonicalMemory(storage_path=str(tmp_path)))
+
+
+def _task_doc(task_id, n_evidence=1, confidence=0.8):
+    return {
+        "task_id": task_id, "last_updated": "2026-01-01T00:00:00+00:00",
+        "evidence": [{"agent": f"a{i}", "result": {"confidence": confidence}}
+                     for i in range(n_evidence)],
+        "confidence": confidence,
+    }
+
+
+def test_disk_bridge_reports_last_task_when_ram_empty(tmp_path):
+    from agent_core.aspasia.interface import DiskMemoryBridge
+
+    ex = _disk_executor(tmp_path, {
+        "op_20260101000000_ab12cd34.json": _task_doc("op_20260101000000_ab12cd34"),
+    })
+    bridge = DiskMemoryBridge(ex).latest()
+    assert bridge["state"] == "ok"
+    assert bridge["tasks"][0]["task_id"] == "op_20260101000000_ab12cd34"
+    assert bridge["tasks"][0]["evidence_count"] == 1
+    digest = build_oversight_digest(_RoutingGW([]), {}, ex, None)
+    assert "HAFIZA-DISK:" in digest
+    assert "op_20260101000000_ab12cd34" in digest
+    assert "(RAM boş; diskten okundu)" in digest
+
+
+def test_disk_bridge_reports_corruption_fail_closed(tmp_path):
+    ex = _disk_executor(tmp_path, {"bozuk_gorev.json": "{bozuk-json"})
+    digest = build_oversight_digest(_RoutingGW([]), {}, ex, None)
+    assert "HAFIZA-DISK:" in digest
+    assert "bozuk=1(kurtarma-gerekir)" in digest
+    assert "bozuk-json" not in digest  # icerik asla sizmaz
+
+
+def test_disk_bridge_silent_when_ram_live(tmp_path):
+    ex = _disk_executor(tmp_path, {
+        "op_20260101000000_ab12cd34.json": _task_doc("op_20260101000000_ab12cd34"),
+    })
+    digest = build_oversight_digest(_RoutingGW([]), _room_with("processing"), ex, None)
+    assert "HAFIZA-DISK:" not in digest
+
+
+def test_disk_bridge_silent_when_disk_empty(tmp_path):
+    ex = _disk_executor(tmp_path, {})
+    digest = build_oversight_digest(_RoutingGW([]), {}, ex, None)
+    assert "HAFIZA-DISK:" not in digest
+
+
+def test_disk_bridge_ignores_learnings_and_artifacts(tmp_path):
+    from agent_core.aspasia.interface import DiskMemoryBridge
+
+    ex = _disk_executor(tmp_path, {
+        "learnings.json": [{"fact": "x"}],
+        "op_1.json.tmp": "yarim",
+        "op_1.json.corrupt.20260101T000000": "bozuk-baytlar",
+    })
+    assert DiskMemoryBridge(ex).latest()["state"] == "empty"
+
+
+def test_chat_instruction_lists_disk_lines_as_observed():
+    captured = {}
+
+    class _ChatGW(_RoutingGW):
+        async def query_chain(self, **kwargs):
+            captured.update(kwargs)
+            return "Elbette Mösyö."
+
+    chief = AspasiaChief(llm_gateway=_ChatGW([]))
+    import asyncio
+    asyncio.run(chief.chat("hafizada ne var?", room_state=None))
+    assert "HAFIZA-DISK" in captured["prompt"]

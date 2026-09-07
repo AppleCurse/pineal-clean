@@ -1,6 +1,6 @@
 """FAZ 3 — cok-saglayici havuzu sozlesmeleri.
 
-R1. Havuz 13 dogrudan saglayiciya acik (4 degil); anahtar varsa okunur.
+R1. Havuz 14 dogrudan saglayiciya acik (4 degil); anahtar varsa okunur.
 R2. Operator beyanli modeller (PINEAL_PROVIDER_MODELS_*) eslesir; hicbir
     kapi atlanmaz (firewall/cap/kota aynen gecerli).
 R3. route_diagnostics: her anahtarin akibeti gorunur (secret sizdirmaz);
@@ -58,11 +58,11 @@ def _providers_of(variants):
 # ------------------------------------------------------------------ #
 # R1. havuz genisligi
 # ------------------------------------------------------------------ #
-def test_pool_known_providers_cover_thirteen_direct():
-    assert len(_AGENT_DIRECT_PROVIDER_KEYS) == 13
+def test_pool_known_providers_cover_fourteen_direct():
+    assert len(_AGENT_DIRECT_PROVIDER_KEYS) == 14
     ids = [pid for pid, _ in _AGENT_DIRECT_PROVIDER_KEYS]
     for expected in ("groq", "deepseek", "cerebras", "nous-research", "mistral",
-                     "together", "fireworks", "alibaba-dashscope"):
+                     "together", "fireworks", "alibaba-dashscope", "google-gemini"):
         assert expected in ids
 
 
@@ -336,3 +336,76 @@ def test_inventory_keys_visible_as_diagnostic_only(monkeypatch):
     # ...ama kasa/vault kabul eder (gorunurluk icin)
     gw.set_provider_key("iflow", "k")
     assert gw._provider_key_source("iflow", "IFLOW_API_KEY") == "instance"
+
+
+# ------------------------------------------------------------------ #
+# Madde 1: OpenAI-uyumlu tasiyicilar (Gemini/NVIDIA/DeepSeek)
+# ------------------------------------------------------------------ #
+def test_gemini_catalog_entry_is_openai_chat():
+    from agent_core.services.provider_manager import ProviderProtocol, load_builtin_catalog
+
+    provider = load_builtin_catalog().get_provider("google-gemini")
+    assert provider.protocol is ProviderProtocol.OPENAI_CHAT
+    assert provider.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+def test_gemini_route_offered_with_key_and_attestation(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g1")
+    monkeypatch.setenv("PINEAL_PROVIDER_MODELS_GOOGLE_GEMINI", "gemini-probe-flash")
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
+    gw = LLMGateway()
+    routes = [r for r in gw.agent_route_variants("gemini-probe-flash") if r is not None]
+    assert [r.provider_id for r in routes] == ["google-gemini"]
+    assert routes[0].base_url == "https://generativelanguage.googleapis.com/v1beta/openai"
+    diag = gw.route_diagnostics("gemini-probe-flash")
+    assert diag["offered"] == [{
+        "route_key": "gemini-probe-flash@google-gemini", "provider": "google-gemini",
+        "model": "gemini-probe-flash", "priced": False, "source": "attested",
+    }]
+
+
+def test_gemini_without_key_reports_no_key_not_transport(monkeypatch):
+    gw = LLMGateway()
+    entry = gw.route_diagnostics("gemini-probe-flash")["skipped"]["google-gemini"]
+    assert entry["reason"] == "no_key"
+
+
+def test_gemini_paid_firewall_default_closed(monkeypatch):
+    # Tasiyici acildi ama doktrin GEVSETILMEDI: bilinmeyen = paid -> red.
+    monkeypatch.setenv("GEMINI_API_KEY", "g1")
+    monkeypatch.setenv("PINEAL_PROVIDER_MODELS_GOOGLE_GEMINI", "gemini-probe-flash")
+    gw = LLMGateway()
+    assert gw.agent_route_variants("gemini-probe-flash") == [None]
+    entry = gw.route_diagnostics("gemini-probe-flash")["skipped"]["google-gemini"]
+    assert entry["reason"] == "paid_firewall"
+
+
+def test_gemini_client_uses_openai_compat_transport():
+    # Ag trafigi YOK: yalniz client insasi + baz URL kaniti.
+    from openai import AsyncOpenAI
+
+    gw = LLMGateway()
+    route = GatewayRoute(
+        connection_id="agent-google-gemini", provider_id="google-gemini",
+        model="gemini-probe-flash",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        api_key="g1",
+    )
+    client = gw._client_for_route(route)
+    assert isinstance(client, AsyncOpenAI)
+    assert str(client.base_url) == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+def test_deepseek_and_nvidia_routes_offered_with_attestation(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d1")
+    monkeypatch.setenv("NVIDIA_API_KEY", "n1")
+    monkeypatch.setenv("PINEAL_PROVIDER_MODELS_DEEPSEEK", "deepseek-probe-chat")
+    monkeypatch.setenv("PINEAL_PROVIDER_MODELS_NVIDIA_NIM", "nvidia/probe-70b")
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
+    gw = LLMGateway()
+    ds = [r for r in gw.agent_route_variants("deepseek-probe-chat") if r is not None]
+    nv = [r for r in gw.agent_route_variants("nvidia/probe-70b") if r is not None]
+    assert [(r.provider_id, r.base_url) for r in ds] == [
+        ("deepseek", "https://api.deepseek.com/v1")]
+    assert [(r.provider_id, r.base_url) for r in nv] == [
+        ("nvidia-nim", "https://integrate.api.nvidia.com/v1")]
