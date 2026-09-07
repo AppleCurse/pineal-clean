@@ -27,6 +27,15 @@ from typing import Any, Dict, List
 
 from agent_core.services.theme_cluster import cluster_texts
 
+try:  # GÖREV 2 artığı: piksel ölçümü yalnız PIL varsa (yoksa None+not).
+    from PIL import Image as _PILImage
+
+    HAS_PIL = True
+except ImportError:  # pragma: no cover - ortama bağlı dal
+    _PILImage = None  # type: ignore[assignment]
+
+    HAS_PIL = False
+
 CHANNELS = ("declaration", "staging", "rhythm", "social")
 
 # Ch2 piksel notu: renk doygunlugu HAM JPEG cozumu gerektirir; stdlib'da
@@ -162,6 +171,8 @@ def _analyze_depth_inner(data: Dict[str, Any]) -> Dict[str, Any]:
     n_ruptures = len(ruptures) if isinstance(ruptures, list) else 0
     regimes = traj.get("regimes")
     n_regimes = len(regimes) if isinstance(regimes, list) else 0
+    rupture_kinds = sorted({r.get("kind") for r in ruptures
+                            if isinstance(r, dict) and isinstance(r.get("kind"), str)})
     c3 = 1.0 if n_samples >= 3 else (0.5 if n_samples > 0 else 0.0)
     if c3 > 0:
         i3 = round(min(1.0, 0.6 * min(1.0, n_ruptures / 2.0)
@@ -173,6 +184,7 @@ def _analyze_depth_inner(data: Dict[str, Any]) -> Dict[str, Any]:
             "peak_hour": timing.get("peak_hour"),
             "median_drift_hours": timing.get("median_drift_hours"),
             "n_ruptures": n_ruptures, "n_regimes": n_regimes,
+            "rupture_kinds": rupture_kinds,
             "span_hours": traj.get("span_hours")}
 
     # ---- Ch4 sosyal ----
@@ -240,3 +252,38 @@ def _analyze_depth_inner(data: Dict[str, Any]) -> Dict[str, Any]:
                         "audit_present": bool(audit),
                         "post_type_n": len(type_list)},
     }
+
+
+def measure_saturation(image_paths: Any, max_side: int = 64) -> Dict[str, Any]:
+    """GÖREV 2 artığı: yerel dosyaların ortalama HSV doygunluğu (0.0-1.0).
+
+    PIL yoksa/ölçülebilir piksel yoksa mean None + dürüst not (uydurma yok).
+    Bozuk/eksik dosya atlanır ve SAYILIR (n_measured/n_total). Saf-stdlib
+    JPEG çözücü olmadığı için bu fonksiyon PIL'e mahkûmdur; HAS_PIL bayrağı
+    ortamı bildirir. Deterministiktir (aynı bayt -> aynı sayı).
+    """
+    paths = [p for p in (image_paths or []) if isinstance(p, str)]
+    total = len(paths)
+    if not HAS_PIL or _PILImage is None:
+        return {"mean_saturation": None, "n_measured": 0, "n_total": total,
+                "note": SATURATION_NOTE, "has_pil": False}
+    values = []
+    for path in paths:
+        try:
+            with _PILImage.open(path) as img:
+                small = img.convert("RGB")
+                small.thumbnail((max_side, max_side))
+                pixels = list(small.convert("HSV").getdata())
+        except Exception:
+            continue
+        if not pixels:
+            continue
+        values.append(sum(px[1] for px in pixels) / len(pixels) / 255.0)
+    if not values:
+        return {"mean_saturation": None, "n_measured": 0, "n_total": total,
+                "note": "ölçülebilir piksel bulunamadı (dosyalar açılamadı/boş)",
+                "has_pil": True}
+    return {"mean_saturation": round(sum(values) / len(values), 3),
+            "n_measured": len(values), "n_total": total,
+            "note": f"{len(values)}/{total} dosya ölçüldü (HSV-S ortalaması)",
+            "has_pil": True}

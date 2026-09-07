@@ -38,3 +38,7 @@ holehe>=1.61
 # invisible-playwright (MIT): patched Firefox launch-level wrapper; pip paketi
 # hafiftir, binary İNDİRMEZ — binary opsiyoneldir (INVISIBLE_BROWSER_BINARY).
 invisible-playwright>=0.7.4
+# GÖREV 2 artığı: sahneleme renk-doygunluğu (HSV-S) piksel ölçümü.
+# Kurulum TEK İŞLEMDE kalır (pillow saf wheel); yoksa motor dürüst
+# None + not döner (çökmez, uydurmaz).
+pillow>=10.0.0
