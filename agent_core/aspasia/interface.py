@@ -118,6 +118,23 @@ class RoutingInspector:
                         variants.append(entry)
             except Exception as exc:  # pragma: no cover
                 variants.append({"error": f"{type(exc).__name__}: {exc}"[:120]})
+        # FAZ 3: elenen saglayicilar + nedenleri (havuz gorunurlugu).
+        # route_diagnostics yoksa (eski sahte gateway) bos kalir; explain asla kirilmaz.
+        blocked: List[Dict[str, Any]] = []
+        if chain:
+            diagnostics = getattr(gw, "route_diagnostics", None)
+            if callable(diagnostics):
+                try:
+                    info = diagnostics(chain[0]) or {}
+                    for provider_id, entry in (info.get("skipped") or {}).items():
+                        if isinstance(entry, dict):
+                            blocked.append({
+                                "provider": provider_id,
+                                "reason": entry.get("reason"),
+                                "key_present": bool(entry.get("key_present")),
+                            })
+                except Exception:
+                    blocked = []
         return {
             "agent": agent_name,
             "task": task,
@@ -125,6 +142,7 @@ class RoutingInspector:
             "chain_source": source,
             "selected": variants[0] if variants else None,
             "alternatives": variants[1:],
+            "blocked": blocked,
             "fallback_rule": (
                 "gecici hata -> siradaki rota, o biterse siradaki model; "
                 "spend-cap/paid-escalation/unknown-pricing/substitution reddi -> ZINCIR DURUR"

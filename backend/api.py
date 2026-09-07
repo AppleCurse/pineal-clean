@@ -633,6 +633,21 @@ def get_room(client_id: str) -> dict:
                 dialogue_manager.llm.set_key(api_key)
             vault["or_key"] = True
 
+        # FAZ 3: dosyadan yuklenen dogrudan-saglayici anahtarlari (varsa).
+        # api_key ile ayni sozlesme: gateway bellegine uygulanir, sir
+        # degerler vault dict'inden dusurulur, yalniz ID listesi isaretlenir.
+        file_provider_keys = vault.pop("provider_keys", None)
+        if isinstance(file_provider_keys, dict):
+            applied = []
+            for provider_id, provider_key in file_provider_keys.items():
+                try:
+                    executor.llm_gateway.set_provider_key(provider_id, provider_key)
+                    applied.append(str(provider_id))
+                except (ValueError, AttributeError):
+                    continue
+            if applied:
+                vault["provider_keys_set"] = sorted(set(applied))
+
         tavily = vault.get("tavily_key") or os.getenv("TAVILY_API_KEY")
         # [FIX] .env.example/SearchEngine "SERPAPI_API_KEY" kullanır; eski
         # "SERPAPI_KEY" yalnızca geriye uyumluluk için ikincil okunur.
@@ -1686,6 +1701,9 @@ class VaultPayload(BaseModel):
     local_model: str = ""
     # Optional so omitted != explicit false (UI toggle must be able to turn local OFF).
     use_local: Optional[bool] = None
+    # FAZ 3: dogrudan-saglayici anahtarlari {provider_id: key}. Yalniz odaya
+    # ozel gateway bellegine yazilir; degerler asla loglanmaz/dondurulmez.
+    provider_keys: Optional[Dict[str, str]] = None
     
 @app.post("/api/vault")
 async def api_vault(req: VaultPayload):
@@ -1703,6 +1721,30 @@ async def api_vault(req: VaultPayload):
         vault["or_key"] = True
         broadcast_log(req.client_id, "INFO", "KASA: API Anahtarı girildi. Ağ geçidi aktif — canlı LLM kilidi açıldı.")
         
+    # FAZ 3: dogrudan-saglayici anahtarlari (oda gateway bellegi; degerler
+    # loglanmaz, yalniz uygulanan saglayici ID'leri isaretlenir).
+    if req.provider_keys:
+        applied = []
+        gateways = [executor.llm_gateway]
+        if shadow_executor is not None:
+            gateways.append(shadow_executor.llm_gateway)
+        if dialogue_manager is not None:
+            gateways.append(dialogue_manager.llm)
+        for provider_id, provider_key in req.provider_keys.items():
+            ok = True
+            for gateway in gateways:
+                try:
+                    gateway.set_provider_key(provider_id, provider_key)
+                except (ValueError, AttributeError):
+                    ok = False
+            if ok:
+                applied.append(str(provider_id))
+            else:
+                broadcast_log(req.client_id, "WARNING", f"KASA: saglayici anahtari uygulanamadi: {provider_id}")
+        if applied:
+            vault["provider_keys_set"] = sorted(set(applied))
+            broadcast_log(req.client_id, "INFO", f"KASA: {len(applied)} dogrudan-saglayici anahtari havuza eklendi.")
+
     if req.local_url or req.local_model or req.use_local is not None:
         active = bool(req.use_local) if req.use_local is not None else bool(vault.get("use_local", False))
         executor.llm_gateway.set_local_config(

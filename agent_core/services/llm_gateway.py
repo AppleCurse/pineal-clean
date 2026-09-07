@@ -155,12 +155,60 @@ _FALLBACK_GUARD_MARKERS = (
 # model doğrudan sağlayıcı API'sinde (kendi base_url/anahtar/kota/fiyat)
 # mevcut ve politika kapılarından geçiyorsa maliyet merdiveni önce onu
 # önerir. OpenRouter havuzun SANTRALİ değil, bir üyesidir.
+# FAZ 3: liste 4 girdiden katalogdaki TUM openai_chat uzak saglayicilara
+# acildi. Kume keyfi degil: routed_chat._OPTIONAL_OPENAI_CHAT_CONNECTIONS
+# ile ayni saglayicilar + ayni env adlari (tek sozlesme, iki yol) arti
+# katalogdaki diger openai_chat uzak saglayicilar. *-local ve base_url'suz
+# girdiler anahtar istemez (tasiyici degiller). openai/anthropic/gemini/xai/
+# cohere/azure listede YOK: tasiyicilari openai_chat degil (tani destegi
+# ayri is); anahtarlari route_diagnostics'te gorunur (transport_unsupported).
 _AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
     ("groq", "GROQ_API_KEY"),
     ("deepseek", "DEEPSEEK_API_KEY"),
     ("cerebras", "CEREBRAS_API_KEY"),
     ("nous-research", "NOUS_API_KEY"),
+    ("mistral", "MISTRAL_API_KEY"),
+    ("together", "TOGETHER_API_KEY"),
+    ("fireworks", "FIREWORKS_API_KEY"),
+    ("alibaba-dashscope", "DASHSCOPE_API_KEY"),
+    ("sambanova", "SAMBANOVA_API_KEY"),
+    ("nvidia-nim", "NVIDIA_NIM_API_KEY"),
+    ("huggingface", "HUGGINGFACE_API_KEY"),
+    ("deepinfra", "DEEPINFRA_API_KEY"),
+    ("perplexity", "PERPLEXITY_API_KEY"),
 )
+
+# FAZ 3: tasiyicisi openai_chat olmayan uzak saglayicilar. Rota TEKLIF
+# EDILMEZ (transport yok); anahtarlari yalniz route_diagnostics'te
+# "gorunur" (key_present + transport_unsupported) — operator 16 anahtarin
+# akibetini tek ekranda gorur, sessiz yutma olmaz.
+_DIAGNOSTIC_ONLY_PROVIDERS: tuple[tuple[str, str], ...] = (
+    ("openai", "OPENAI_API_KEY"),
+    ("anthropic", "ANTHROPIC_API_KEY"),
+    ("google-gemini", "GEMINI_API_KEY"),
+    ("xai", "XAI_API_KEY"),
+    ("cohere", "COHERE_API_KEY"),
+    ("azure-openai", "AZURE_OPENAI_API_KEY"),
+)
+
+_KNOWN_PROVIDER_KEY_IDS: frozenset = frozenset(
+    [pid for pid, _ in _AGENT_DIRECT_PROVIDER_KEYS]
+    + [pid for pid, _ in _DIAGNOSTIC_ONLY_PROVIDERS]
+)
+
+
+def _attested_provider_models(provider_id: str) -> tuple[str, ...]:
+    """FAZ 3: operator beyanli model listesi (PINEAL_PROVIDER_MODELS_*).
+
+    Katalog `models` bos olan bir saglayiciya operator, sundugunu BILDIGI
+    model ID'lerini beyan eder: PINEAL_PROVIDER_MODELS_TOGETHER="m1,m2".
+    Bu bir katalog iddiasi DEGIL, operator beyanidir (kendi anahtari,
+    kendi kotasi); firewall (paid-escalation) + spend-cap + kota kapilari
+    aynen gecerlidir. Uydurma katalog girdisi yazilmaz.
+    """
+    env_name = "PINEAL_PROVIDER_MODELS_" + provider_id.upper().replace("-", "_")
+    raw = os.getenv(env_name, "")
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 class ModelSubstitutionDeniedError(RuntimeError):
@@ -403,6 +451,10 @@ class LLMGateway:
         self._budget_reservations: dict[str, float] = {}
         # MP-ROUTING: agent-path provider quota pre-checks (lazy, policy-backed)
         self._agent_governor = None
+        # FAZ 3: oda-ornekli saglayici anahtarlari (vault -> bellek). Ayni
+        # saglayicinin env anahtarini ezer (oda izolasyonu; api_key ile ayni
+        # sozlesme). Degerler HICBIR zaman loglanmaz/telemetriye yazilmaz.
+        self._provider_keys: dict[str, str] = {}
         # ROUTING-HARDENING: kisa omurlu saglayici-saglik devresi. Tek kacak
         # veri yapi DEGIL: yalniz GEICICI tasima hatalari sayilir (policy
         # redleri sayilmaz), sure dolunca kendiliginden sifirlanir, cap'li
@@ -802,6 +854,40 @@ class LLMGateway:
         self.circuit_opened_at = 0.0
         self._rebuild()
 
+    def set_provider_key(self, provider_id: str, key: str) -> None:
+        """FAZ 3: oda-ornekli dogrudan-saglayici anahtari (vault -> bellek).
+
+        env'deki ayni saglayici anahtarini ezer. Bilinmeyen provider_id ->
+        ValueError (sessiz yutma yok; cagiran loglar). Bos key -> kayit
+        silinir (env'ye geri donulur).
+        """
+        pid = (provider_id or "").strip().lower()
+        if pid not in _KNOWN_PROVIDER_KEY_IDS:
+            raise ValueError(f"unknown provider_id for direct key: {provider_id!r}")
+        if key and key.strip():
+            self._provider_keys[pid] = key.strip()
+        else:
+            self._provider_keys.pop(pid, None)
+
+    def clear_provider_key(self, provider_id: str) -> None:
+        """FAZ 3: oda anahtarini sil (env'ye geri donulur)."""
+        self._provider_keys.pop((provider_id or "").strip().lower(), None)
+
+    def _provider_api_key(self, provider_id: str, key_env: str) -> str:
+        """FAZ 3: anahtar cozumleme — once oda (vault), sonra env."""
+        inst = self._provider_keys.get(provider_id, "").strip()
+        if inst:
+            return inst
+        return os.getenv(key_env, "").strip()
+
+    def _provider_key_source(self, provider_id: str, key_env: str) -> str:
+        """FAZ 3: tani icin anahtar kaynagi (deger ASLA dondurulmez)."""
+        if self._provider_keys.get(provider_id, "").strip():
+            return "instance"
+        if os.getenv(key_env, "").strip():
+            return "env"
+        return "none"
+
     def set_local_config(self, base_url: str = None, model_name: str = None, active: bool = True):
         if base_url:
             self.local_base_url = base_url
@@ -897,6 +983,7 @@ class LLMGateway:
         default production behavior is byte-for-byte the legacy path.
         """
         import os
+        from types import SimpleNamespace
 
         def _price_sum(pricing: "Optional[dict[str, float]]") -> float:
             if not pricing:
@@ -920,7 +1007,7 @@ class LLMGateway:
             return [item[2] for item in variants] or [None]
 
         for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
-            api_key = os.getenv(key_env, "").strip()
+            api_key = self._provider_api_key(provider_id, key_env)
             if not api_key:
                 continue
             # ROUTING-HARDENING: gecici-tasima-hatasi devresi — ardisik transient
@@ -941,6 +1028,14 @@ class LLMGateway:
                 if candidate.id == model or model.endswith(f"/{candidate.id}"):
                     matched = candidate
                     break
+            if matched is None:
+                # FAZ 3: katalogda eslesme yoksa operator beyanina bakilir
+                # (PINEAL_PROVIDER_MODELS_*). Beyan, eslesme kurali disinda
+                # HICBIR kapiyi atlamaz (firewall/cap/kota aynen gecerli).
+                for attested_id in _attested_provider_models(provider_id):
+                    if attested_id == model or model.endswith(f"/{attested_id}"):
+                        matched = SimpleNamespace(id=attested_id, pricing=None)
+                        break
             if matched is None:
                 continue
             # MODEL@PROVIDER kimliği: policy kataloğu fiyatın gerçek kaynağı;
@@ -998,6 +1093,123 @@ class LLMGateway:
             ))
         variants.sort(key=lambda item: (item[0], item[1]))
         return [item[2] for item in variants] or [None]
+
+    def route_diagnostics(self, model: str, required: frozenset[str] = frozenset()) -> dict[str, Any]:
+        """FAZ 3: model icin havuz gorunurlugu (salt-okunur tani).
+
+        agent_route_variants ile AYNI kapi sirasini izler; her saglayici icin
+        karar + neden dondurur. Secret DEGER asla icermez (varlik/kaynak
+        boolean'lari only). Tutarlilik kilidi: offered kumesi variants ile
+        birebir eslesir (tests/unit/test_multi_provider_routing.py).
+
+        Neden kodlari: no_key | cooldown | no_catalog | transport_unsupported |
+        model_not_served | paid_firewall | capability | unpriced_with_cap |
+        exhausted | offered.
+        """
+        from agent_core.services import final_routing_policy as pol
+        from agent_core.services.provider_manager import ProviderProtocol, QuotaStatus
+
+        try:
+            from agent_core.services.provider_manager import load_builtin_catalog
+            catalog = load_builtin_catalog()
+        except Exception:
+            catalog = None
+
+        offered: list[dict[str, Any]] = []
+        skipped: dict[str, dict[str, Any]] = {}
+
+        def _key_info(provider_id: str, key_env: str) -> dict[str, Any]:
+            source = self._provider_key_source(provider_id, key_env)
+            return {"key_present": source != "none", "key_source": source}
+
+        # Legacy tasima (None rota): OpenRouter istemcisi veya yerel model.
+        has_or = self.client is not None or self.use_local
+        if has_or:
+            offered.append({
+                "route_key": f"{model}@openrouter", "provider": "openrouter",
+                "model": model, "priced": model in self.MODEL_PRICING,
+                "via": "openrouter" if self.client is not None else "local",
+            })
+        else:
+            skipped["openrouter"] = {
+                "reason": "no_key", **_key_info("openrouter", "OPENROUTER_API_KEY"),
+            }
+
+        for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
+            info = _key_info(provider_id, key_env)
+            if not info["key_present"]:
+                skipped[provider_id] = {"reason": "no_key", **info}
+                continue
+            if self._route_cooldown_remaining(provider_id) > 0:
+                skipped[provider_id] = {"reason": "cooldown", **info}
+                continue
+            provider = None
+            if catalog is not None:
+                try:
+                    provider = catalog.get_provider(provider_id)
+                except Exception:
+                    provider = None
+            if provider is None:
+                skipped[provider_id] = {"reason": "no_catalog", **info}
+                continue
+            if provider.protocol is not ProviderProtocol.OPENAI_CHAT or not provider.base_url:
+                skipped[provider_id] = {"reason": "transport_unsupported", **info}
+                continue
+            matched_id: Optional[str] = None
+            matched_source = "catalog"
+            for candidate in provider.models:
+                if not getattr(candidate, "enabled", True):
+                    continue
+                if candidate.id == model or model.endswith(f"/{candidate.id}"):
+                    matched_id = candidate.id
+                    break
+            if matched_id is None:
+                for attested_id in _attested_provider_models(provider_id):
+                    if attested_id == model or model.endswith(f"/{attested_id}"):
+                        matched_id = attested_id
+                        matched_source = "attested"
+                        break
+            if matched_id is None:
+                skipped[provider_id] = {"reason": "model_not_served", **info}
+                continue
+            if pol.is_paid(matched_id, provider_id) and not pol.paid_escalation_enabled():
+                skipped[provider_id] = {"reason": "paid_firewall", **info}
+                continue
+            spec = pol.ROUTES.get(f"{matched_id}@{provider_id}")
+            if spec is not None and required and not required.issubset(spec.capabilities):
+                skipped[provider_id] = {"reason": "capability", **info}
+                continue
+            priced = spec is not None
+            if not priced:
+                for candidate in provider.models:
+                    if getattr(candidate, "id", None) == matched_id:
+                        cp = getattr(candidate, "pricing", None)
+                        priced = cp is not None and bool(getattr(cp, "known", False))
+                        break
+            if not priced and self.spend_cap_usd > 0:
+                skipped[provider_id] = {"reason": "unpriced_with_cap", **info}
+                continue
+            try:
+                st = self._quota_governor().status(provider_id)
+                if getattr(st, "status", st) is QuotaStatus.EXHAUSTED:
+                    skipped[provider_id] = {"reason": "exhausted", **info}
+                    continue
+            except Exception:
+                pass
+            offered.append({
+                "route_key": f"{matched_id}@{provider_id}", "provider": provider_id,
+                "model": matched_id, "priced": priced, "source": matched_source,
+            })
+
+        # Tasiyicisiz saglayicilar: yalniz gorunurluk (asla offered degil).
+        for provider_id, key_env in _DIAGNOSTIC_ONLY_PROVIDERS:
+            skipped[provider_id] = {
+                "reason": "transport_unsupported",
+                **_key_info(provider_id, key_env),
+            }
+
+        return {"model": model, "offered": offered, "skipped": skipped,
+                "pool_size": len(offered), "openrouter_offered": has_or}
 
     def _client_for_route(self, route: GatewayRoute):
         """Build/cache transport clients without moving network I/O out of the gateway."""
