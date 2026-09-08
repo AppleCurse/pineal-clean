@@ -60,6 +60,9 @@ class RouteSpec:
 
 QUOTAS: Dict[str, Dict[str, int | None]] = {
     "groq": {"rpm": 30, "rpd": 14400, "tpm": QUOTA_UNKNOWN, "tpd": QUOTA_UNKNOWN},
+    # Cerebras açık free katmanı 2026-07-21'de kapatıldı; kalan kota değerleri
+    # muhafazakâr tavan olarak korunur (paid üretim kotası canlıda doğrulanmadı —
+    # UNKNOWN != INF kuralı gereği tavan hiçbir zaman 'limitsiz' sayılmaz).
     "cerebras": {"rpm": 5, "tpm": 30000, "tpd": 1_000_000, "rpd": QUOTA_UNKNOWN},
 }
 
@@ -84,16 +87,29 @@ def _canonical_key(model: str, provider: str) -> str:
 
 ROUTES: Dict[str, RouteSpec] = {
     "openai/gpt-oss-120b@groq": RouteSpec("openai/gpt-oss-120b", "groq", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming","tools"}), "verified", note="Groq 30 RPM / 14400 RPD"),
-    "gpt-oss-120b@cerebras": RouteSpec("gpt-oss-120b", "cerebras", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming"}), "verified", note="Cerebras 5 RPM / 30K TPM / 1M TPD"),
-    "laguna-s-2.1:free@nous-research": RouteSpec("laguna-s-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
-    "xs-2.1:free@nous-research": RouteSpec("xs-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
-    "ling-3.0-flash-fin:free@nous-research": RouteSpec("ling-3.0-flash-fin:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
-    "dots-3-note-preview:free@nous-research": RouteSpec("dots-3-note-preview:free", "nous-research", "free", 0.0, 0.0, 524288, frozenset({"chat","streaming","tools"}), "verified", note="512K verified free"),
+    # FAZ-2-P3 (araştırma 2026-09-08, sahip onayı): Cerebras açık free katmanı
+    # 21.07.2026'da kapatıldı; gpt-oss-120b artık yalnız ücretli ($0.35/$0.75).
+    # Eski "free 0.0/0.0" kaydı canlı gerçeğe aykırıydı (fatura riski) —
+    # PAID'e çekildi; ücretsiz alternatif Groq free kanalıdır (aynı model).
+    # Not: model kimliği catalog'daki cerebras yazımıyla aynı kalır ("gpt-oss-120b",
+    # openai/ öneksiz) — is_free/model-eşleme bu yüzden bozulmaz.
+    "gpt-oss-120b@cerebras": RouteSpec("gpt-oss-120b", "cerebras", "paid", 0.35, 0.75, 131072, frozenset({"chat","streaming"}), "verified", note="Cerebras free katmanı kapandı 2026-07-21; paid $0.35/$0.75"),
+    # FAZ-2 canlı-katalog düzeltmesi (2. ajan mühürlü izin): prefix'ler canlı
+    # OpenRouter yazımıyla birebir (poolside/…, inclusionai/…); eski dots
+    # önizleme modeli canlıda YOK -> ölü kayıt yasak, SİLİNDİ.
+    "poolside/laguna-s-2.1:free@nous-research": RouteSpec("poolside/laguna-s-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
+    "poolside/laguna-xs-2.1:free@nous-research": RouteSpec("poolside/laguna-xs-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
+    "inclusionai/ling-3.0-flash-fin:free@nous-research": RouteSpec("inclusionai/ling-3.0-flash-fin:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
     "stepfun/step-3.7-flash@nous-research": RouteSpec("stepfun/step-3.7-flash", "nous-research", "paid", 0.20, 1.15, 262144, frozenset({"chat","streaming","vision","tools","video"}), "verified"),
     "upstage/solar-pro4@nous-research": RouteSpec("upstage/solar-pro4", "nous-research", "paid", 0.03, 0.12, 524288, frozenset({"chat","streaming","tools"}), "verified"),
     "meituan/longcat-2.0@nous-research": RouteSpec("meituan/longcat-2.0", "nous-research", "paid", 0.30, 1.20, 1_048_576, frozenset({"chat","streaming","tools"}), "verified"),
     "openai/gpt-5.6-luna@nous-research": RouteSpec("openai/gpt-5.6-luna", "nous-research", "paid", 0.20, 1.20, 400000, frozenset({"chat","streaming","tools"}), "verified", 1.00, 6.00, "Nous 80% discount vs $1/$6"),
-    "anthropic/claude-sonnet-5@nous-research": RouteSpec("anthropic/claude-sonnet-5", "nous-research", "paid", 1.60, 8.00, 1_048_576, frozenset({"chat","streaming","vision","tools","reasoning"}), "verified", 2.00, 10.00, "Nous 20% discount vs $2/$10"),
+    # FAZ-2-P3 notu (araştırma 2026-09-08): Sonnet 5'in OR liste promosu
+    # ($2/$10) 31.08.2026'da sona erdi, liste $3/$15'e taşındı. Nous kanalı
+    # $1.60/$8.00 (eski %20 indirim) hâlâ canlı mı — CI canlı-kontrol
+    # (scripts/verify_openrouter_catalog.py) teyit eder; teyitsiz sabit
+    # değiştirilmez (list değeri 2.00/10.00 = arşivlenen promo).
+    "anthropic/claude-sonnet-5@nous-research": RouteSpec("anthropic/claude-sonnet-5", "nous-research", "paid", 1.60, 8.00, 1_048_576, frozenset({"chat","streaming","vision","tools","reasoning"}), "verified", 2.00, 10.00, "Nous 20% discount vs archived $2/$10 promo (liste 31.08.2026'da $3/$15'e taşındı)"),
     "google/gemini-3.7-flash@openrouter": RouteSpec("google/gemini-3.7-flash", "openrouter", "paid", 0.75, 3.75, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified"),
     "openai/gpt-5.6-sol-pro@openrouter": RouteSpec("openai/gpt-5.6-sol-pro", "openrouter", "frontier", 2.00, 10.00, 1_048_576, frozenset({"chat","streaming","tools","reasoning"}), "verified", note="Frontier explicit"),
 }
@@ -101,15 +117,18 @@ ROUTES: Dict[str, RouteSpec] = {
 FORBIDDEN_ALIASES = {"poolside/laguna:free", "laguna:free", "xs:free", "ling:free"}
 
 TASK_GROUPS: Dict[str, List[Tuple[str, str]]] = {
-    "general": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research")],
-    "fast": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research"), ("dots-3-note-preview:free","nous-research")],
-    "normal": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research")],
-    "research": [("openai/gpt-oss-120b","groq"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research"), ("dots-3-note-preview:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
-    "deep_reasoning": [("openai/gpt-oss-120b","groq"), ("laguna-s-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
-    "code_fast": [("gpt-oss-120b","cerebras"), ("openai/gpt-oss-120b","groq"), ("laguna-s-2.1:free","nous-research")],
-    "code_expert": [("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research")],
-    "long_document": [("ling-3.0-flash-fin:free","nous-research"), ("dots-3-note-preview:free","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research")],
-    "repo_scale": [("dots-3-note-preview:free","nous-research"), ("meituan/longcat-2.0","nous-research")],
+    # FAZ-2-P3 (2026-09-08): Cerebras açık free katmanı kapandığı için tüm
+    # free-first kümelerde gpt-oss-120b yalnız Groq free kanalından gelir;
+    # Cerebras artık PAID rota olarak ROUTES'ta durur (escalation ile erişilir).
+    "general": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research")],
+    "fast": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research")],
+    "normal": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research")],
+    "research": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
+    "deep_reasoning": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
+    "code_fast": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research")],
+    "code_expert": [("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research")],
+    "long_document": [("inclusionai/ling-3.0-flash-fin:free","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research")],
+    "repo_scale": [("meituan/longcat-2.0","nous-research")],
     "vision": [("google/gemini-3.7-flash","openrouter"), ("stepfun/step-3.7-flash","nous-research"), ("anthropic/claude-sonnet-5","nous-research")],
     "video": [("stepfun/step-3.7-flash","nous-research")],
     "frontier_daily": [("openai/gpt-5.6-luna","nous-research")],

@@ -144,6 +144,22 @@ _active_agent_hint: contextvars.ContextVar[Optional[str]] = contextvars.ContextV
     "llm_agent_hint", default=None
 )
 
+# (b'') davranış turu kararı (2. ajan mühürlü): ajânın tier'ı zincir veri-
+# modeline gömülmez; variant katmanına contextvar ile taşınır.
+# - get_agent_chain SET EDER (agent_tiers.json'dan; reset YOK — overwrite
+#   disiplini: her resolve yazar, son yazan kazanır; ajan tanınmıyorsa
+#   "unknown"). Üç çağrıcı da (capable_chain, snapshot, Aspasia inspector)
+#   bu yüzden otomatik doğru tier'ı kurar — aspasia/ dosyasına dokunulmaz.
+# - agent_route_variants OKUR; FAZ-2-ENFORCE kararını FAZ-1'de DENETİM izine
+#   yazar ama UYGULAMAZ (FAZ-1'de üretim davranışı birebir korunur).
+# - effective_routing_snapshot kendi döngüsü için save/restore yapar (kalıntı
+#   bırakmaz; M-C3); _log_call tier'ı chain_source yanına yazar (stale olursa
+#   GÖRÜNÜR olur — sessiz yanlışlık yasak).
+_AGENT_TIER_VALUES: frozenset[str] = frozenset({"heavy", "vision", "simple", "verify"})
+_active_agent_tier: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "llm_agent_tier", default=None
+)
+
 class SpendCapExceeded(RuntimeError):
     """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
 
@@ -298,23 +314,47 @@ class LLMGateway:
         "deepseek_v4_pro": "deepseek/deepseek-v4-pro",
         "gemini_3_7_flash": "google/gemini-3.7-flash",
         "claude_sonnet_5": "anthropic/claude-sonnet-5",
-        "grok_4_6": "x-ai/grok-4.6"
+        "grok_4_6": "x-ai/grok-4.6",
+        # FAZ-2 (sahip Q2 + 2. ajan izin listesi): simple tier'a bağlanan canlı-
+        # teyitli free modeller. gpt-oss-120b: groq (tam) direct free; laguna
+        # :free: nous direct free (canlı prefix'li yazım). Not: Cerebras
+        # gpt-oss-120b free katmanı 2026-07-21'de kapatıldı (araştırma
+        # 2026-09-08) — o rota artık ücretli (ROUTES'a bak).
+        "gpt_oss_120b": "openai/gpt-oss-120b",
+        "laguna_s_2_1_free": "poolside/laguna-s-2.1:free",
+        # FAZ-2-P3 (sahip onayı 2026-09-08): resonance_synthesizer'a Luna
+        # atandı. ROUTES'ta nous-research indirimli kanalı + OR legacy aynı
+        # $0.20/$1.20'de; MODEL_PRICING legacy accounting için eklendi.
+        "gpt_5_6_luna": "openai/gpt-5.6-luna",
     }
 
     MODEL_PRICING = {
-        # Fiyatlar 2026-08-30'da OpenRouter kataloğundan doğrulandı (promo/listed,
+        # Fiyatlar 2026-09-08'de OpenRouter kataloğundan doğrulandı (promo/listed,
         # cached-effective değil). Kaynak: /api/v1/models + model sayfaları.
         # Not: solar-pro4/ling-3.0-flash promo 2026-09-10'a kadar; sonrası 0.12/0.24 ve
         # daha yükseğe döner — `OPENROUTER_MAX_SPEND_USD` bu tabloyu baz alır.
         "upstage/solar-pro4": {"in": 0.03, "out": 0.12},
         "inclusionai/ling-3.0-flash": {"in": 0.021, "out": 0.063},
-        "deepseek/deepseek-v4-flash": {"in": 0.0679, "out": 0.168},
+        # 2026-09-08 araştırma düzeltmesi: OR kataloğu deepseek-v4-flash'i
+        # $0.09/$0.18 gösteriyor (eski $0.0679/$0.168 iki tarafla da uyuşmuyordu).
+        "deepseek/deepseek-v4-flash": {"in": 0.09, "out": 0.18},
         "z-ai/glm-5.2": {"in": 0.3276, "out": 1.03},
         "deepseek/deepseek-v4-pro": {"in": 0.4679, "out": 0.9358},
         "google/gemini-3.7-flash": {"in": 0.75, "out": 3.75},
-        # 2026-09-02 lab docs (karar matrisi): Sonnet 5 $2/$10, Grok 4.6 $2/$6.
+        # 2026-09-02 karar matrisi: Sonnet 5 $2/$10 (promo), Grok 4.6 $2/$6.
+        # 2026-09-08 notu: Sonnet 5 promo'su 31.08.2026'da sona erdi; Anthropic
+        # liste $3/$15'e taşındı. OR passthrough ve Nous kanalı ($1.6/$8,
+        # ROUTES) canlıda yeniden teyit edilmeden bu tablo değiştirilmez —
+        # CI canlı-kontrol (verify_openrouter_catalog) teyitten sonra güncellenir.
         "anthropic/claude-sonnet-5": {"in": 2.0, "out": 10.0},
         "x-ai/grok-4.6": {"in": 2.0, "out": 6.0},
+        # FAZ-2-P3: resonance_synthesizer → Luna ($0.20/$1.20, OR canlı fiyat).
+        "openai/gpt-5.6-luna": {"in": 0.2, "out": 1.2},
+        # FAZ-2-P3 (Cerebras free katmanı kapandı): gpt-oss-120b free kanalı
+        # Groq; OR-legacy ÜCRETLİ yol accounting'i burada kayıtlı (free kanal
+        # teklif edilemezse OR'a düşen çağrı UNKNOWN_PRICING ile kırılmasın —
+        # eski cerebras-free yedek bu boşluğu gizliyordu).
+        "openai/gpt-oss-120b": {"in": 0.15, "out": 0.60},
         # live_llm_gate.py varsayılan hakemi (OPENROUTER_JUDGE_MODEL). Guard bunu
         # fiyatsız görüp gate'i UNKNOWN_PRICING ile düşürüyordu — eklendi.
         "openai/gpt-5.6-sol-pro": {"in": 2.0, "out": 10.0}
@@ -337,16 +377,38 @@ class LLMGateway:
     # Karar matrisi: Passion/Cognitive/Audit hızlı & ucuz katmana çekildi,
     # Friction/HumanBehavior/Aspasia/Lilith yüksek akıl katmanında.
     AGENT_CHAINS = {
-        "cognitive_profiler": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
+        # FAZ-2-P3 (sahip onayı 2026-09-08, araştırma): cognitive_profiler
+        # ton/karmaşıklık/mizah profili — hamaliye-ağırlıklı: Groq free
+        # (gpt-oss-120b) birincil, ucuz deepseek-v4-flash yedek. Gemini
+        # birincillikten çekildi (veri hamallığında frontier/paid yakılmaz).
+        "cognitive_profiler": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["deepseek_v4_flash"],
+        ],
         "friction_detector": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
-        "passion_mapper": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
-        "resonance_synthesizer": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "passion_mapper": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
+        # FAZ-2-P3 (sahip onayı 2026-09-08, araştırma): resonance_synthesizer
+        # ilk-temas metni üretimi — OR/nous $0.20/$1.20 Luna birincil
+        # (kalite 77, claude'dan ~10× ucuz); claude-sonnet-5 yedek kalır.
+        "resonance_synthesizer": [
+            MODEL_REGISTRY["gpt_5_6_luna"],
+            MODEL_REGISTRY["claude_sonnet_5"],
+        ],
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
         "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["grok_4_6"]],
-        "autonomous_verifier_extract": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "autonomous_verifier_extract": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
         "osint_investigator": [MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "aspasia": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
-        "lilith_growth": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "lilith_growth": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
         "authenticity_auditor": [
             MODEL_REGISTRY["deepseek_v4_flash"],
             MODEL_REGISTRY["gemini_3_7_flash"],
@@ -357,10 +419,21 @@ class LLMGateway:
             MODEL_REGISTRY["deepseek_v4_pro"],
             MODEL_REGISTRY["gemini_3_7_flash"],
         ],
-        "human_behavior": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        # FAZ-2-P3 (sahip onayı): human_behavior Groq free (gpt-oss-120b)
+        # birincil — research: OpenCV ön-işlem görseli zaten çözüyor; paid
+        # claude birincillik bitti (task_routing delta aynı zinciri taşır).
+        "human_behavior": [MODEL_REGISTRY["gpt_oss_120b"], MODEL_REGISTRY["gemini_3_7_flash"]],
         "mirror_truth": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
-        "pattern_interrupt": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "pattern_interrupt": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
     }
+    # FAZ-2 notu: simple-tier ajan zincirleri (autonomous_verifier_extract,
+    # lilith_growth, pattern_interrupt, passion_mapper) canlı-teyitli free
+    # modellere bağlandı (sahip Q2: tek-tip [gpt-oss-120b, laguna-s-2.1:free]).
+    # ENFORCE simple=free-only bu zincirlerle uyumludur; paid taşıma isteyen
+    # simple zincir FAZ-2 kilidinde KIRMIZI olur (M-C1-full).
     TASK_CAPABILITIES = {
         "vision": frozenset({"chat", "vision"}),
         "depth": frozenset({"chat"}),
@@ -393,6 +466,17 @@ class LLMGateway:
         return self.CHAINS.get(task.lower(), [self.TIER_1_MODEL, self.TIER_2_MODEL])
 
     def get_agent_chain(self, agent_name: str | None, task: str) -> List[str]:
+        # (b'') kural 1: tier BU fonksiyonun içinde set edilir (tek satır,
+        # reset YOK — token-dance değeri silerdi). Overwrite disiplini: her
+        # resolve yazar; ajan yoksa None, tiers.json'da tanınmıyorsa "unknown"
+        # (-> heavy-eşdeğeri + tier_unresolved telemetri). env_override dahil
+        # HER dal yazımdan sonra döner, bu yüzden set en başta tek noktadadır.
+        tier: Optional[str] = None
+        if agent_name:
+            entry = self._load_agent_tiers().get(agent_name)
+            candidate = entry.get("tier") if isinstance(entry, dict) else None
+            tier = candidate if candidate in _AGENT_TIER_VALUES else "unknown"
+        _active_agent_tier.set(tier)
         if agent_name:
             env_var = f"OPENROUTER_AGENT_CHAIN_{agent_name.upper()}"
             if os.getenv(env_var):
@@ -456,6 +540,111 @@ class LLMGateway:
             )
         return chain
 
+    def effective_routing_snapshot(self) -> dict[str, Any]:
+        """Salt-okunur routing snapshotu: registry + çözünmüş zincirler + rotalar + tierler.
+
+        Routing bilgisinin TEK makine-okunur ağzı. `scripts/generate_routing_shadows.py`
+        ve kontrat testleri buradan beslenir; üretim yolları (query_chain vb.) bu metodu
+        ÇAĞIRMAZ (sıfır davranış etkisi).
+
+        Sözleşme (test ile kilitli):
+        - task="depth" ile çözülür; listelenen ajanlarda katman atfı task-bağımsızdır
+          (env/routing/matrix dalları task'a bakmaz).
+        - `_active_chain_source` ve `_active_agent_tier` side-effect'leri
+          save/restore ile yutulur (M-C3: döngü sonrası tier kalıntısı bırakmaz).
+        - Tier ihlalleri BİLGİLENDİRME amaçlıdır (v1): CI kırmaz, RUNBOOK'ta render edilir.
+        """
+        from agent_core.services.task_routing_resolver import load_task_routing
+
+        tiers = self._load_agent_tiers()
+        routing_table = load_task_routing()
+        routed = {
+            k
+            for k, v in routing_table.items()
+            if not k.startswith("_") and k != "schema_version" and isinstance(v, list)
+        }
+        agents = sorted(set(self.AGENT_CHAINS) | routed)
+        reverse = {v: k for k, v in self.MODEL_REGISTRY.items()}
+
+        token = _active_chain_source.set(_active_chain_source.get())
+        tier_token = _active_agent_tier.set(_active_agent_tier.get())
+        try:
+            agent_rows = {}
+            for agent in agents:
+                chain = self.get_agent_chain(agent, "depth")
+                source = _active_chain_source.get() or "task_chain"
+                keys = [reverse.get(m) for m in chain]
+                agent_rows[agent] = {
+                    "chain": list(chain),
+                    "chain_keys": keys if all(keys) else None,
+                    "source": source,
+                }
+        finally:
+            # (b''): tier da chain_source gibi yutulur — snapshot 18 ajanı
+            # resolve eder; son yazanın tier'ı çağrıcı context'ine SIZMAMALI.
+            _active_agent_tier.reset(tier_token)
+            _active_chain_source.reset(token)
+
+        try:
+            from agent_core.services import final_routing_policy as pol
+
+            routes = {
+                key: {"tier": spec.tier, "in": spec.input_per_million_usd, "out": spec.output_per_million_usd}
+                for key, spec in pol.ROUTES.items()
+            }
+            free_ids = {spec.model for spec in pol.ROUTES.values() if spec.tier == "free"}
+        except Exception:
+            routes, free_ids = {}, set()
+
+        return {
+            "schema_version": 1,
+            "registry": dict(self.MODEL_REGISTRY),
+            "agents": agent_rows,
+            "routes": routes,
+            "tiers": tiers,
+            "tier_violations": self._snapshot_tier_violations(agent_rows, tiers, free_ids),
+        }
+
+    @staticmethod
+    def _load_agent_tiers() -> dict[str, Any]:
+        """agent_tiers.json intent tablosu (yoksa/bozuksa {} — snapshot çökmez)."""
+        override = os.getenv("PINEAL_AGENT_TIERS_PATH", "").strip()
+        path = Path(override) if override else Path(__file__).resolve().parent.parent.parent / "config" / "agent_tiers.json"
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return {}
+        tiers = data.get("tiers") if isinstance(data, dict) else None
+        return tiers if isinstance(tiers, dict) else {}
+
+    @staticmethod
+    def _snapshot_tier_violations(
+        agent_rows: dict[str, dict[str, Any]], tiers: dict[str, Any], free_ids: set[str]
+    ) -> list[dict[str, str]]:
+        """Tier intent vs çözünmüş zincir — v1 sezgiseller (bilgilendirme, CI kırmaz)."""
+        FRONTIER_KEYS = {"claude_sonnet_5", "deepseek_v4_pro", "grok_4_6"}
+        out: list[dict[str, str]] = []
+        for agent, row in agent_rows.items():
+            entry = tiers.get(agent)
+            if not isinstance(entry, dict) or entry.get("tier") not in ("heavy", "vision", "simple", "verify"):
+                out.append({"agent": agent, "rule": "untiered", "detail": "tiers dosyasında karşılığı yok"})
+                continue
+            tier, chain, keys = entry["tier"], row["chain"], row["chain_keys"] or []
+            if tier == "simple" and not (set(chain) & set(free_ids)):
+                out.append(
+                    {"agent": agent, "rule": "simple_without_free", "detail": f"zincirde bedava-rota modeli yok: {chain}"}
+                )
+            if tier == "vision" and (not chain or chain[0] not in LLMGateway.VISION_MODELS):
+                out.append(
+                    {"agent": agent, "rule": "vision_first_not_capable", "detail": f"ilk model vision-eligible değil: {chain[:1]}"}
+                )
+            if tier == "heavy" and not (set(keys) & FRONTIER_KEYS):
+                out.append(
+                    {"agent": agent, "rule": "heavy_without_frontier", "detail": f"zincirde frontier (claude/pro/grok) yok: {chain}"}
+                )
+        return out
+
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.openrouter_base_url = os.getenv(
@@ -486,6 +675,9 @@ class LLMGateway:
         self._budget_reservations: dict[str, float] = {}
         # MP-ROUTING: agent-path provider quota pre-checks (lazy, policy-backed)
         self._agent_governor = None
+        # (b'') FAZ-1: tier-gate denetim izi (bounded; FAZ-2-ENFORCE kararları
+        # FAZ-1'de UYGULANMAZ, yalnız yazılır). Okuma: tier_audit_trail().
+        self._tier_audit_trail: list[dict[str, Any]] = []
         # FAZ 3: oda-ornekli saglayici anahtarlari (vault -> bellek). Ayni
         # saglayicinin env anahtarini ezer (oda izolasyonu; api_key ile ayni
         # sozlesme). Degerler HICBIR zaman loglanmaz/telemetriye yazilmaz.
@@ -579,6 +771,11 @@ class LLMGateway:
         chain_source = _active_chain_source.get()
         if chain_source:
             record["chain_source"] = chain_source
+        # (b''): kararlarda kullanılan tier her çağrı kaydına yazılır (stale
+        # olursa GÖRÜNÜR olur). Değer yoksa (ajan dışı çağrı) alan hiç yazılmaz.
+        agent_tier = _active_agent_tier.get()
+        if agent_tier:
+            record["agent_tier"] = agent_tier
         if extras:
             record.update({k: v for k, v in extras.items() if v is not None})
         self.call_log.append(record)
@@ -1006,6 +1203,96 @@ class LLMGateway:
                 ((p, self._route_cooldown_remaining(p)) for p in list(self._provider_block_until))
                 if r > 0}
 
+    @staticmethod
+    def _tier_route_decision(
+        tier: Optional[str],
+        *,
+        free: bool,
+        discounted: bool,
+        escalation_enabled: bool,
+    ) -> dict[str, Any]:
+        """(b'') FAZ-2-ENFORCE semantiğinde TEK rota kararı (saf, uygulanmaz).
+
+        FAZ-1 DENETİM bu kararı izine yazar; FAZ-2 filtresi aynı kararı
+        uygular. Kurallar: simple -> yalnız free; heavy/vision/verify/unknown
+        -> free ve indirimli izin (liste-fiyat ödemek için escalation gerekir);
+        unknown tier -> heavy-eşdeğeri + ``tier_unresolved`` işareti.
+        """
+        unresolved = tier == "unknown"
+        family = tier if tier in _AGENT_TIER_VALUES else "unknown"
+        if family != "simple":
+            family = "heavy"  # vision/verify/heavy/unknown: heavy ailesi
+        if free:
+            return {
+                "decision": "allow", "reason": "free_transport", "would_deny": False,
+                "tier_unresolved": unresolved, "price_class": "free",
+            }
+        if family == "simple":
+            return {
+                "decision": "would_deny", "reason": "simple_non_free", "would_deny": True,
+                "tier_unresolved": unresolved,
+                "price_class": "discounted" if discounted else "list",
+            }
+        if discounted:
+            return {
+                "decision": "allow", "reason": "heavy_discounted", "would_deny": False,
+                "tier_unresolved": unresolved, "price_class": "discounted",
+            }
+        if escalation_enabled:
+            return {
+                "decision": "allow", "reason": "heavy_listed_escalated", "would_deny": False,
+                "tier_unresolved": unresolved, "price_class": "list",
+            }
+        return {
+            "decision": "would_deny", "reason": "heavy_listed_gate", "would_deny": True,
+            "tier_unresolved": unresolved, "price_class": "list",
+        }
+
+    @staticmethod
+    def _tier_variant_sort_key(
+        tier: Optional[str], *, is_legacy_or: bool, price_sum: float
+    ) -> tuple[float | int, ...]:
+        """(b'') FAZ-2 sıralama mekanizması (FAZ-1'de kilitlenir, UYGULANMAZ).
+
+        vision: doğrudan taşımalar OpenRouter legacy'den ÖNCE (fiyat
+        eşitliğini beklemeden) — direct-first. Diğer tier'lar/None: bugünkü
+        maliyet merdiveni birebir korunur (fiyat, sonra legacy-ayraç).
+        """
+        if tier == "vision":
+            return (1 if is_legacy_or else 0, price_sum)
+        return (price_sum, 1 if is_legacy_or else 0)
+
+    def _cheaper_direct_available(self, model: str) -> bool:
+        """(FAZ-2.1) OR-legacy liste-fiyat kapatma kapısı.
+
+        True: model için ``final_routing_policy.ROUTES`` içinde İNDİRİMLİ bir
+        direct spec var (liste fiyatı < listelenen fiyat), o provider'ın
+        anahtarı kurulu ve provider cooldown'da değil -> daha ucuz kanal
+        MEVCUT; OR-legacy (liste fiyatı) bu durumda escalation ister.
+        False: daha ucuz kanal yok (yalnız-kanal) -> legacy koşulsuz kalır.
+        """
+        from agent_core.services import final_routing_policy as pol
+
+        for spec in pol.ROUTES.values():
+            if not (spec.model == model or model.endswith(f"/{spec.model}")):
+                continue
+            if spec.list_input_per_million_usd is None:
+                continue
+            if not (
+                spec.input_per_million_usd
+                < spec.list_input_per_million_usd
+            ):
+                continue
+            for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
+                if spec.provider != provider_id:
+                    continue
+                if not self._provider_api_key(provider_id, key_env):
+                    continue
+                if self._route_cooldown_remaining(provider_id) > 0:
+                    continue
+                return True
+        return False
+
     def agent_route_variants(self, model: str,
                               required: frozenset[str] = frozenset()) -> "list[Optional[GatewayRoute]]":
         """MP-ROUTING: cost ladder for ONE chain model across providers.
@@ -1020,18 +1307,64 @@ class LLMGateway:
         default production behavior is byte-for-byte the legacy path.
         """
         from types import SimpleNamespace
+        from agent_core.services import final_routing_policy as pol
 
         def _price_sum(pricing: "Optional[dict[str, float]]") -> float:
             if not pricing:
                 return float("inf")
             return float(pricing.get("in") or 0.0) + float(pricing.get("out") or 0.0)
 
+        # (b''): tier contextvar'ı — agent_route_variants OKUR. None ise
+        # (ajan bağlamı yok) mekanizma tümüyle devre dışı: bugünkü davranış,
+        # denetim izi YOK. Set: get_agent_chain (bu dosya dışından da).
+        tier = _active_agent_tier.get()
+
         variants: list = []
+        # (b'') FAZ-2: simple-tier ENFORCE bir taşımayı reddedip merdiven boş
+        # kalırsa [] DÖNER — `or [None]` yedeği DENY'i sessizce bypass etmemeli
+        # (enforce-bypass yasağı; mühür kriteri 4).
+        tier_denied_transport = False
         has_or_transport = self.client is not None or self.use_local
         if has_or_transport:
-            variants.append((_price_sum(self.MODEL_PRICING.get(model)), 1, None))
+            legacy_denied = False
+            if tier is not None:
+                # (b'') OR-legacy liste-fiyat kapatması (FAZ-2.1, komutan emri
+                # 2026-09-08): audit kararı (would_deny) ile ENFORCE filtresi
+                # aynı satırdan döner.
+                #   simple        -> non-free legacy teklif EDİLMEZ (FAZ-2).
+                #   heavy ailesi  -> modelin DAHA UCUZ indirimli direct kanalı
+                #     KURULUYSA (anahtar + ROUTES indirim spec'i) liste fiyatı
+                #     legacy yalnız PINEAL_ALLOW_PAID_ESCALATION=1 ile teklif
+                #     edilir; daha ucuz kanal YOKSA (yalnız-kanal, örn. gemini
+                #     OR-legacy tek taşıma) legacy koşulsuz kalır — kestirme
+                #     kapatma heavy/vision ajanlarını kırmaz (only_channel).
+                free_legacy = pol.is_free(model)
+                if free_legacy:
+                    gate_context = "free"
+                elif tier == "simple":
+                    gate_context = "simple_non_free"
+                elif self._cheaper_direct_available(model):
+                    gate_context = "cheaper_direct_available"
+                else:
+                    gate_context = "only_channel"
+                decision = self._tier_route_decision(
+                    tier, free=free_legacy, discounted=False,
+                    escalation_enabled=(
+                        pol.paid_escalation_enabled()
+                        or gate_context == "only_channel"
+                    ),
+                )
+                decision["gate_context"] = gate_context
+                self._record_tier_decision(
+                    tier=tier, model=model, provider="openrouter", legacy=True,
+                    decision=decision,
+                )
+                legacy_denied = bool(decision["would_deny"])
+            if legacy_denied:
+                tier_denied_transport = True
+            else:
+                variants.append((_price_sum(self.MODEL_PRICING.get(model)), 1, None))
         try:
-            from agent_core.services import final_routing_policy as pol
             from agent_core.services.provider_manager import (
                 ProviderProtocol,
                 QuotaStatus,
@@ -1040,6 +1373,8 @@ class LLMGateway:
 
             catalog = load_builtin_catalog()
         except Exception:
+            if not variants and tier_denied_transport:
+                return []  # ENFORCE: deny'i `[None]` yedeği bypass etmez
             return [item[2] for item in variants] or [None]
 
         for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
@@ -1076,8 +1411,53 @@ class LLMGateway:
                 continue
             # MODEL@PROVIDER kimliği: policy kataloğu fiyatın gerçek kaynağı;
             # katalogda listelenmemiş/ücretli rota fail-closed escalation ister.
+            # (b'') FAZ-2 (sahip Q1 kararı): aynı _tier_route_decision UYGULANIR.
+            # - simple: free-only ENFORCE — would_deny rota teklif edilmez.
+            # - heavy ailesi (heavy/vision/verify/unknown): İNDİRİMLİ direct
+            #   kanala escalation env'siz izin (relax); liste-fiyat/frontier
+            #   direct bugünkü firewall kapısından geçer (değişmedi).
+            # - Denetim izi (tier_audit_trail) her karar için yazılmaya devam eder.
+            spec_pre = pol.ROUTES.get(f"{matched.id}@{provider_id}")
+            enforce_skip = False
+            if tier is not None:
+                if spec_pre is not None:
+                    route_free = spec_pre.is_free()
+                    route_discounted = bool(
+                        spec_pre.list_input_per_million_usd is not None
+                        and spec_pre.input_per_million_usd
+                        < spec_pre.list_input_per_million_usd
+                    )
+                else:
+                    # Katalogda eşleşen ama ROUTES'u olmayan rota: fail-closed
+                    # paid kabul edilir (indirim bilgisi yok -> discounted=False).
+                    route_free = pol.is_free(matched.id, provider_id)
+                    route_discounted = False
+                decision = self._tier_route_decision(
+                    tier, free=route_free, discounted=route_discounted,
+                    escalation_enabled=pol.paid_escalation_enabled(),
+                )
+                self._record_tier_decision(
+                    tier=tier, model=matched.id, provider=provider_id,
+                    legacy=False, decision=decision,
+                )
+                if tier == "simple" and decision["would_deny"]:
+                    enforce_skip = True
+            if enforce_skip:
+                tier_denied_transport = True
+                continue  # ENFORCE: simple -> yalnız free (sahip Q1)
             if pol.is_paid(matched.id, provider_id) and not pol.paid_escalation_enabled():
-                continue
+                # FAZ-2 relax (sahip Q1): heavy ailesinin İNDİRİMLİ direct
+                # kanalı escalation env'siz çalışır; liste fiyatı/frontier
+                # rota firewall'da kalmaya devam eder.
+                discounted_channel = bool(
+                    tier not in (None, "simple")
+                    and spec_pre is not None
+                    and spec_pre.list_input_per_million_usd is not None
+                    and spec_pre.input_per_million_usd
+                    < spec_pre.list_input_per_million_usd
+                )
+                if not discounted_channel:
+                    continue
             pricing: "Optional[dict[str, float]]" = None
             list_pricing: "Optional[dict[str, float]]" = None
             spec = pol.ROUTES.get(f"{matched.id}@{provider_id}")
@@ -1128,7 +1508,51 @@ class LLMGateway:
                 ),
             ))
         variants.sort(key=lambda item: (item[0], item[1]))
+        if not variants and tier_denied_transport:
+            # (b'') FAZ-2: ENFORCE (simple free-only) TÜM taşımaları reddetti —
+            # BOŞ merdiven döner; `or [None]` yedeği deny'i sessizce bypass
+            # etmemeli (zincir bu modeli atlar, tüm modeler reddedilirse
+            # zincir tükenir -> hata görünür olur, sessiz liste-fiyat kaçağı yok).
+            return []
         return [item[2] for item in variants] or [None]
+
+    def _record_tier_decision(
+        self,
+        *,
+        tier: Optional[str],
+        model: str,
+        provider: str,
+        legacy: bool,
+        decision: dict[str, Any],
+    ) -> None:
+        """(b'') Sınırlı denetim izine tek FAZ-2 kararı yazar (davranışı değiştirmez)."""
+        entry: dict[str, Any] = {
+            "tier": tier,
+            "model": model,
+            "route_key": f"{model}@openrouter" if legacy else f"{model}@{provider}",
+            "provider": "openrouter" if legacy else provider,
+            "decision": decision["decision"],
+            "reason": decision["reason"],
+            "would_deny": bool(decision.get("would_deny")),
+            "tier_unresolved": bool(decision.get("tier_unresolved")),
+            "price_class": decision.get("price_class"),
+            "gate_context": decision.get("gate_context"),
+        }
+        agent_hint = _active_agent_hint.get()
+        if agent_hint:
+            entry["agent"] = agent_hint
+        self._tier_audit_trail.append(entry)
+        if len(self._tier_audit_trail) > 500:
+            del self._tier_audit_trail[: len(self._tier_audit_trail) - 500]
+
+    def tier_audit_trail(self, *, limit: Optional[int] = None) -> list[dict[str, Any]]:
+        """(b'') Salt-okunur denetim izi: her rota için FAZ-2 kararı + tier.
+
+        FAZ-1'de kararlar UYGULANMAZ (üretim yolu değişmez); iz, FAZ-2'nin
+        neleri engelleyeceğini önden görünür kılar. Sıra: kayıt sırası.
+        """
+        rows = list(self._tier_audit_trail)
+        return rows[-limit:] if limit else rows
 
     def route_diagnostics(self, model: str, required: frozenset[str] = frozenset()) -> dict[str, Any]:
         """FAZ 3: model icin havuz gorunurlugu (salt-okunur tani).

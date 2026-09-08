@@ -171,12 +171,32 @@ def test_groq_direct_route_transport_identity(clean_env, monkeypatch):
 
 
 def test_cerebras_direct_route_when_groq_absent(clean_env, monkeypatch):
+    # FAZ-2-P3 (2026-09-08): cerebras free katmanı kapandı — gpt-oss-120b@cerebras
+    # artık PAID ($0.35/$0.75). Yalnız cerebras anahtarı kurulu + escalation
+    # AÇIK: cerebras tek direkt taşıma olur (groq yok, OR havuzu da devre dışı).
+    monkeypatch.delenv("OPENROUTER_API_KEY")
     monkeypatch.setenv("CEREBRAS_API_KEY", "cb-secret")
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
     monkeypatch.setenv("OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR", "openai/gpt-oss-120b")
     gw = _gw()
     run(gw.query_json_chain("p", _Schema, task="depth", agent_name="friction_detector"))
     assert clean_env.calls[0][0].startswith("https://api.cerebras.ai/v1")
     assert len(clean_env.or_calls) == 0
+
+
+def test_cerebras_paid_not_offered_without_escalation(clean_env, monkeypatch):
+    # P1 kilidi (fatura riski): cerebras free değil — escalation KAPALIYKEN
+    # yalnız cerebras anahtarı olsa bile gpt-oss-120b@cerebras merdivene
+    # GİRMEZ (eski "free" kaydı canlıda fatura yazardı). Merdiven boş kalır;
+    # HTTP çağrısı HİÇ yapılmaz.
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "cb-secret")
+    gw = _gw()
+    # heavy tier context (friction_detector) + escalation'sız -> cerebras yok
+    gw.get_agent_chain("friction_detector", "depth")
+    ladder = gw.agent_route_variants("openai/gpt-oss-120b")
+    assert all(v is None or v.provider_id != "cerebras" for v in ladder)
+    assert len(clean_env.calls) == 0
 
 
 def test_missing_key_falls_back_to_pool_provider(clean_env, monkeypatch):
@@ -187,12 +207,15 @@ def test_missing_key_falls_back_to_pool_provider(clean_env, monkeypatch):
     assert clean_env.calls[0][0] == "https://openrouter.ai/api/v1"
 
 
-def test_paid_key_present_but_escalation_off_stays_off(clean_env, monkeypatch):
-    # "anahtar var" != "paid kullanma yetkisi var"
+def test_paid_key_present_but_escalation_off_uses_discounted_direct(clean_env, monkeypatch):
+    # FAZ-2 (sahip Q1: heavy discounted-relax): claude-sonnet-5@nous İNDİRİMLİ
+    # ($1.6/$8) kanaldır — escalation env'siz DOĞRUDAN kullanılır; liste
+    # fiyatı ödemek için escalation gerekir (relax, FAZ-2'de onaylı davranış).
     monkeypatch.setenv("NOUS_API_KEY", "nous-secret")
     gw = _gw()
     run(gw.query_json_chain("p", _Schema, task="depth", agent_name="friction_detector"))
-    assert clean_env.calls[0][0] == "https://openrouter.ai/api/v1"  # OR'da kaldi
+    assert clean_env.calls[0][0].startswith("https://inference-api.nousresearch.com/v1")
+    assert len(clean_env.or_calls) == 0
 
 
 # ------------------------------------------------------------------ #13 QUOTA

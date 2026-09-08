@@ -173,7 +173,7 @@ def test_sonnet_discount_cost_example():
 
 
 def test_free_routes_have_zero_effective_price():
-    for model in ("laguna-s-2.1:free", "xs-2.1:free", "ling-3.0-flash-fin:free", "dots-3-note-preview:free"):
+    for model in ("poolside/laguna-s-2.1:free", "poolside/laguna-xs-2.1:free", "inclusionai/ling-3.0-flash-fin:free"):
         assert effective_pricing(model, "nous-research") == (0.0, 0.0)
 
 
@@ -215,9 +215,16 @@ def test_cerebras_account_quota_is_recorded():
 # --------------------------------------------------------------------------- #
 def test_verified_routes_are_available_and_free_routes_executable(monkeypatch):
     monkeypatch.delenv("PINEAL_ALLOW_PAID_ESCALATION", raising=False)
-    assert_executable("laguna-s-2.1:free", "nous-research")
+    assert_executable("poolside/laguna-s-2.1:free", "nous-research")
     assert_executable("openai/gpt-oss-120b", "groq")
-    assert_executable("gpt-oss-120b", "cerebras")
+    # FAZ-2-P3 (2026-09-08): Cerebras açık free katmanı 21.07.2026'da kapandı —
+    # gpt-oss-120b@cerebras artık PAID ($0.35/$0.75); escalation'sız DENY.
+    with pytest.raises(PaidEscalationDenied):
+        assert_executable("gpt-oss-120b", "cerebras")
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
+    spec = assert_executable("gpt-oss-120b", "cerebras")
+    assert spec.tier == "paid"
+    assert (spec.input_per_million_usd, spec.output_per_million_usd) == (0.35, 0.75)
 
 
 def test_discovered_but_unverified_route_is_denied():
@@ -235,7 +242,7 @@ def test_vision_task_routes_are_vision_capable():
     assert "vision" in ROUTES["anthropic/claude-sonnet-5@nous-research"].capabilities
     assert "vision" in ROUTES["stepfun/step-3.7-flash@nous-research"].capabilities
     assert "vision" not in ROUTES["meituan/longcat-2.0@nous-research"].capabilities
-    assert "vision" not in ROUTES["laguna-s-2.1:free@nous-research"].capabilities
+    assert "vision" not in ROUTES["poolside/laguna-s-2.1:free@nous-research"].capabilities
 
 
 def test_video_task_route_is_video_capable():
@@ -249,13 +256,13 @@ def test_frontier_routes_are_explicit_paid():
 
 
 def test_is_free_and_is_paid_fail_closed():
-    assert is_free("laguna-s-2.1:free", "nous-research")
+    assert is_free("poolside/laguna-s-2.1:free", "nous-research")
     assert is_free("openai/gpt-oss-120b", "groq")
     assert not is_free("completely-unknown-model")
     assert not is_free("openai/gpt-5.6-luna", "nous-research")
     assert is_paid("completely-unknown-model") is True
     assert is_paid("glm-5.3-flash") is True
-    assert not is_paid("laguna-s-2.1:free", "nous-research")
+    assert not is_paid("poolside/laguna-s-2.1:free", "nous-research")
 
 
 def test_route_table_is_well_formed():

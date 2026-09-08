@@ -1,8 +1,7 @@
 import json
 import pytest
-from pathlib import Path
 
-from agent_core.services.llm_gateway import LLMGateway, _RTK_POLICY_PATH
+from agent_core.services.llm_gateway import LLMGateway
 
 
 @pytest.fixture
@@ -143,4 +142,4 @@ def test_disk_rtk_policy_contract_locks_all_bypass_agents_and_tasks():
     # non-bypass ajan/görevlerin False döndüğünü de doğrular (enabled=true doğrulaması).
     assert gw.should_bypass_rtk(agent_name="dialogue_manager") is False
     assert gw.should_bypass_rtk(task="vision") is False
-
+

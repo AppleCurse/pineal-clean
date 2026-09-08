@@ -1,9 +1,14 @@
 """Step 1 task-routing locks (config + resolver + gateway precedence).
 
-Scope (locked): config/task_routing.json (5 agents, registry keys only),
+Scope (locked): config/task_routing.json (4 agents, registry keys only),
 pure resolver (agent_name, task) -> keys | None, gateway precedence
 env-override > task_routing > AGENT_CHAINS > task fallback with
 chain_source="task_routing" telemetry.
+
+FAZ-2-P3 (2026-09-08): human_behavior delta'dan çıktı — AGENT_CHAINS'e
+taşındı (delta doktrini: listede yalnızca AGENT_CHAINS'ten FARKLI/eksik
+ajanlar durur; human_behavior artık matrix kaynaklı, free-first).
+ROUTED_AGENTS bu nedenle 5 -> 4.
 
 Mutation doctrine applies: each guarded check below must go red when its
 guard is broken (proven per session, not per commit).
@@ -28,7 +33,6 @@ VALID = frozenset(LLMGateway.MODEL_REGISTRY.keys())
 
 ROUTED_AGENTS = [
     "depth_analyst",
-    "human_behavior",
     "dialogue_manager",
     "shadow_executor",
     "interpreter",
@@ -168,28 +172,30 @@ def test_shipped_config_exact_flips():
         "google/gemini-3.7-flash",
     ]
     assert gwl._active_chain_source.get() == "task_routing"
+    # FAZ-2-P3: human_behavior delta'dan matrix'e taşındı (AGENT_CHAINS),
+    # free-first — tek kaynak, restatement yok.
     assert gw.get_agent_chain("human_behavior", "depth") == [
-        "anthropic/claude-sonnet-5",
+        "openai/gpt-oss-120b",
         "google/gemini-3.7-flash",
     ]
-    assert gwl._active_chain_source.get() == "task_routing"
+    assert gwl._active_chain_source.get() == "agent_matrix"
 
 
 def test_shipped_config_new_explicit_chains():
     gw = LLMGateway()
     assert gw.get_agent_chain("dialogue_manager", "dialogue") == [
-        "anthropic/claude-sonnet-5",
-        "google/gemini-3.7-flash",
+        "openai/gpt-oss-120b",
+        "poolside/laguna-s-2.1:free",
     ]
     assert gwl._active_chain_source.get() == "task_routing"
     assert gw.get_agent_chain("shadow_executor", "depth") == [
-        "anthropic/claude-sonnet-5",
+        "deepseek/deepseek-v4-flash",
         "google/gemini-3.7-flash",
     ]
     assert gwl._active_chain_source.get() == "task_routing"
     assert gw.get_agent_chain("interpreter", "fast") == [
-        "anthropic/claude-sonnet-5",
-        "deepseek/deepseek-v4-flash",
+        "openai/gpt-oss-120b",
+        "poolside/laguna-s-2.1:free",
     ]
     assert gwl._active_chain_source.get() == "task_routing"
 
@@ -216,9 +222,10 @@ def test_casing_rejection_falls_through_to_task_chain():
 # ------------------------------------------------ 5) capable_chain interaction
 def test_capable_chain_vision_interaction_with_routed_chains():
     gw = LLMGateway()
-    # human_behavior: both routed models vision-eligible -> chain intact.
+    # FAZ-2-P3: human_behavior matrix zinciri [gpt-oss-120b, gemini] —
+    # gpt-oss-120b vision-eligible DEĞİL; görsel geldiğinde yalnız gemini
+    # kalır (free birincil text yolunda; görsel yol gemini'ye düşer).
     assert gw.capable_chain(task="depth", agent_name="human_behavior", images=["http://x/i.png"]) == [
-        "anthropic/claude-sonnet-5",
         "google/gemini-3.7-flash",
     ]
     # depth_analyst: deepseek_v4_pro is NOT vision-eligible -> filtered when images present.

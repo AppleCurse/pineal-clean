@@ -106,13 +106,16 @@ def test_transient_failures_cool_provider_and_recover(env, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or")
     monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.setenv("CEREBRAS_API_KEY", "c")
+    # FAZ-2-P3 (2026-09-08): cerebras free katmanı kapandı — gpt-oss-120b@cerebras
+    # artık PAID rota; merdivende paid yedek ancak escalation ile teklif edilir.
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
     monkeypatch.setenv("OPENROUTER_AGENT_CHAIN_HARD_TESTER", "openai/gpt-oss-120b")
     monkeypatch.setenv("PINEAL_PROVIDER_FAILURE_THRESHOLD", "1")
     monkeypatch.setenv("PINEAL_PROVIDER_COOLDOWN_SECONDS", "1")
     state = {"groq": True}
     fake = FakeHttp(failures={"api.groq.com": lambda: state["groq"]})
     gw = _gw(fake)
-    # 1) groq duser -> transient -> cerebras basarili; groq streak tetikledi
+    # 1) groq duser -> transient -> cerebras (paid, escalation) basarili
     out = run(gw.query_chain("p", task="dialogue", agent_name="hard_tester"))
     assert out == '{"a": 1}'
     bases = [c["base"] for c in fake.calls]
@@ -132,6 +135,20 @@ def test_transient_failures_cool_provider_and_recover(env, monkeypatch):
     fake.calls.clear()
     run(gw.query_chain("p", task="dialogue", agent_name="hard_tester"))
     assert gw.provider_health() == {}
+
+
+def test_cerebras_paid_not_offered_without_escalation(env, monkeypatch):
+    """P1 kilidi (fatura riski): cerebras free katmanı kapandı — escalation YOKSA
+    gpt-oss-120b için cerebras merdivende TEKLİF EDİLMEZ (eski 'free' kaydı
+    canlıda fatura yazardı); tek free kanal groq kalır."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "c")
+    gw = _gw(FakeHttp())
+    laddered = gw.agent_route_variants("openai/gpt-oss-120b")
+    offered = [r.provider_id for r in laddered if r is not None]
+    assert "cerebras" not in offered
+    assert "groq" in offered
 
 
 def test_auth_and_denial_never_count_toward_cooldown(env, monkeypatch):
@@ -161,12 +178,15 @@ def test_ladder_respects_declared_route_capabilities(env, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or")
     monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.setenv("CEREBRAS_API_KEY", "c")
+    # FAZ-2-P3: cerebras free kapandı -> gpt-oss-120b@cerebras paid; capability
+    # merdiveni paid yedeği escalation ile birlikte test eder (P1 uyumu).
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
     fake = FakeHttp()
     gw = _gw(fake)
     m = "openai/gpt-oss-120b"
     plain = [r.provider_id for r in gw.agent_route_variants(m, required=frozenset({"chat"}))
              if r is not None]
-    assert plain == ["groq", "cerebras"]  # ikisi de free, direct-oncelikli: sabit sira
+    assert plain == ["groq", "cerebras"]  # groq free + cerebras paid(escalation): sabit sira
     # cerebras ROUTES beyani {"chat","streaming"} — tools gereksinimi duser
     with_tools = [r.provider_id for r in
                   gw.agent_route_variants(m, required=frozenset({"chat", "tools"}))

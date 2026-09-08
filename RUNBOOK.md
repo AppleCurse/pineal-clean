@@ -136,19 +136,45 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 
 ## Routing zinciri: source-of-truth ve operasyon düğmeleri (MP-ROUTING / FINAL-SPEC)
 
+<!-- ROUTING-GENERATED-START do-not-edit -->
+**BU BÖLÜM OTOMATİK ÜRETİLİR — ELLE DÜZENLEMEYİN.** Kaynak: `LLMGateway.effective_routing_snapshot()` + `scripts/generate_routing_shadows.py`.
+
 **Sıra sözleşmesi (precedence):**
 
-1. `OPENROUTER_AGENT_CHAIN_<AJAN>` ortam değişkeni — **açık, acil durum /
-   operasyon override'ıdır**. Verildiği an o ajan için matrix'i GEÇERSİZ KILAR
-   ve her telemetri kaydına `"chain_source": "env_override"` yazar. Kalıcı
-   politika değişikliği matrix'e yazılır; env yalnız geçiş içindir.
-2. `LLMGateway.AGENT_CHAINS` — **varsayılan source of truth**. 14 ajanın
-   tamamı (friction/passion/profiler/resonance/verifier+extract/osint/vision/
-   aspasia/authenticity/depth_analyst/human_behavior/mirror/pattern) artık
-   `agent_name` ile bu tabloya bağlıdır; tablo değişince ajan davranışı anında
-   değişir.
-3. Görev zinciri `CHAINS[task]` — yalnız matriste olmayan isimler için
-   (`"chain_source": "task_chain"`).
+1. `env_override` — `OPENROUTER_AGENT_CHAIN_<AJAN>` — açık operasyon/acil override; verildiği an o ajan için her şeyi geçersiz kılar.
+2. `task_routing` — `config/task_routing.json` — config delta (fail-closed; bozuk girdi matrix'e düşer).
+3. `agent_matrix` — `LLMGateway.AGENT_CHAINS` — varsayılan tablo.
+4. `task_chain` — `CHAINS[task]` — kayıtlı olmayan isimler için görev fallback'i.
+
+**Ajan↔zincir (çözünmüş, 18 ajan, override'sız baz):**
+
+| agent | tier | chain | source |
+|---|---|---|---|
+| aspasia | heavy | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
+| authenticity_auditor | heavy | deepseek-v4-flash → gemini-3.7-flash → claude-sonnet-5 | agent_matrix |
+| autonomous_verifier | verify | claude-sonnet-5 → grok-4.6 | agent_matrix |
+| autonomous_verifier_extract | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
+| cognitive_profiler | heavy | gpt-oss-120b → deepseek-v4-flash | agent_matrix |
+| depth_analyst | heavy | deepseek-v4-pro → claude-sonnet-5 → gemini-3.7-flash | task_routing |
+| dialogue_manager | simple | gpt-oss-120b → laguna-s-2.1:free | task_routing |
+| friction_detector | heavy | claude-sonnet-5 → deepseek-v4-pro | agent_matrix |
+| human_behavior | heavy | gpt-oss-120b → gemini-3.7-flash | agent_matrix |
+| interpreter | simple | gpt-oss-120b → laguna-s-2.1:free | task_routing |
+| lilith_growth | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
+| mirror_truth | heavy | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
+| osint_investigator | heavy | grok-4.6 → deepseek-v4-pro | agent_matrix |
+| passion_mapper | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
+| pattern_interrupt | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
+| resonance_synthesizer | heavy | gpt-5.6-luna → claude-sonnet-5 | agent_matrix |
+| shadow_executor | heavy | deepseek-v4-flash → gemini-3.7-flash | task_routing |
+| vision_analyzer | vision | gemini-3.7-flash → grok-4.6 | agent_matrix |
+
+**Tier ihlalleri (bilgilendirme, v1 — CI kırmaz, düzeltme turu bekler):**
+
+- ⚠️ `cognitive_profiler` [heavy_without_frontier] zincirde frontier (claude/pro/grok) yok: ['openai/gpt-oss-120b', 'deepseek/deepseek-v4-flash']
+- ⚠️ `human_behavior` [heavy_without_frontier] zincirde frontier (claude/pro/grok) yok: ['openai/gpt-oss-120b', 'google/gemini-3.7-flash']
+- ⚠️ `shadow_executor` [heavy_without_frontier] zincirde frontier (claude/pro/grok) yok: ['deepseek/deepseek-v4-flash', 'google/gemini-3.7-flash']
+<!-- ROUTING-GENERATED-END -->
 
 **Sağlayıcı merdiveni (her model için):** `agent_route_variants()` aynı modeli
 doğrudan sağlayıcı API'lerinde (GROQ/CEREBRAS/NOUS/DEEPSEEK anahtarları +

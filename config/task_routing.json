@@ -8,15 +8,26 @@
     "restatement_vs_delta": "This file is a DELTA over AGENT_CHAINS, not a restatement: only agents whose chain differs from (or is absent in) AGENT_CHAINS are listed. Agents not listed here keep matrix/task behavior byte-identical.",
     "notes": {
       "depth_analyst": "DELTA (flip): deepseek-first [deepseek_v4_pro, claude_sonnet_5, gemini_3_7_flash]. Matrix order was [claude, deepseek_pro, gemini]. Gemini kept 3rd as non-vision fallback anchor.",
-      "human_behavior": "DELTA (dead-slot cleanup): [claude_sonnet_5, gemini_3_7_flash]. Matrix 2nd slot (deepseek_v4_pro) is replaced with vision-capable gemini. NOT a capability addition: claude was already vision-eligible.",
-      "dialogue_manager": "NEW: no AGENT_CHAINS entry (fell through to task_chain). Mirrors CHAINS.dialogue baseline [claude, gemini].",
-      "shadow_executor": "NEW: no AGENT_CHAINS entry. Evidence-gated execution needs frontier judgment first, cheap vision-capable fallback second.",
-      "interpreter": "NEW: no AGENT_CHAINS entry. 2-long minimum (no-fallback single chains are rejected by Step-1 locks). Tool-output interpretation needs strong reasoning first, cheap fallback second."
+      "dialogue_manager": "FAZ-2-P3 (sahip onayı 2026-09-08): simple-tier ENFORCE uyumu — claude/gemini paid zincir ENFORCE altında BOŞ kalıyordu (simple=free-only). Free-only [gpt_oss_120b, laguna_s_2_1_free] bağlandı; kırık ENFORCE kapandı.",
+      "shadow_executor": "FAZ-2-P3 (sahip onayı 2026-09-08): evidence-gated JSON vektör çıkarımı ucuz beyni hak ediyor (research: ~22x tasarruf) — [deepseek_v4_flash, gemini_3_7_flash]. Claude birincillik bitti; gemini cheap vision-capable yedek olarak kaldı.",
+      "interpreter": "FAZ-2-P3 (sahip onayı 2026-09-08): simple-tier ENFORCE uyumu — claude paid zincir ENFORCE altında BOŞ kalıyordu. Free-only [gpt_oss_120b, laguna_s_2_1_free] bağlandı (gpt-oss-120b kod yetenekli). 2-long minimum korunur."
     }
   },
-  "depth_analyst": ["deepseek_v4_pro", "claude_sonnet_5", "gemini_3_7_flash"],
-  "human_behavior": ["claude_sonnet_5", "gemini_3_7_flash"],
-  "dialogue_manager": ["claude_sonnet_5", "gemini_3_7_flash"],
-  "shadow_executor": ["claude_sonnet_5", "gemini_3_7_flash"],
-  "interpreter": ["claude_sonnet_5", "deepseek_v4_flash"]
+  "depth_analyst": [
+    "deepseek_v4_pro",
+    "claude_sonnet_5",
+    "gemini_3_7_flash"
+  ],
+  "dialogue_manager": [
+    "gpt_oss_120b",
+    "laguna_s_2_1_free"
+  ],
+  "shadow_executor": [
+    "deepseek_v4_flash",
+    "gemini_3_7_flash"
+  ],
+  "interpreter": [
+    "gpt_oss_120b",
+    "laguna_s_2_1_free"
+  ]
 }

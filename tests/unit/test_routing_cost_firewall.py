@@ -96,8 +96,8 @@ async def test_paid_route_is_denied_without_escalation(monkeypatch):
 @pytest.mark.asyncio
 async def test_free_route_executes_without_escalation(monkeypatch):
     monkeypatch.delenv("PINEAL_ALLOW_PAID_ESCALATION", raising=False)
-    executor = _nous_executor(("fast", ["nous-research/laguna-s-2.1:free"]))
-    gateway, state = _fake_gateway(monkeypatch, lambda kwargs: _ok("laguna-s-2.1:free"))
+    executor = _nous_executor(("fast", ["nous-research/poolside/laguna-s-2.1:free"]))
+    gateway, state = _fake_gateway(monkeypatch, lambda kwargs: _ok("poolside/laguna-s-2.1:free"))
 
     result = await executor.chat_completion(
         gateway,
@@ -105,7 +105,7 @@ async def test_free_route_executes_without_escalation(monkeypatch):
         model="fast",
     )
     assert state["calls"] == 1
-    assert result.result.response.model == "laguna-s-2.1:free"
+    assert result.result.response.model == "poolside/laguna-s-2.1:free"
 
 
 @pytest.mark.asyncio
@@ -134,7 +134,7 @@ async def test_paid_route_executes_when_escalation_enabled(monkeypatch):
 @pytest.mark.asyncio
 async def test_provider_default_substitution_is_denied(monkeypatch):
     monkeypatch.delenv("PINEAL_ALLOW_PAID_ESCALATION", raising=False)
-    executor = _nous_executor(("fast", ["nous-research/laguna-s-2.1:free"]))
+    executor = _nous_executor(("fast", ["nous-research/poolside/laguna-s-2.1:free"]))
     gateway, state = _fake_gateway(monkeypatch, lambda kwargs: _ok("provider-default-model"))
 
     with pytest.raises(RuntimeError, match="MODEL_SUBSTITUTION_DENIED"):
@@ -158,15 +158,15 @@ async def test_fallback_reason_is_recorded_on_actual_model(monkeypatch):
     monkeypatch.delenv("PINEAL_ALLOW_PAID_ESCALATION", raising=False)
     executor = _nous_executor((
         "code_expert",
-        ["nous-research/laguna-s-2.1:free", "nous-research/xs-2.1:free"],
+        ["nous-research/poolside/laguna-s-2.1:free", "nous-research/poolside/laguna-xs-2.1:free"],
     ))
     seen: list[str] = []
 
     def handler(kwargs):
         seen.append(kwargs["model"])
-        if kwargs["model"] == "laguna-s-2.1:free":
+        if kwargs["model"] == "poolside/laguna-s-2.1:free":
             raise _StatusError(503)
-        return _ok("xs-2.1:free")
+        return _ok("poolside/laguna-xs-2.1:free")
 
     gateway, state = _fake_gateway(monkeypatch, handler)
     result = await executor.chat_completion(
@@ -174,9 +174,9 @@ async def test_fallback_reason_is_recorded_on_actual_model(monkeypatch):
         messages=[{"role": "user", "content": "hi"}],
         model="code_expert",
     )
-    assert seen == ["laguna-s-2.1:free", "xs-2.1:free"]
+    assert seen == ["poolside/laguna-s-2.1:free", "poolside/laguna-xs-2.1:free"]
     success = [r for r in gateway.call_log if r.get("error") is None][0]
-    assert success["actual_model"] == "xs-2.1:free"
+    assert success["actual_model"] == "poolside/laguna-xs-2.1:free"
     assert success["fallback_reason"] == "SERVER_ERROR"
     assert result.result.call_id == success["call_id"]
 
@@ -186,7 +186,7 @@ async def test_429_quota_exhaustion_marks_fallback_reason(monkeypatch):
     monkeypatch.delenv("PINEAL_ALLOW_PAID_ESCALATION", raising=False)
     executor = _nous_executor((
         "code_expert",
-        ["nous-research/laguna-s-2.1:free", "nous-research/xs-2.1:free"],
+        ["nous-research/poolside/laguna-s-2.1:free", "nous-research/poolside/laguna-xs-2.1:free"],
     ))
 
     class QuotaError(Exception):
@@ -196,9 +196,9 @@ async def test_429_quota_exhaustion_marks_fallback_reason(monkeypatch):
             super().__init__("insufficient_quota: out of credits")
 
     def handler(kwargs):
-        if kwargs["model"] == "laguna-s-2.1:free":
+        if kwargs["model"] == "poolside/laguna-s-2.1:free":
             raise QuotaError()
-        return _ok("xs-2.1:free")
+        return _ok("poolside/laguna-xs-2.1:free")
 
     gateway, state = _fake_gateway(monkeypatch, handler)
     await executor.chat_completion(
@@ -234,6 +234,6 @@ def test_vision_group_selects_vision_capable_model_only(monkeypatch):
 
 def test_non_vision_task_rejects_vision_requirement(monkeypatch):
     monkeypatch.delenv("PINEAL_ALLOW_PAID_ESCALATION", raising=False)
-    executor = _nous_executor(("fast", ["nous-research/laguna-s-2.1:free"]))
+    executor = _nous_executor(("fast", ["nous-research/poolside/laguna-s-2.1:free"]))
     plan = executor.plan("fast", required_capabilities={"vision"})
     assert plan.attempt_order == ()

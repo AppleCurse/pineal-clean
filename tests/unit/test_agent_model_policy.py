@@ -3,10 +3,18 @@ from agent_core.services.llm_gateway import LLMGateway
 
 def test_specialist_agent_chains_are_explicit():
     gateway = LLMGateway()
-    assert gateway.get_agent_chain("cognitive_profiler", "depth")[0] == "google/gemini-3.7-flash"
+    # FAZ-2-P3 (sahip onayı 2026-09-08, araştırma): cognitive_profiler
+    # hamaliye-ağırlıklı profil çıkarımı -> Groq free birincil.
+    assert gateway.get_agent_chain("cognitive_profiler", "depth")[0] == "openai/gpt-oss-120b"
     assert gateway.get_agent_chain("friction_detector", "fast")[0] == "anthropic/claude-sonnet-5"
-    assert gateway.get_agent_chain("passion_mapper", "depth")[0] == "google/gemini-3.7-flash"
-    assert gateway.get_agent_chain("resonance_synthesizer", "depth")[0] == "anthropic/claude-sonnet-5"
+    # FAZ-2 (sahip Q2): simple-tier passion_mapper canlı-teyitli free modele bağlandı.
+    assert gateway.get_agent_chain("passion_mapper", "depth") == [
+        "openai/gpt-oss-120b",
+        "poolside/laguna-s-2.1:free",
+    ]
+    # FAZ-2-P3 (araştırma): resonance_synthesizer ilk-temas metni -> Luna
+    # (OR/nous $0.20/$1.20, kalite 77) — claude birincillik bitti.
+    assert gateway.get_agent_chain("resonance_synthesizer", "depth")[0] == "openai/gpt-5.6-luna"
     assert gateway.get_agent_chain("aspasia", "dialogue")[0] == "anthropic/claude-sonnet-5"
     assert gateway.get_agent_chain("vision_analyzer", "vision") == [
         "google/gemini-3.7-flash",
@@ -16,11 +24,13 @@ def test_specialist_agent_chains_are_explicit():
 
 
 def test_verifier_extract_and_judgment_use_distinct_chains():
-    """Karar matrisi: extract mekanik/ucuz, hüküm kaliteli — ve farklı sağlayıcı."""
+    """Karar matrisi: extract mekanik/free, hüküm kaliteli — ve farklı sağlayıcı."""
     gateway = LLMGateway()
     extract_chain = gateway.get_agent_chain("autonomous_verifier_extract", "fast")
     judge_chain = gateway.get_agent_chain("autonomous_verifier", "depth")
-    assert extract_chain[0] == "deepseek/deepseek-v4-flash"
+    # FAZ-2 (sahip Q2): extract zinciri simple free-only'ye bağlandı (ENFORCE
+    # uyumu); hüküm (verify) frontier kalitede kaldı.
+    assert extract_chain[0] == "openai/gpt-oss-120b"
     assert judge_chain[0] == "anthropic/claude-sonnet-5"
     assert extract_chain[0].split("/")[0] != judge_chain[0].split("/")[0]
 

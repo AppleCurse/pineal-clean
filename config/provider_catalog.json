@@ -270,30 +270,23 @@
       "documentation_url": "https://portal.nousresearch.com/",
       "models": [
         {
-          "id": "laguna-s-2.1:free",
+          "id": "poolside/laguna-s-2.1:free",
           "display_name": "Laguna S 2.1 Free",
           "capabilities": ["chat", "streaming", "tools"],
           "context_window": 262144,
           "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
         },
         {
-          "id": "xs-2.1:free",
+          "id": "poolside/laguna-xs-2.1:free",
           "display_name": "XS 2.1 Free",
           "capabilities": ["chat", "streaming", "tools"],
           "context_window": 262144,
           "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
         },
         {
-          "id": "ling-3.0-flash-fin:free",
+          "id": "inclusionai/ling-3.0-flash-fin:free",
           "display_name": "Ling 3.0 Flash Finance Free",
           "capabilities": ["chat", "streaming", "tools"],
-          "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
-        },
-        {
-          "id": "dots-3-note-preview:free",
-          "display_name": "Dots 3 Note Preview Free",
-          "capabilities": ["chat", "streaming", "tools"],
-          "context_window": 524288,
           "pricing": {"input_per_million_usd": 0.0, "output_per_million_usd": 0.0}
         },
         {
