@@ -240,7 +240,7 @@ class ResponseCache:
         # ttl_seconds=0 -> expires_at == yazım anı -> anında süresi dolar.
         if expires_at is None:
             return False
-        return time.time() > float(expires_at)
+        return time.time() >= float(expires_at)
 
     def put(self, key: str, value: str) -> None:
         if not value:

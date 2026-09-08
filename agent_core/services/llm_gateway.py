@@ -16,7 +16,16 @@ from httpcore._backends.auto import AutoBackend
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
+from pathlib import Path
 from agent_core.services.response_cache import build_cache_from_env
+from agent_core.services.token_compressor import compress_prompt, CompressionLevel
+
+_RTK_POLICY_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "rtk_policy.json"
+_RTK_SAFE_DEFAULT: dict[str, Any] = {
+    "enabled": False,
+    "default_level": "conservative",
+    "bypass": {"tasks": [], "agents": []},
+}
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -125,6 +134,13 @@ _active_call_scope: contextvars.ContextVar[Optional[LLMCallScope]] = contextvars
 # fallback mi, yoksa sessiz ENV emergency override'u mu. Default: matrix.
 _active_chain_source: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "llm_chain_source", default=None
+)
+
+_active_task_hint: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "llm_task_hint", default=None
+)
+_active_agent_hint: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "llm_agent_hint", default=None
 )
 
 class SpendCapExceeded(RuntimeError):
@@ -471,6 +487,8 @@ class LLMGateway:
         # anahtar sayisi = bilinen provider'lar. Env: PINEAL_PROVIDER_...
         self._provider_fail_streak: dict[str, int] = {}
         self._provider_block_until: dict[str, float] = {}
+        # RTK: RAM-cached singleton policy
+        self._rtk_policy_cache: dict[str, Any] | None = None
         # [017]: PINEAL_ALLOW_UNPRICED_MODELS=1 ile yapılan takipsiz çağrı sayacı
         self.unpriced_calls = 0
         # Bounded diagnostic history. Agent evidence is populated from a
@@ -1220,6 +1238,117 @@ class LLMGateway:
         return {"model": model, "offered": offered, "skipped": skipped,
                 "pool_size": len(offered), "openrouter_offered": has_or}
 
+    def _get_rtk_policy(self) -> dict[str, Any]:
+        """RAM-cached singleton okuma — provider_health ile birebir aynı model.
+        
+        Disk yalnızca ilk çağrıda (lazy) okunur, sonrası RAM'den servis edilir.
+        Fail-open: Dosya yoksa/bozuksa _RTK_SAFE_DEFAULT (enabled=False) döner.
+        """
+        if self._rtk_policy_cache is not None:
+            return self._rtk_policy_cache
+
+        policy = {
+            "enabled": False,
+            "default_level": "conservative",
+            "bypass": {"tasks": [], "agents": []},
+        }
+        try:
+            with open(_RTK_POLICY_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            policy = {
+                "enabled": bool(loaded.get("enabled", False)),
+                "default_level": loaded.get("default_level", "conservative"),
+                "bypass": {
+                    "tasks": list(loaded.get("bypass", {}).get("tasks", [])),
+                    "agents": list(loaded.get("bypass", {}).get("agents", [])),
+                },
+            }
+        except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+            import logging
+            logging.warning("RTK_POLICY_LOAD_FAILED: %s; RTK devre dışı (fail-open).", exc)
+            self._rtk_policy_cache = dict(_RTK_SAFE_DEFAULT)
+            return self._rtk_policy_cache
+
+        env_enabled = os.getenv("PINEAL_RTK_ENABLED")
+        if env_enabled is not None:
+            policy["enabled"] = env_enabled.strip().lower() in ("1", "true", "yes")
+
+        for env_var, bypass_key in (
+            ("PINEAL_RTK_BYPASS_TASKS", "tasks"),
+            ("PINEAL_RTK_BYPASS_AGENTS", "agents"),
+        ):
+            raw = os.getenv(env_var, "")
+            if raw.strip():
+                extra = {t.strip() for t in raw.split(",") if t.strip()}
+                policy["bypass"][bypass_key] = list(set(policy["bypass"][bypass_key]) | extra)
+
+        self._rtk_policy_cache = policy
+        return policy
+
+    def should_bypass_rtk(self, *, task: Optional[str] = None, agent_name: Optional[str] = None) -> bool:
+        """Task veya agent_name bypass listesindeyse sıkıştırma uygulanmaz."""
+        policy = self._get_rtk_policy()
+        if not policy.get("enabled", False):
+            return True
+        if task and task in policy.get("bypass", {}).get("tasks", []):
+            return True
+        if agent_name and agent_name in policy.get("bypass", {}).get("agents", []):
+            return True
+        return False
+
+    def _apply_rtk_compression(
+        self,
+        text: str,
+        *,
+        task: Optional[str] = None,
+        agent_name: Optional[str] = None,
+    ) -> str:
+        """HTTP çağrısından hemen önce metni sıkıştırır (fail-open)."""
+        try:
+            if self.should_bypass_rtk(task=task, agent_name=agent_name):
+                return text
+
+            policy = self._get_rtk_policy()
+            level = CompressionLevel(policy.get("default_level", "conservative"))
+            return compress_prompt(text, level)
+        except Exception as exc:
+            import logging
+            logging.warning("RTK_COMPRESSION_FAILED: %s; using uncompressed text (fail-open).", exc)
+            return text
+
+    def _compress_chat_messages(
+        self,
+        messages: List[dict[str, Any]],
+        *,
+        task: Optional[str] = None,
+        agent_name: Optional[str] = None,
+    ) -> List[dict[str, Any]]:
+        """Yalnızca text içeriğine dokunur, image_url veya diğer part'ları aynen korur."""
+        result: List[dict[str, Any]] = []
+        for msg in messages:
+            new_msg = dict(msg)
+            content = new_msg.get("content")
+
+            if isinstance(content, str):
+                new_msg["content"] = self._apply_rtk_compression(
+                    content, task=task, agent_name=agent_name
+                )
+            elif isinstance(content, list):
+                new_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        new_part = dict(part)
+                        new_part["text"] = self._apply_rtk_compression(
+                            part.get("text", ""), task=task, agent_name=agent_name
+                        )
+                        new_parts.append(new_part)
+                    else:
+                        new_parts.append(part)
+                new_msg["content"] = new_parts
+
+            result.append(new_msg)
+        return result
+
     def _client_for_route(self, route: GatewayRoute):
         """Build/cache transport clients without moving network I/O out of the gateway."""
         credential_fingerprint = hashlib.sha256(
@@ -1269,6 +1398,8 @@ class LLMGateway:
         system_prompt: str = None,
         images: Optional[List[str]] = None,
         route: Optional[GatewayRoute] = None,
+        task: Optional[str] = None,
+        agent_name: Optional[str] = None,
     ) -> str:
         """Execute one logical LLM call and emit exactly one call-id record.
 
@@ -1393,15 +1524,31 @@ class LLMGateway:
                 )
             target_client = self.client
 
+        # RTK Compression (ephemeral on outbound prompt, preserves images & memory)
+        scope = _active_call_scope.get()
+        task_hint = (
+            task
+            or _active_task_hint.get()
+            or (scope.task_id if scope else None)
+            or (getattr(route, "task", None) if route else None)
+        )
+        agent_hint = (
+            agent_name
+            or _active_agent_hint.get()
+            or (scope.agent_id if scope else None)
+            or (getattr(route, "agent_name", None) if route else None)
+        )
+        compressed_prompt = self._apply_rtk_compression(prompt, task=task_hint, agent_name=agent_hint)
+
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         if images:
-            content = [{"type": "text", "text": prompt}]
+            content = [{"type": "text", "text": compressed_prompt}]
             content += [{"type": "image_url", "image_url": {"url": url}} for url in images]
             messages.append({"role": "user", "content": content})
         else:
-            messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "user", "content": compressed_prompt})
 
         cache_key = None
         if (
@@ -1662,6 +1809,8 @@ class LLMGateway:
         seed: Optional[int] = None,
         user: Optional[str] = None,
         route: Optional[GatewayRoute] = None,
+        task: Optional[str] = None,
+        agent_name: Optional[str] = None,
     ) -> LLMChatResult:
         """Execute a non-streaming OpenAI chat request under gateway controls.
 
@@ -1688,9 +1837,24 @@ class LLMGateway:
         if effective_max_tokens < 1 or effective_max_tokens > self.max_output_tokens:
             raise ValueError(f"max_tokens must be between 1 and gateway cap {self.max_output_tokens}")
 
+        scope = _active_call_scope.get()
+        task_hint = (
+            task
+            or _active_task_hint.get()
+            or (scope.task_id if scope else None)
+            or (getattr(route, "task", None) if route else None)
+        )
+        agent_hint = (
+            agent_name
+            or _active_agent_hint.get()
+            or (scope.agent_id if scope else None)
+            or (getattr(route, "agent_name", None) if route else None)
+        )
+        outbound_messages = self._compress_chat_messages(messages, task=task_hint, agent_name=agent_hint)
+
         request_payload: dict[str, Any] = {
             "model": selected_model,
-            "messages": messages,
+            "messages": outbound_messages,
             "max_tokens": effective_max_tokens,
         }
         optional_parameters = {
@@ -2165,7 +2329,7 @@ class LLMGateway:
 
         return schema.model_validate(parsed_data)
 
-    async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None, images: Optional[List[str]] = None, route: Optional[GatewayRoute] = None) -> T:
+    async def query_json(self, prompt: str, schema: Type[T], temperature: float = 0.7, tier: int = 1, model: str = None, images: Optional[List[str]] = None, route: Optional[GatewayRoute] = None, task: Optional[str] = None, agent_name: Optional[str] = None) -> T:
         """LLM'den sorgu atar, beklenen JSON formatını (Pydantic schema) tamir mekanizmasıyla garanti eder.
 
         Repair is scoped to parse/schema failures only. Transport, auth, spend-cap,
@@ -2181,7 +2345,7 @@ class LLMGateway:
         selected_model = model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
         response_text = ""
         try:
-            response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model, images=images, route=route)
+            response_text = await self.query(full_prompt, temperature, tier=tier, model=selected_model, images=images, route=route, task=task, agent_name=agent_name)
             parsed_data = self.extract_json(response_text)
             return self._coerce_to_schema(parsed_data, schema)
         except (ValueError, ValidationError, TypeError, KeyError, json.JSONDecodeError) as err:
@@ -2192,7 +2356,7 @@ class LLMGateway:
                 f"DİKKAT: Eksik veri varsa uydurma kelimeler veya sahte skorlar YAZMA. Sadece var olanları yerleştir.\n"
                 f"Eklediğin bozuk çıktı şuydu:\n{response_text[:200]}"
             )
-            repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model, images=images, route=route)
+            repair_text = await self.query(repair_prompt, temperature, tier=tier, model=selected_model, images=images, route=route, task=task, agent_name=agent_name)
             parsed_data = self.extract_json(repair_text)
             return self._coerce_to_schema(parsed_data, schema)
 
@@ -2220,44 +2384,52 @@ class LLMGateway:
             task=task, agent_name=agent_name, images=images
         )
         last_exception = None
+        t_token = _active_task_hint.set(task) if task else None
+        a_token = _active_agent_hint.set(agent_name) if agent_name else None
 
-        for model in chain:
-            # MP-ROUTING: sağlayıcı merdiveni (free → indirimli → OpenRouter),
-            # sonra zincirdeki sıradaki model.
-            for route in self.agent_route_variants(model, required=required_caps):
-                tried = route.model if route is not None else model
-                try:
-                    result = await self.query(
-                        prompt=prompt,
-                        temperature=temperature,
-                        model=model,
-                        system_prompt=system_prompt,
-                        images=images,
-                        route=route,
-                    )
-                    if route is not None:
-                        # ROUTING-HARDENING: basarili tasima devreyi sifirlar.
-                        self._note_route_health(route.provider_id, ok=True)
-                    return result
-                except Exception as e:
-                    if not _is_fallback_allowed(e, json_mode=False):
+        try:
+            for model in chain:
+                # MP-ROUTING: sağlayıcı merdiveni (free → indirimli → OpenRouter),
+                # sonra zincirdeki sıradaki model.
+                for route in self.agent_route_variants(model, required=required_caps):
+                    tried = route.model if route is not None else model
+                    try:
+                        result = await self.query(
+                            prompt=prompt,
+                            temperature=temperature,
+                            model=model,
+                            system_prompt=system_prompt,
+                            images=images,
+                            route=route,
+                        )
+                        if route is not None:
+                            # ROUTING-HARDENING: basarili tasima devreyi sifirlar.
+                            self._note_route_health(route.provider_id, ok=True)
+                        return result
+                    except Exception as e:
+                        if not _is_fallback_allowed(e, json_mode=False):
+                            self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
+                            raise
+                        if route is not None:
+                            # yalniz GECICI transport hatasi streak'e sayilir
+                            self._note_route_health(route.provider_id, ok=False)
+                        last_exception = e
                         self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
-                        raise
-                    if route is not None:
-                        # yalniz GECICI transport hatasi streak'e sayilir
-                        self._note_route_health(route.provider_id, ok=False)
-                    last_exception = e
-                    self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
-                    logging.warning(
-                        f"Model zincirinde geçici hata [{task} -> {model}"
-                        f"@{route.provider_id if route is not None else 'openrouter'}]: {e}. "
-                        f"Sıradaki rota/model deneniyor..."
-                    )
-                    continue
+                        logging.warning(
+                            f"Model zincirinde geçici hata [{task} -> {model}"
+                            f"@{route.provider_id if route is not None else 'openrouter'}]: {e}. "
+                            f"Sıradaki rota/model deneniyor..."
+                        )
+                        continue
 
-        if last_exception:
-            raise last_exception
-        raise RuntimeError(f"Zincirdeki tüm modeller tükendi ({task})")
+            if last_exception:
+                raise last_exception
+            raise RuntimeError(f"Zincirdeki tüm modeller tükendi ({task})")
+        finally:
+            if t_token is not None:
+                _active_task_hint.reset(t_token)
+            if a_token is not None:
+                _active_agent_hint.reset(a_token)
 
     async def query_json_chain(
         self,
@@ -2281,41 +2453,49 @@ class LLMGateway:
             task=task, agent_name=agent_name, images=images
         )
         last_exception = None
+        t_token = _active_task_hint.set(task) if task else None
+        a_token = _active_agent_hint.set(agent_name) if agent_name else None
 
-        for model in chain:
-            # MP-ROUTING: önce bu MODELİN sağlayıcı merdiveni denenir
-            # (free → indirimli → OpenRouter); geçici hata sonraki taşımayı
-            # dener, taşımalar bitince zincirdeki sonraki MODELE düşülür.
-            for route in self.agent_route_variants(model, required=required_caps):
-                tried = route.model if route is not None else model
-                try:
-                    result = await self.query_json(
-                        prompt=prompt,
-                        schema=schema,
-                        temperature=temperature,
-                        model=model,
-                        images=images,
-                        route=route,
-                    )
-                    if route is not None:
-                        self._note_route_health(route.provider_id, ok=True)
-                    return result
-                except Exception as e:
-                    if not _is_fallback_allowed(e, json_mode=True):
+        try:
+            for model in chain:
+                # MP-ROUTING: önce bu MODELİN sağlayıcı merdiveni denenir
+                # (free → indirimli → OpenRouter); geçici hata sonraki taşımayı
+                # dener, taşımalar bitince zincirdeki sonraki MODELE düşülür.
+                for route in self.agent_route_variants(model, required=required_caps):
+                    tried = route.model if route is not None else model
+                    try:
+                        result = await self.query_json(
+                            prompt=prompt,
+                            schema=schema,
+                            temperature=temperature,
+                            model=model,
+                            images=images,
+                            route=route,
+                        )
+                        if route is not None:
+                            self._note_route_health(route.provider_id, ok=True)
+                        return result
+                    except Exception as e:
+                        if not _is_fallback_allowed(e, json_mode=True):
+                            self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
+                            raise
+                        if route is not None:
+                            # ROUTING-HARDENING: yalniz GECICI transport hatasi sayilir
+                            self._note_route_health(route.provider_id, ok=False)
+                        last_exception = e
                         self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
-                        raise
-                    if route is not None:
-                        # ROUTING-HARDENING: yalniz GECICI transport hatasi sayilir
-                        self._note_route_health(route.provider_id, ok=False)
-                    last_exception = e
-                    self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
-                    logging.warning(
-                        f"JSON zincirinde hata [{task} -> {model}"
-                        f"@{route.provider_id if route is not None else 'openrouter'}]: {e}. "
-                        f"Sıradaki rota/model deneniyor..."
-                    )
-                    continue
+                        logging.warning(
+                            f"JSON zincirinde hata [{task} -> {model}"
+                            f"@{route.provider_id if route is not None else 'openrouter'}]: {e}. "
+                            f"Sıradaki rota/model deneniyor..."
+                        )
+                        continue
 
-        if last_exception:
-            raise last_exception
-        raise RuntimeError(f"JSON Zincirindeki tüm modeller tükendi ({task})")
+            if last_exception:
+                raise last_exception
+            raise RuntimeError(f"JSON Zincirindeki tüm modeller tükendi ({task})")
+        finally:
+            if t_token is not None:
+                _active_task_hint.reset(t_token)
+            if a_token is not None:
+                _active_agent_hint.reset(a_token)

@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "description": "TEK KAYNAK: Rust ve Python token_compressor implementasyonlarının ikisi de bu dosyadan test vakası okur. Biri diğerinden saparsa test kırmızıya düşer.",
+  "cases": [
+    {
+      "id": "empty_string",
+      "input": "",
+      "level": "conservative",
+      "expected": ""
+    },
+    {
+      "id": "whitespace_only_unchanged",
+      "input": "   ",
+      "level": "standard",
+      "expected": "   "
+    },
+    {
+      "id": "conservative_collapses_spaces",
+      "input": "hello    world",
+      "level": "conservative",
+      "expected": "hello world"
+    },
+    {
+      "id": "conservative_collapses_excess_newlines",
+      "input": "hello    world\n\n\n\nfoo",
+      "level": "conservative",
+      "expected": "hello world\n\nfoo"
+    },
+    {
+      "id": "conservative_strips_trailing_line_whitespace",
+      "input": "line one   \nline two\t\n",
+      "level": "conservative",
+      "expected": "line one\nline two"
+    },
+    {
+      "id": "conservative_normalizes_crlf",
+      "input": "line one\r\nline two\r\n",
+      "level": "conservative",
+      "expected": "line one\nline two"
+    },
+    {
+      "id": "conservative_tabs_become_single_space",
+      "input": "a\t\tb",
+      "level": "conservative",
+      "expected": "a b"
+    },
+    {
+      "id": "conservative_does_not_minify_json",
+      "input": "{ \"a\" :  1 }",
+      "level": "conservative",
+      "expected_contains": "\"a\" :"
+    },
+    {
+      "id": "conservative_does_not_dedupe",
+      "input": "line\nline\nline",
+      "level": "conservative",
+      "expected": "line\nline\nline"
+    },
+    {
+      "id": "standard_minifies_single_line_json_object",
+      "input": "{\"key\": \"value\", \"n\": 1}",
+      "level": "standard",
+      "expected": "{\"key\":\"value\",\"n\":1}"
+    },
+    {
+      "id": "standard_minifies_single_line_json_array",
+      "input": "[1,  2,   3]",
+      "level": "standard",
+      "expected": "[1,2,3]"
+    },
+    {
+      "id": "standard_leaves_multiline_json_untouched",
+      "input": "{\n  \"key\": \"value\",\n  \"n\": 1\n}",
+      "level": "standard",
+      "expected_contains": "\"key\""
+    },
+    {
+      "id": "standard_leaves_invalid_json_untouched",
+      "input": "{not valid json}",
+      "level": "standard",
+      "expected_trimmed": "{not valid json}"
+    },
+    {
+      "id": "standard_dedupes_beyond_threshold",
+      "input": "line\nline\nline\nline\nother",
+      "level": "standard",
+      "expected_line_count": {"line": 2},
+      "expected_contains": "other"
+    },
+    {
+      "id": "standard_keeps_non_consecutive_repeats",
+      "input": "asla vazgeçme\nbugün güzel\nasla vazgeçme",
+      "level": "standard",
+      "expected_line_count": {"asla vazgeçme": 2}
+    },
+    {
+      "id": "standard_does_not_panic_on_emoji",
+      "input": "test 🔥🔥🔥\n\n\n\nemoji test",
+      "level": "standard",
+      "expected_contains": "🔥🔥🔥"
+    },
+    {
+      "id": "standard_two_consecutive_repeats_kept_as_is",
+      "input": "line\nline\nother",
+      "level": "standard",
+      "expected": "line\nline\nother"
+    },
+    {
+      "id": "unicode_turkish_chars_preserved",
+      "input": "çğıöşü    ÇĞİÖŞÜ",
+      "level": "conservative",
+      "expected": "çğıöşü ÇĞİÖŞÜ"
+    }
+  ]
+}

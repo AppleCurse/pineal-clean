@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "_meta": {
+    "purpose": "RTK (Rust Token-saver mantığının Python mirror'ı) için görev/ajan bazlı bypass politikası. Hardcode değil, config-driven.",
+    "fail_mode": "fail-open — bu dosya okunamazsa/bozuksa, sistem varsayılan olarak enabled=false ile devam eder (sıkıştırma uygulanmaz, orijinal prompt gönderilir). Bu, adli veri bütünlüğü riski taşımadığı için Pineal'in genel fail-closed doktrininden BİLEREK sapan tek yerdir.",
+    "rationale_ref": "agent_core/services/token_compressor.py docstring — Adli Tasarım İlkesi bölümü"
+  },
+  "enabled": true,
+  "default_level": "conservative",
+  "bypass": {
+    "_comment": "Bu task/agent adlarına RTK sıkıştırması UYGULANMAZ. DEEP_REASONING kategorisi (4 kanallı gerilim matrisi, mikro-dilbilimsel ritim analizi gibi nüans-kritik görevler) tamamen dışlanmıştır.",
+    "tasks": ["depth", "reasoning"],
+    "agents": ["depth_analyst", "mirror_truth", "shadow_executor", "lilith_growth", "authenticity_auditor"]
+  },
+  "env_overrides": {
+    "enabled_flag": "PINEAL_RTK_ENABLED",
+    "bypass_tasks_flag": "PINEAL_RTK_BYPASS_TASKS",
+    "bypass_agents_flag": "PINEAL_RTK_BYPASS_AGENTS",
+    "_comment": "Virgülle ayrılmış env değişkenleri, buradaki listelere EKLENİR (üzerine yazmaz) — operatör ek bypass tanımlayabilir ama mevcut güvenlik listesini daraltamaz."
+  },
+  "vision_isolation": {
+    "_comment": "images parametresi bu politikadan tamamen bağımsızdır ve RTK asla image_url içeriğine dokunmaz. Bu alan yalnızca dokümantasyon amaçlıdır, kod tarafından okunmaz.",
+    "images_field_touched_by_rtk": false
+  }
+}

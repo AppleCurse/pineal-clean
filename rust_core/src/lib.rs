@@ -11,6 +11,7 @@ pub mod agent_pipeline;
 pub mod task_isolation;
 pub mod agents;
 pub mod aspasia;
+pub mod token_compressor;
 // [W4.1] tauri_bridge yalnızca masaüstü kabuğu derlemesinde (feature="tauri").
 // Böylece rust_core çekirdeği CI'da webkit sistem bağımlılıkları olmadan
 // derlenip test edilebilir; kabuk (src-tauri) feature'ı açar.
@@ -28,3 +29,4 @@ pub use agents::autonomous_verifier::{AutonomousVerifier, VerifierReport, Verifi
 pub use agents::resonance_calculator::{ResonanceCalculator, ResonanceProfile};
 pub use agent_pipeline::{AgentNode, HaltReason, AnalysisResult};
 pub use task_isolation::{TaskManager, TaskContext};
+pub use token_compressor::{compress_prompt, CompressionLevel};
