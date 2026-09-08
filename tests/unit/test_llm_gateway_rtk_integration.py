@@ -125,3 +125,16 @@ def test_env_override_extends_not_replaces_bypass_list(gateway, tmp_path, monkey
     result = gateway._get_rtk_policy()
     assert "depth" in result["bypass"]["tasks"]
     assert "extra_task" in result["bypass"]["tasks"]
+
+
+def test_disk_rtk_policy_contract_locks_all_bypass_agents_and_tasks():
+    """Diskteki rtk_policy.json dosyasının tüm bypass ajanlarını ve görevlerini kilitler."""
+    gw = LLMGateway()
+    assert gw.should_bypass_rtk(agent_name="human_behavior") is True
+    assert gw.should_bypass_rtk(agent_name="shadow_executor") is True
+    assert gw.should_bypass_rtk(agent_name="lilith_growth") is True
+    assert gw.should_bypass_rtk(agent_name="depth_analyst") is True
+    assert gw.should_bypass_rtk(agent_name="mirror_truth") is True
+    assert gw.should_bypass_rtk(agent_name="authenticity_auditor") is True
+    assert gw.should_bypass_rtk(task="depth") is True
+    assert gw.should_bypass_rtk(task="reasoning") is True
