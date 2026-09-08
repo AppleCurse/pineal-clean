@@ -456,6 +456,106 @@ class LLMGateway:
             )
         return chain
 
+    def effective_routing_snapshot(self) -> dict[str, Any]:
+        """Salt-okunur routing snapshotu: registry + çözünmüş zincirler + rotalar + tierler.
+
+        Routing bilgisinin TEK makine-okunur ağzı. `scripts/generate_routing_shadows.py`
+        ve kontrat testleri buradan beslenir; üretim yolları (query_chain vb.) bu metodu
+        ÇAĞIRMAZ (sıfır davranış etkisi).
+
+        Sözleşme (test ile kilitli):
+        - task="depth" ile çözülür; listelenen ajanlarda katman atfı task-bağımsızdır
+          (env/routing/matrix dalları task'a bakmaz).
+        - `_active_chain_source` side-effect'i save/restore ile yutulur.
+        - Tier ihlalleri BİLGİLENDİRME amaçlıdır (v1): CI kırmaz, RUNBOOK'ta render edilir.
+        """
+        from agent_core.services.task_routing_resolver import load_task_routing
+
+        tiers = self._load_agent_tiers()
+        routing_table = load_task_routing()
+        routed = {
+            k
+            for k, v in routing_table.items()
+            if not k.startswith("_") and k != "schema_version" and isinstance(v, list)
+        }
+        agents = sorted(set(self.AGENT_CHAINS) | routed)
+        reverse = {v: k for k, v in self.MODEL_REGISTRY.items()}
+
+        token = _active_chain_source.set(_active_chain_source.get())
+        try:
+            agent_rows = {}
+            for agent in agents:
+                chain = self.get_agent_chain(agent, "depth")
+                source = _active_chain_source.get() or "task_chain"
+                keys = [reverse.get(m) for m in chain]
+                agent_rows[agent] = {
+                    "chain": list(chain),
+                    "chain_keys": keys if all(keys) else None,
+                    "source": source,
+                }
+        finally:
+            _active_chain_source.reset(token)
+
+        try:
+            from agent_core.services import final_routing_policy as pol
+
+            routes = {
+                key: {"tier": spec.tier, "in": spec.input_per_million_usd, "out": spec.output_per_million_usd}
+                for key, spec in pol.ROUTES.items()
+            }
+            free_ids = {spec.model for spec in pol.ROUTES.values() if spec.tier == "free"}
+        except Exception:
+            routes, free_ids = {}, set()
+
+        return {
+            "schema_version": 1,
+            "registry": dict(self.MODEL_REGISTRY),
+            "agents": agent_rows,
+            "routes": routes,
+            "tiers": tiers,
+            "tier_violations": self._snapshot_tier_violations(agent_rows, tiers, free_ids),
+        }
+
+    @staticmethod
+    def _load_agent_tiers() -> dict[str, Any]:
+        """agent_tiers.json intent tablosu (yoksa/bozuksa {} — snapshot çökmez)."""
+        override = os.getenv("PINEAL_AGENT_TIERS_PATH", "").strip()
+        path = Path(override) if override else Path(__file__).resolve().parent.parent.parent / "config" / "agent_tiers.json"
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return {}
+        tiers = data.get("tiers") if isinstance(data, dict) else None
+        return tiers if isinstance(tiers, dict) else {}
+
+    @staticmethod
+    def _snapshot_tier_violations(
+        agent_rows: dict[str, dict[str, Any]], tiers: dict[str, Any], free_ids: set[str]
+    ) -> list[dict[str, str]]:
+        """Tier intent vs çözünmüş zincir — v1 sezgiseller (bilgilendirme, CI kırmaz)."""
+        FRONTIER_KEYS = {"claude_sonnet_5", "deepseek_v4_pro", "grok_4_6"}
+        out: list[dict[str, str]] = []
+        for agent, row in agent_rows.items():
+            entry = tiers.get(agent)
+            if not isinstance(entry, dict) or entry.get("tier") not in ("heavy", "vision", "simple", "verify"):
+                out.append({"agent": agent, "rule": "untiered", "detail": "tiers dosyasında karşılığı yok"})
+                continue
+            tier, chain, keys = entry["tier"], row["chain"], row["chain_keys"] or []
+            if tier == "simple" and not (set(chain) & set(free_ids)):
+                out.append(
+                    {"agent": agent, "rule": "simple_without_free", "detail": f"zincirde bedava-rota modeli yok: {chain}"}
+                )
+            if tier == "vision" and (not chain or chain[0] not in LLMGateway.VISION_MODELS):
+                out.append(
+                    {"agent": agent, "rule": "vision_first_not_capable", "detail": f"ilk model vision-eligible değil: {chain[:1]}"}
+                )
+            if tier == "heavy" and not (set(keys) & FRONTIER_KEYS):
+                out.append(
+                    {"agent": agent, "rule": "heavy_without_frontier", "detail": f"zincirde frontier (claude/pro/grok) yok: {chain}"}
+                )
+        return out
+
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.openrouter_base_url = os.getenv(

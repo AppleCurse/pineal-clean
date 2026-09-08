@@ -71,21 +71,24 @@
   // ==========================================
   // 13 AJAN LİSTESİ (KULLANICININ VERDİĞİ LİSTE)
   // ==========================================
+  // <ROUTING-GENERATED-START do-not-edit>
   const agentList = [
     { id: "mirror_truth",          name: "MIRROR TRUTH",          color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "openrouter", capability: "strong_reasoning", glyph: "🪞" },
-    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "claude-sonnet-5",     backupModel: "grok-4.6",          via: "openrouter", capability: "extract+judgment", glyph: "⚖️" },
-    { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "openrouter", capability: "strong_reasoning", glyph: "👤" },
-    { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "gemini-3.7-flash",    backupModel: "deepseek-v4-flash", via: "openrouter", capability: "strong_reasoning", glyph: "✨" },
+    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "claude-sonnet-5",   backupModel: "grok-4.6",   via: "openrouter", capability: "extract+judgment", glyph: "⚖️" },
+    { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",   via: "openrouter", capability: "strong_reasoning", glyph: "👤" },
+    { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "gemini-3.7-flash",     backupModel: "deepseek-v4-flash",  via: "openrouter", capability: "strong_reasoning", glyph: "✨" },
     { id: "friction_detector",     name: "FRICTION & BOUNDS",     color: "#ef4444", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "openrouter", capability: "strong_reasoning", glyph: "🛡️" },
-    { id: "cognitive_profiler",    name: "COGNITIVE PROFILER",    color: "#06b6d4", primaryModel: "gemini-3.7-flash",    backupModel: "deepseek-v4-flash", via: "openrouter", capability: "strong_reasoning", glyph: "🧠" },
+    { id: "cognitive_profiler",    name: "COGNITIVE PROFILER",    color: "#06b6d4", primaryModel: "gemini-3.7-flash",     backupModel: "deepseek-v4-flash",          via: "openrouter", capability: "strong_reasoning", glyph: "🧠" },
     { id: "resonance_calc",        name: "RESONANCE CALCULATOR",  color: "#3b82f6", primaryModel: "local-numpy",         backupModel: "—",                 via: "local",      capability: "calc",             glyph: "📐" },
-    { id: "pattern_interrupt",     name: "PATTERN INTERRUPT",     color: "#dc2626", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash",  via: "openrouter", capability: "strong_reasoning", glyph: "⚡" },
+    { id: "pattern_interrupt",     name: "PATTERN INTERRUPT",     color: "#dc2626", primaryModel: "claude-sonnet-5",     backupModel: "gemini-3.7-flash", via: "openrouter", capability: "strong_reasoning", glyph: "⚡" },
     { id: "resonance_synthesizer", name: "AUTHENTIC BRIDGE",      color: "#10b981", primaryModel: "claude-sonnet-5",     backupModel: "deepseek-v4-pro",   via: "openrouter", capability: "synthesis",        glyph: "🌿" },
     { id: "vision_analyzer",       name: "VISION ANALYZER",       color: "#38bdf8", primaryModel: "gemini-3.7-flash",    backupModel: "grok-4.6",          via: "openrouter", capability: "vision",           glyph: "👁️" },
-    { id: "osint_investigator",    name: "OSINT INVESTIGATOR",    color: "#f97316", primaryModel: "grok-4.6",            backupModel: "deepseek-v4-pro",   via: "xai/tools",  capability: "osint_synthesis",  glyph: "🌐" },
-    { id: "authenticity_auditor",  name: "AUTHENTICITY AUDITOR",  color: "#eab308", primaryModel: "deepseek-v4-flash",   backupModel: "gemini-3.7-flash",  via: "openrouter", capability: "vision+verify",   glyph: "🔍" },
+    { id: "osint_investigator",    name: "OSINT INVESTIGATOR",    color: "#f97316", primaryModel: "grok-4.6",            backupModel: "deepseek-v4-pro",   via: "openrouter",  capability: "osint_synthesis",  glyph: "🌐" },
+    { id: "authenticity_auditor",  name: "AUTHENTICITY AUDITOR",  color: "#eab308", primaryModel: "deepseek-v4-flash",    backupModel: "gemini-3.7-flash",   via: "openrouter", capability: "vision+verify",   glyph: "🔍" },
     { id: "depth_analyst",         name: "DEPTH ANALYST",         color: "#8b5cf6", primaryModel: "deepseek-v4-pro",     backupModel: "claude-sonnet-5",   via: "openrouter", capability: "strong_reasoning", glyph: "💎" },
   ];
+  
+// <ROUTING-GENERATED-END>
 
   // ==========================================
   // STATE & TELEMETRY

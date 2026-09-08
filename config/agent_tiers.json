@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "_meta": {
+    "purpose": "Owner's 4-tier cost plan as structured intent: which agent belongs to which tier (heavy/vision/simple/verify). Read ONLY by LLMGateway.effective_routing_snapshot(); tiers without a reader would be a 14th shadow, so the reader + coverage lock ship in the same commit.",
+    "tiers": {
+      "heavy": "Frontier reasoning / psychodynamic inference. Served via cheapest capable channel (discounted Claude@Nous, Luna where chained).",
+      "vision": "Photo/video/scene analysis. Must start vision-capable (Gemini-first intent).",
+      "simple": "Hamaliye: extraction, classification, timestamps, traffic management. Free-tier intent (Groq/Cerebras/Nous-free where chained).",
+      "verify": "Search-backed fact-checking (Tavily/SerpAPI/Exa wired via backend/api.py set_keys)."
+    },
+    "rule": "New agent? Add its tier HERE (coverage test fails otherwise), then run scripts/generate_routing_shadows.py.",
+    "review_flags": "passion_mapper + cognitive_profiler tiering is uncertain (extraction-vs-inference hybrids); currently heavy/simple split, downgrade/upgrade candidates. dialogue_manager/shadow_executor/interpreter are dormant (no gateway callers); tiers record intent for when callers land. lilith_growth is CLI-only (run_lilith.py)."
+  },
+  "tiers": {
+    "depth_analyst": {"tier": "heavy", "note": "Psychodynamic depth reports; deepseek-first flip."},
+    "human_behavior": {"tier": "heavy", "note": "Cold-reading inference over evidence (text path, no images)."},
+    "aspasia": {"tier": "heavy", "note": "Chief dialogue + only images= caller (aspasia_chief)."},
+    "mirror_truth": {"tier": "heavy", "note": "Truth-alignment judgment."},
+    "resonance_synthesizer": {"tier": "heavy", "note": "Synthesis reasoning."},
+    "friction_detector": {"tier": "heavy", "note": "Bounds judgment."},
+    "cognitive_profiler": {"tier": "heavy", "note": "Profile inference. REVIEW: downgrade candidate if workload is extraction-heavy."},
+    "authenticity_auditor": {"tier": "heavy", "note": "Audit judgment; cheap-first chain escalates to claude."},
+    "shadow_executor": {"tier": "heavy", "note": "DORMANT: no gateway callers; evidence-gated execution intent."},
+    "osint_investigator": {"tier": "heavy", "note": "Synthesis over tool results; holds gateway but never queries (dormant chain)."},
+    "vision_analyzer": {"tier": "vision", "note": "Only task=vision caller with images; gemini-first chain."},
+    "autonomous_verifier": {"tier": "verify", "note": "Search-gated (tavily/serpapi/exa keys required or no_search_provider)."},
+    "autonomous_verifier_extract": {"tier": "simple", "note": "Claim extraction; the ONLY task=fast caller."},
+    "dialogue_manager": {"tier": "simple", "note": "DORMANT: no gateway callers; traffic-management intent."},
+    "interpreter": {"tier": "simple", "note": "DORMANT in gateway (no callers); live path bypasses chains via interpreter_agent.py:37 hardcoded default (separate behavior-change round)."},
+    "lilith_growth": {"tier": "simple", "note": "CLI-only (run_lilith.py explicit model); bulk content generation = cost-sensitive intent."},
+    "pattern_interrupt": {"tier": "simple", "note": "Short intervention generation; high-frequency cheap intent."},
+    "passion_mapper": {"tier": "simple", "note": "Mapping/classification over scraped data. REVIEW: upgrade candidate if inference depth grows."}
+  }
+}
