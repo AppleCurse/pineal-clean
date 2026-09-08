@@ -144,9 +144,12 @@ yalnız kapı açıkken ve ilgili bağımlılık kuruluysa çalışır.
 
 ## 6. Sağlayıcı Kataloğu, Routing ve Kasa (gerçek durum)
 
-- **Katalog:** `config/provider_catalog.json` — 25 sağlayıcı kaydı. Yalnız **5'inde** model
-  tanımlıdır: `openrouter` (9), `nous-research` (8), `deepseek` (3), `groq` (2), `cerebras` (1).
-  Diğer 20 kayıt (openai, anthropic, google-gemini, mistral, xai, together, fireworks, deepinfra,
+- **Katalog:** `config/provider_catalog.json` — 26 sağlayıcı kaydı. **7'sinde** model
+  tanımlıdır: `openrouter` (9), `nous-research` (8), `deepseek` (3), `groq` (2),
+  `cerebras` (1), `google-gemini` (1), `google-gemini-backup` (1) — son ikisi FAZ-2-P4
+  (Google resmi OpenAI-uyumlu endpoint, model adı öneksiz `gemini-3.7-flash`; backup =
+  aynı endpoint'in 2. anahtarı, 429 sonrası otomatik rotasyon). Diğer 19 kayıt (openai,
+  anthropic, mistral, xai, together, fireworks, deepinfra,
   sambanova, nvidia-nim, huggingface, perplexity, azure, cohere, cloudflare, dashscope, ollama,
   lm-studio, vllm, openai-compatible) model taşımaz; bunlar yalnız
   `PINEAL_PROVIDER_MODELS_<PROVIDER>` operatör beyanı (`llm_gateway._operator_declared_models`)
