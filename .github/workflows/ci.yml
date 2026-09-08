@@ -34,7 +34,13 @@ jobs:
           python scripts/generate_routing_shadows.py
           git diff --exit-code
       - name: Verify provider catalog contract (OpenRouter + Nous)
-        run: python scripts/verify_openrouter_catalog.py
+        run: |
+          OUT="$(python scripts/verify_openrouter_catalog.py)"; RC=$?
+          echo "$OUT"
+          if printf '%s' "$OUT" | grep -q "SKIP: live OpenRouter check"; then
+            echo "::warning title=catalog-live::Live OpenRouter cross-check SKIPPED — OPENROUTER_API_KEY secret tanımlı değil; yerel katalog kontratı koştu (model var/yok doğrulaması canlı katalog olmadan yapılamaz)."
+          fi
+          exit $RC
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 

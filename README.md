@@ -1,25 +1,40 @@
 # PINEAL-HERETIC v3.1 · PINEAL 360° Bütüncül İnsan Tanıma & Adli Bilişsel İstasyon
 
-> **"Kodu okuyanla belgeyi okuyan aynı şeyi görecek."**  
-> Bu belge, Pineal-Heretic deposundaki tüm Python modüllerinin, 7 nöro-bilişsel motorun, 13 ajanın, adli OSINT tarayıcılarının, 14 sağlayıcılı hibrit yönlendiricinin ve bellek mimarisinin koddan doğrulanmış eksiksiz teknik kılavuzudur.
+> **"Kodu okuyanla belgeyi okuyan aynı şeyi görecek."**
+> Bu belge, depodaki koddan doğrulanmış teknik kılavuzdur. Doğrulama noktası: HEAD `2006f696`,
+> 2026-09-08. Sayısal iddiaların tamamı (`git grep`, `config/*.json`, `.env.example`, CI
+> `.github/workflows/ci.yml`, test koşusu) ile çapraz kontrol edilmiştir.
+> Bu sürümde yalnızca **kodda karşılığı olan** özellikler anlatılır; kodda olmayan hiçbir
+> sağlayıcı/model/özellik listelenmez.
 
 ---
 
 ## 1. Sistemin Mühendislik ve Felsefi Temeli
 
-Pineal, yüzeysel sosyal medya etiketleyicisi veya basit bir LLM wrapper'ı değildir. Çok kanallı kanıt toplayan, zaman serisi diferansiyelini hesaplayan, insan psikolojisindeki bastırılmış boşlukları ve savunma mekanizmalarını matematiksel olarak modelleyen **yerel bir adli istihbarat ve bilişsel profil istasyonudur**.
+Pineal; çok kanallı kanıt toplayan, zaman serisi ve metin analizi yapan, insan psikolojisindeki
+bastırılmış alanları ve savunma mekanizmalarını **deterministik motorlarla** modelleyen yerel bir
+analiz ve profil istasyonudur. LLM'ler yalnızca uzman ajanların doğal dil üretim/çıkarım
+adımlarında kullanılır; ölçüm ve karar motorları LLM'sizdir.
 
 ### Temel Çalışma İlkeleri
-1. **Sıfır Halüsinasyon & Kanıt Mührü:** Hiçbir ajan veri uyduramaz. Her çıkarım somut bir nesneye, zaman damgasına, dilsel desene veya dijital ayak izine dayanmak zorundadır. Kanıt yetersizse sistem durur (`fail-closed`).
-2. **Topolojik ve Matematiksel Psikodinamik:** İnsan karakteri statik kelimelerle ('piyon', 'strateji') ölçülemez. Profilin kendi anlamsal uzayındaki denetimsiz kümeler ($K$), durum yörüngesi türevi ($\Delta S / \Delta t$) ve kanallar arası gerilim matrisi hesaplanır.
-3. **Çok Kanallı Çelişki Tespiti:** İnsanın iddia ettiği benlik (Beyan), dışarıya sergilediği vitrin (Sahneleme), kontrol edemediği biyolojik ritmi (Zaman) ve ağ konumu (Sosyal) arasındaki sürtünme doğrudan **Savunma Mekanizmaları Katsayısına** (Telafi ve Reaksiyon Oluşturma) dönüştürülür.
-4. **Bayesian Epistemik Güven:** Metinsiz profillerde sistem kilitlenmez; sözel ağırlık sıfırlanarak epistemik bütçe doğrudan Görsel ve Zamansal kanallara aktarılır ($w_{\text{vis}} + w_{\text{temp}} = 1.0$).
+1. **Kanıt Mührü & Fail-Closed:** Hiçbir ajan veri uyduramaz; her çıkarım kanıt nesnesine
+   bağlanır. Kanıt yetersizse sistem halts/durur (`InsufficientEvidenceError`, `halted_critical`).
+   Canlı LLM çağrısına kapı yoksa yanıt üretilmez (`REAL_LLM_CALL_NOT_EXECUTED`) — boş/uydura
+   yanıt dönmez.
+2. **Deterministik Psikodinamik:** Karakter analizi `agent_core/engines/` (7 motor) ve
+   `agent_core/services/` içindeki `theme_cluster`, `timing_forensics`, `psychodynamic_depth`
+   modülleriyle yapılır — bu modüller hiçbir LLM çağrısı yapmaz (bağımsız denetimle doğrulandı).
+3. **Çok Kanallı Çelişki Tespiti:** Beyan (metin), Sahneleme (görsel), Zaman (zaman damgası) ve
+   Sosyal (takip/etkileşim) kanalları arasındaki gerilimden savunma mekanizması katsayıları üretilir.
+4. **Epistemik Güven Bütçesi:** Metin yoksa sözel kanal ağırlığı sıfırlanır; bütçe görsel ve
+   zamansal kanallara aktarılır.
 
 ---
 
 ## 2. Yedi Nöro-Bilişsel Dalga Motoru (`agent_core/engines/`)
 
-Sistemin altında, LLM'den bağımsız olarak ham metin ve zaman serisi üzerinde deterministik dalga analizi yürüten 7 temel motor çalışır. Bunlar `PillarOrchestrator` tarafından iki fazlı asenkron olarak yönetilir:
+LLM'den bağımsız, ham metin/zaman serisi üzerinde deterministik dalga analizi yürüten 7 motor,
+`PillarOrchestrator` (iki fazlı) tarafından yönetilir:
 
 ```
                       ┌── FrequencyEngine  (Zaman Dalgası, Gece/Gündüz Enerji Payı)
@@ -31,180 +46,265 @@ PillarOrchestrator ───┼── StrataEngine     (Uzunlamasına Katmanlar,
                       └── KeyEngine        (Tüm Motorların Kural Tabanlı Rezonans Sentezi)
 ```
 
-| Motor | Dosya | Matematiksel / Analitik Görevi | Çıktı Modeli |
-|---|---|---|---|
-| **Frequency** | `frequency_engine.py` | Gönderi zaman damgalarını ($t$) dalga boyuna döker; sirkadiyen ritmi ve gece enerji payını (`night_energy_share`) hesaplar. | `FrequencyReport` |
-| **Seismos** | `seismos_engine.py` | Metin polarite sıçramalarını ve duygusal şok dalgalarını ölçer; sismik fay kırılmalarını (`SeismicEvent`) tespit eder. | `SeismosReport` |
-| **Void** | `void_engine.py` | **Negatif Alan Analizi:** Toplumda beklenen 10 temel kategoriden (aile, para, din, siyaset, kariyer vb.) hangilerinin profilde kasten/bilinçdışı *hiç konuşulmadığını* tespit eder. | `VoidReport` |
-| **Strata** | `strata_engine.py` | Profilin zaman içindeki jeolojik katmanlarını inceler; sönümlenen eski kimlikleri (`extinction_threshold`) ve kimlik kaymasını (`IdentityDrift`) modeller. | `StrataReport` |
-| **Gravity** | `gravity_engine.py` | Profildeki tekrarlayan takıntı merkezlerini ve anlatı çekim kuyularını (`GravityWell`) hesaplar. | `GravityReport` |
-| **Pulse** | `pulse_engine.py` | Cümle uzunluğu varyansı, noktalama ritmi ve metin nefes aralıklarından dijital beden dili çıkarır. | `PulseReport` |
-| **Key** | `key_engine.py` | 6 motorun çıktılarını şeffaf mantık kurallarıyla birleştirir; tek bir nihai rezonans vektörüne (`ResonanceVector`) sentezler. | `KeyReport` |
+| Motor | Dosya | Analitik Görev |
+|---|---|---|
+| Frequency | `frequency_engine.py` | Zaman damgalarını dalga boyuna döker; sirkadiyen ritim, `night_energy_share`. |
+| Seismos | `seismos_engine.py` | Metin polarite sıçramaları; `SeismicEvent` fay kırılmaları. |
+| Void | `void_engine.py` | Beklenen 10 kategori ailesinden hiç konuşulmayanların tespiti. |
+| Strata | `strata_engine.py` | Zaman içi katmanlar; `IdentityDrift`, sönümlenen kimlikler. |
+| Gravity | `gravity_engine.py` | Tekrarlayan takıntı merkezleri; `GravityWell`. |
+| Pulse | `pulse_engine.py` | Cümle/noktalama ritmi; dijital beden dili. |
+| Key | `key_engine.py` | 6 motor çıktısını kural tabanlı birleştirir; `ResonanceVector`. |
 
 ---
 
-## 3. Uzman Ajan Sürüsü (`agent_core/agents/` & `agent_core/shadow/`)
+## 3. Uzman Ajan Envanteri
 
-`PinealExecutor` durum makinesi, profili 360° derinlikte işlemek için uzmanlaşmış ajan zincirini devreye sokar:
+### 3a. Zincir ve tier kayıtları — `config/agent_tiers.json` (18 zincir, `get_agent_chain` ile okunur)
 
-| Ajan | Dosya | Görevi ve Sorumluluğu |
-|---|---|---|
-| **PassionMapper** | `passion_mapper.py` | Hedefin neşe, yaratıcılık, akış anları (`flow_triggers`) ve entelektüel tutku alanlarını somut alıntılarla haritalandırır. |
-| **FrictionDetector** | `friction_detector.py` | Hedefin sınırlarını, hassasiyetlerini, tükenmişlik sinyallerini ve mesafeli durduğu kırmızı çizgileri tespit eder. |
-| **CognitiveProfiler** | `cognitive_profiler.py` | Hedefin iletişim tonunu, anlamsal karmaşıklık seviyesini ve mizah üslubunu modeller. |
-| **DepthAnalyst** | `depth_analyst.py` | 4 kanallı psikodinamik gerilim matrisini ve kırılmaları okuyarak gerçeklik indeksini (`reality_index`) ve çelişkileri raporlar. |
-| **ResonanceCalculator** | `resonance_calculator.py` | Kullanıcı frekansı ile hedef profil arasındaki uyumu **saf numpy vektör matematiğiyle** hesaplar (Eşik: <0.70 ise `halted_frequency`). |
-| **ResonanceSynthesizer** | `resonance_synthesizer.py` | Manipülasyon içermeyen, ortak tutkulara ve karşılıklı saygıya dayanan sahici bir ilk temas köprüsü (`AuthenticBridge`) kurar. |
-| **HumanBehavior** | `human_behavior.py` | OpenCV ile görsel kompozisyon, omuz gerilimi ve arka plan boşluğunu deterministik gözlem olarak derler. |
-| **OSINTInvestigator** | `osint_investigator.py` | Dijital ayak izi skorunu, bağlı platformları ve sızıntı kayıtlarını analiz eder. |
-| **AuthenticityAuditor** | `authenticity_auditor.py` | Görsel manipülasyon, sahnelenmiş/kurgu içerik ve estetik yapaylık derecesini denetler. |
-| **PatternInterrupt** | `pattern_interrupt.py` | Diyalog ağaçları (agresif, savunmacı, ilgili) ve kutsal kural ihlal skorunu hesaplar. |
-| **MirrorOfTruth** | `mirror_truth.py` | Kullanıcının kendi öz frekansını ve yüzey personası arasındaki uyumu modeller. |
-| **ShadowExecutor** | `shadow/shadow_executor.py` | Telafi ve kırılma indekslerini doğrudan taktik strateji vektörlerine (`mirroring`, `alliance`, `thrill`) dönüştürür. |
-| **LilithGrowth** | `lilith_growth.py` | Matematiksel güvenlik katmanıyla donatılmış büyüme ve nöro-mimari analiz ajanı. |
-| **InterpreterAgent** | `interpreter_agent.py` | Taktik kod üretimi ve adli script yürütme ajanı. |
-| **DialogueManager** | `chat/dialogue_manager.py` | İstemci ile yürütülen çok turlu diyalog bağlamını yönetir. |
+| Ajan | Tier |
+|---|---|
+| aspasia (AspasiaChief) | heavy |
+| authenticity_auditor | heavy |
+| autonomous_verifier | verify |
+| autonomous_verifier_extract | simple |
+| cognitive_profiler | heavy |
+| depth_analyst | heavy |
+| dialogue_manager | simple |
+| friction_detector | heavy |
+| human_behavior | heavy |
+| interpreter | simple |
+| lilith_growth | simple |
+| mirror_truth | heavy |
+| osint_investigator | heavy |
+| passion_mapper | simple |
+| pattern_interrupt | simple |
+| resonance_synthesizer | heavy |
+| shadow_executor | heavy |
+| vision_analyzer | vision |
+
+### 3b. Dosya konumları
+
+| Dosya | Ajan / Sorumluluk |
+|---|---|
+| `agents/passion_mapper.py`, `agents/friction_detector.py`, `agents/cognitive_profiler.py` | Tutku/sınır/bilişsel stil profilleme (ana döngüde çalışır). |
+| `agents/depth_analyst.py` | Gerçeklik indeksi (`reality_index`) ve çelişki tespiti (ana döngü dışı derinlik turu). |
+| `agents/resonance_calculator.py` | Kullanıcı-hedef frekans uyumu (saf vektör matematiği; <0.70 → `halted_frequency`). |
+| `agents/resonance_synthesizer.py` | Manipülasyonsuz ilk temas köprüsü (`AuthenticBridge`). |
+| `agents/human_behavior.py` | Görsel kompozisyon analizi (görsel kanal). |
+| `agents/authenticity_auditor.py` | Görsel manipulasyon/yapaylık denetimi (yalnız görsel kanıt varken). |
+| `agents/autonomous_verifier.py` | Hedef doğrulama + extract fazı (zincirde `autonomous_verifier(_extract)`). |
+| `agents/pattern_interrupt.py` | Diyalog ağaçları, kutsal kural ihlal skoru. |
+| `agents/mirror_truth.py` | Kullanıcı öz-frekansı ile yüzey personası uyumu. |
+| `agents/lilith_growth.py` | Büyüme analizi (CLI/deneysel). |
+| `agents/interpreter_agent.py` | Taktik kod üretimi (yalnız `ENABLE_INTERPRETER=true`). |
+| `agents/osint_investigator.py` | Dijital ayak izi skoru, bağlı platform analizi (LLM'siz kanal). |
+| `shadow/shadow_executor.py` | Telafi/kırılma indekslerini taktik vektörlere dönüştürür (derinlik turu). |
+| `services/vision_analyzer.py` | Görsel kanal özetleyici (vision tier). |
+| `chat/dialogue_manager.py` | Çok turlu diyalog bağlamı (`/api/experimental/chat/respond`). |
+| `aspasia/aspasia_chief.py`, `aspasia/interface.py` | Aspasia (gözlemci/üst akıl) + `DiskMemoryBridge`. |
 
 ---
 
 ## 4. Dört Sütunlu Psikodinamik Derinlik Motoru
 
-Statik sözlükler ve naif kelime sayma mantıkları tamamen çöpe atılmıştır. Sistem insanı aşağıdaki 4 matematiksel sütunla analiz eder:
+### Sütun 1: Denetimsiz Semantik Kümeleme (`services/theme_cluster.py`)
+Karakter 3-gram TF vektörleri + kosinüs benzerliği + union-find kümeleme; `repetition_score`,
+`isolated_anomaly_count` üretir. Önceden tanımlı tema listesi yoktur.
 
-### Sütun 1: Denetimsiz Semantik Kümeleme (`agent_core/services/theme_cluster.py`)
-- **Yöntem:** Karakter 3-gram TF vektörleri, kosinüs benzerliği ($\tau = 0.30$) ve union-find kümeleme.
-- **Dinamik $K$:** Önceden tanımlı tema listesi yoktur; tema sayısı veriden doğar.
-- **Metrikler:** En büyük küme payından **Kompülsif Tekrar Skoru (`repetition_score`)** ve izole tekil sapmalardan **İzole Anomali Sayısı (`isolated_anomaly_count`)** üretilir.
+### Sütun 2: Durum Yörüngesi ve Faz Kırılması (`services/timing_forensics.py`)
+Gönderiler zaman fonksiyonuna dizilir; iki yarı arasında entropi/varyans karşılaştırması ile faz
+kırılma noktaları tespit edilir.
 
-### Sütun 2: Durum Yörüngesi $S(t)$ ve Faz Kırılması (`agent_core/services/timing_forensics.py`)
-- Gönderiler zaman fonksiyonuna dizilir ($t_0 \to t_N$).
-- Seri simetrik iki yarıya bölünerek gün-bölümü entropisi ve aralık varyansı ($gap$) karşılaştırılır.
-- Entropi sıçramaları (`entropy_jump`) ve varyans kaymaları (`variance_shift`) üzerinden profilin hayatındaki **Faz Kırılma Noktaları (Phase Ruptures)** tespit edilir.
+### Sütun 3: 4 Kanallı Çapraz Gerilim Matrisi (`services/psychodynamic_depth.py`)
+Beyan / Sahneleme / Biyolojik Ritim / Sosyal Metrik kanallarında şiddet-tutarlılık-bütünlük
+ölçülür; `compensation_index` ve `reaction_formation_index` üretilir. `QuoteGuard` uydurma
+alıntıyı ayıklar.
 
-### Sütun 3: 4 Kanallı Çapraz Gerilim Matrisi (`agent_core/services/psychodynamic_depth.py`)
-Her kanal için Şiddet ($I$), Tutarlılık ($Coh$) ve Bütünlük ($C$) hesaplanır:
-- **Kanal 1 (Beyan):** Metin ve biyografi
-- **Kanal 2 (Sahneleme):** Görseller, format entropisi, nesne çeşitliliği
-- **Kanal 3 (Biyolojik Ritim):** Zaman damgaları, gece payı, yörünge kırılmaları
-- **Kanal 4 (Sosyal Metrik):** Takip/takipçi oranı, etkileşim oranı (ER)
-
-Kanallar arası gerilim:
-$$T[i][j] = |I_i - I_j| \times \min(C_i, C_j)$$
-Buradan yapısal **Telafi Katsayısı (`compensation_index`)** ve **Reaksiyon Oluşturma Katsayısı (`reaction_formation_index`)** üretilir.
-
-### Sütun 4: Bayesian Dinamik Epistemik Kapı
-- `if not text: halt` katliamı silinmiştir.
-- $w_i = C_i / \sum C$ formülü ile çalışır.
-- Profilde metin yoksa $w_{\text{declaration}} = 0$ olur ve tüm epistemik ağırlık Görsel ve Zamansal kanallara aktarılır ($w_{\text{vis}} + w_{\text{temp}} = 1.0$). Sistem asla kör duruşa geçmez.
+### Sütun 4: Bayesian Epistemik Bütçe
+Metin yoksa `w_declaration = 0`; bütçe görsel+zamansal kanala aktarılır. Motorlar LLM'sizdir.
 
 ---
 
-## 5. Adli OSINT ve Zenginleştirme Altyapısı (`agent_core/services/`)
+## 5. Veri Toplama ve Zenginleştirme Altyapısı
 
-Pineal, hedef hakkındaki verileri toplamak için endüstri standardı adli araçları barındırır:
-
-| Servis | Dosya | Açıklama |
+| Servis | Dosya | Durum / Kapı |
 |---|---|---|
-| **Ghost Scraper** | `scraper/instagram_ghost.py` | Playwright tabanlı gizli tarayıcı. `/p/` ve `/reel/` URL'lerini, video bağlantılarını, post türlerini ve $t_0 \to t_N$ kronolojik zaman damgalarını (`taken_at`) çeker. |
-| **Maigret Scanner** | `services/maigret_scanner.py` | 3000'den fazla sosyal ağ ve platformda kullanıcı adının izini sürer. |
-| **Holehe Scanner** | `services/holehe_scanner.py` | E-posta ve telefon üzerinden şifre sıfırlama uçlarını kullanarak hesap tespiti yapar. |
-| **Socid Enricher** | `services/socid_enricher.py` | Google/Telegram/Instagram hesap ID'leri üzerinden profil zenginleştirmesi sağlar. |
-| **Search Engine** | `services/search_engine.py` | Tavily, SerpAPI ve Exa API'lerini birleştiren üçlü web doğrulama motoru. |
-| **Crawl Enricher** | `services/crawl_enricher.py` | `crawl4ai` destekli derin web sayfası kazıma motoru. |
+| Instagram Ghost Scraper | `scraper/instagram_ghost.py` | Playwright + kullanıcı cookie'si; `/p/` ve `/reel/` çeker. **Yalnız Instagram**; X (Twitter) kazıması kodda sabit kapalı (`x_scraper: false`). |
+| Maigret tarayıcı | `services/maigret_scanner.py` | `ENABLE_MAIGRET=true` ise (varsayılan kapalı). |
+| Holehe tarayıcı | `services/holehe_scanner.py` | `ENABLE_HOLEHE=true` ise (varsayılan kapalı). |
+| Socid Enricher | `services/socid_enricher.py` | Platform ID zenginleştirme. |
+| Search Engine | `services/search_engine.py` | Tavily/SerpAPI/Exa (anahtarlar vault `.search_keys`). |
+| Crawl Enricher | `services/crawl_enricher.py` | `ENABLE_CRAWL4AI=true` ise (varsayılan kapalı). |
+
+Denetim notu: maigret/holehe/crawl4ai kapıları **varsayılan kapalıdır**; canlı tarama davranışları
+yalnız kapı açıkken ve ilgili bağımlılık kuruluysa çalışır.
 
 ---
 
-## 6. Çoklu Sağlayıcı (14-Provider) Yönlendirme ve Kasa
+## 6. Sağlayıcı Kataloğu, Routing ve Kasa (gerçek durum)
 
-Sistem tek bir sağlayıcıya bağımlı değildir; 16 anahtarlık yerel envanteri (`.pineal_vault.json` ve `.env`) doğrudan yönetir:
+- **Katalog:** `config/provider_catalog.json` — 25 sağlayıcı kaydı. Yalnız **5'inde** model
+  tanımlıdır: `openrouter` (9), `nous-research` (8), `deepseek` (3), `groq` (2), `cerebras` (1).
+  Diğer 20 kayıt (openai, anthropic, google-gemini, mistral, xai, together, fireworks, deepinfra,
+  sambanova, nvidia-nim, huggingface, perplexity, azure, cohere, cloudflare, dashscope, ollama,
+  lm-studio, vllm, openai-compatible) model taşımaz; bunlar yalnız
+  `PINEAL_PROVIDER_MODELS_<PROVIDER>` operatör beyanı (`llm_gateway._operator_declared_models`)
+  ve transport desteği için vardır.
+- **Routing SoT:** `agent_core/services/final_routing_policy.py` `ROUTES` + `MODEL_PRICING` +
+  `TASK_GROUPS`; chain SoT `agent_core/services/llm_gateway.py` `AGENT_CHAINS` +
+  `config/task_routing.json` (delta) + env override. Çift SoT kopyası
+  `config/provider_catalog.json`'dur; üçü `scripts/verify_openrouter_catalog.py` ve kontrat
+  testleriyle senkron tutulur.
+- **Anahtarlar:** `.env`/ortam ve `.pineal_vault.json` okunur (kasa yalnız **okuma**; disk yazımı
+  yoktur, oda belleğinde tutulur — restart'ta kaybolur). Kasa şeması: `providers.<ad>.api_key`
+  (iç içe) ve eski düz `api_key`/`provider_keys`. Kasadan alınan direct-provider anahtarları
+  yalnız ilgili odanın gateway'ine uygulanır.
+- **Tier-bazlı harcama kuralları** (FAZ-1/FAZ-2, `_tier_route_decision` — kilitli):
 
-- **Resmi OpenAI Uyumlu Sağlayıcılar:** Google Gemini (`/v1beta/openai/`), DeepSeek (`api.deepseek.com/v1`), NVIDIA NIM (`integrate.api.nvidia.com/v1`).
-- **Ücretsiz / Yüksek Hızlı Sağlayıcılar:** Groq (30 RPM, `gpt-oss-120b`, `llama-3.3-70b`), Cerebras (5 RPM, `gpt-oss-120b`).
-- **Açık Ağırlıklı Sağlayıcılar:** Together AI, DeepInfra, Nous Research Portal (indirimli Sonnet ve Luna).
-- **Ağ Geçitleri & OSINT:** OpenRouter, Tavily, SerpAPI, Exa AI, E2B Sandbox.
-- **Kasa Ayrıştırma:** `.pineal_vault.json` içindeki iç içe `providers.{ad}.api_key` yapısı şemadan bağımsız güvenle okunur.
-- **Fail-Closed Harcama Koruması:** `PINEAL_ALLOW_PAID_ESCALATION=1` ve `PINEAL_ALLOW_UNPRICED_MODELS=1` bayrakları operatör tarafından açıkça verilmedikçe bilinmeyen fiyatlı rotalara harcama yapılmaz.
+| Tier | Rota | Davranış |
+|---|---|---|
+| simple | free (direct free / OR-free) | teklif edilir |
+| simple | paid (direct veya OR-legacy) | **HARD DENY** → teklif yok; tümü reddedilirse boş liste |
+| heavy/vision/verify | indirimli direct (ör. `anthropic/claude-sonnet-5@nous-research` $1.6/$8) | izin (escalation env'siz — relax) |
+| heavy/vision/verify | liste-fiyat direct / frontier | paid firewall (escalation şart) |
+| heavy/vision/verify | OR-legacy (liste fiyatı) | **FAZ-2.1 liste engeli:** modelin daha ucuz indirimli direct kanalı kuruluysa yalnız `PINEAL_ALLOW_PAID_ESCALATION=1` ile teklif edilir; daha ucuz kanalı olmayan modellerde (örn. `google/gemini-3.7-flash` yalnız-OR) koşulsuz kalır (kırılma yok). Her karar `tier_audit_trail`'e `gate_context` ile yazılır. |
+| unknown | her şey | heavy-eşdeğeri + `tier_unresolved` izi |
+
+- **Fail-closed harcama koruması:** `PINEAL_ALLOW_PAID_ESCALATION=1` verilmeden paid/frontier
+  direct rotalar reddedilir (heavy/vision/verify indirimli direct hariç);
+  `PINEAL_ALLOW_UNPRICED_MODELS=1` verilmeden fiyatı bilinmeyen modellere çağrı yapılmaz.
+  Üretimde (`PINEAL_ENV=production`) pozitif `OPENROUTER_MAX_SPEND_USD` zorunludur; yoksa
+  başlangıç reddedilir.
+- **OpenAI-uyumlu `/v1` yolu:** `PINEAL_LLM_BACKEND=unified` ise `RoutedChatExecutor`
+  (katalogdan otomatik config); `legacy` ise `LLMGateway`. Stream yalnız unified'da çalışır;
+  stream+tools birlikte kabul edilmez. Anahtarsız ortamda `/v1/models` boş liste döner (fail-closed).
 
 ---
 
 ## 7. Çift Katmanlı Bellek ve Aspasia Gerçekliği
 
-- **Kanonik Bellek (`agent_core/services/canonical_memory.py`):**  
-  Her görevin kanıt zinciri disk üzerinde `memory/<task_id>.json` dosyasında atomik ve değiştirilemez olarak saklanır. Veri tabanı çökmelerinden etkilenmez (SoT).
-- **Semantik Bellek (`agent_core/services/hindsight_memory.py`):**  
-  Geçmiş görevler ve profiller arasında vektörel/anlamsal sorgulama imkanı tanır (`PINEAL_MEMORY_ENGINE=hindsight`).
-- **Aspasia Disk Köprüsü (`DiskMemoryBridge`):**  
-  `task_executor` görevi tamamladığında derinlik verilerini `forensic_digest` mührüyle kanonik kanıta basar. Aspasia, sunucu yeniden başlasa veya RAM boşalsa bile diskteki bu mührü okur; boşta beklerken hayali ajan uydurmaz (`ROUTING-ADAY` vs `GÖZLEMLENEN` ayrımı korunur).
+- **Kanonik Bellek (`services/canonical_memory.py`):** Kanıt zinciri disk üzerinde
+  `memory/<task_id>.json` dosyasında saklanır. Varsayılan motor (`PINEAL_MEMORY_ENGINE=canonical`).
+- **Semantik Bellek (`services/hindsight_memory.py`):** `PINEAL_MEMORY_ENGINE=hindsight` ile
+  aktif; geçmiş görevlerde vektörel sorgulama.
+- **Aspasia Disk Köprüsü (`DiskMemoryBridge`)** (`task_executor` → `aspasia/interface.py`):
+  görev tamamlanınca derinlik verileri kanonik kanıta `forensic_digest` mührüyle basılır; Aspasia
+  diskteki mührü okur, hayali ajan uydurmaz (`ROUTING-ADAY` vs `GÖZLEMLENEN` ayrımı).
+- **Yanıt önbelleği:** `services/response_cache.py` (SQLite, `PINEAL_RESPONSE_CACHE`,
+  `PINEAL_CACHE_MAX_ROWS`).
 
 ---
 
 ## 8. Kurulum ve Çalıştırma
 
-### A) Windows (Tek Komutla Başlatma)
+### A) Docker (üretim yolu)
+```bash
+docker compose up --build        # PINEAL_ENV=${PINEAL_ENV:-production}; 0.0.0.0:8000
+```
+Tek-imajlı FastAPI servisi; healthcheck `/health`; volume'lar `pineal_memory` (`/app/memory`) ve
+`pineal_cache` (`/app/cache`). Not: `docker-compose.yml` içindeki `pineal_vault:/app/vault-data`
+volume'ü şu an kod tarafından kullanılmaz (kod kasa dosyasını çalışma dizininde arar) — bilinen
+tutarsızlık, düzeltme FAZ-3 girdisi.
+> Tek-süreç modeli: odalar, kasa, hız sınırı ve kuyruklar process-local'dir; `replicas: 1`.
+> Yatay ölçek ve restart davranışı üretimde doğrulanmamıştır.
+
+### B) Windows (tek komut)
 ```bat
 baslat.bat
 ```
-Sanal ortamı kontrol eder, bağımlılıkları yükler, frontend derlemesini sağlar ve istasyonu `http://localhost:8000` adresinde ayağa kaldırır.
+Sanal ortam + bağımlılıklar + frontend derlemesi + `http://localhost:8000`.
 
-### B) Manuel Kurulum
+### C) Manuel
 ```bash
-# 1. Python bağımlılıkları
-pip install -r requirements.txt
-pip install -r requirements-osint.txt
-python -m playwright install chromium
-
-# 2. Frontend derleme
-cd frontend
-npm ci && npm run build
-cd ..
-
-# 3. Sunucuyu başlatma
+pip install -r requirements.txt          # çekirdek
+pip install -r requirements-osint.txt    # OSINT tarayıcı bağımlılıkları (opsiyonel)
+python -m playwright install chromium    # Instagram Ghost Scraper için
+cd frontend && npm ci && npm run build && cd ..
 python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000
 ```
-Geliştirme arayüzü: `http://localhost:5173` | Üretim: `http://localhost:8000`
+Geliştirme: `cd frontend && npm run dev` → `http://localhost:5173` (API'ye proxy).
+`PINEAL_ENV` belirsizse sistem **production** kabul eder (fail-closed): `PINEAL_TOKEN` ve pozitif
+`OPENROUTER_MAX_SPEND_USD` ister; geliştirme için `PINEAL_ENV=development` + `PINEAL_REQUIRE_AUTH=false`.
 
 ---
 
-## 9. Yapılandırma Sözlüğü (`.env` ve `.pineal_vault.json`)
+## 9. Yapılandırma Gerçeği (`.env` / `.pineal_vault.json`)
 
-| Anahtar / Değişken | Katman | Açıklama |
-|---|---|---|
-| `GEMINI_API_KEY` | Vision / Multimodal | Google Gemini 2.5/3.7 Flash resmi OpenAI uç noktası erişimi. |
-| `DEEPSEEK_API_KEY` | Reasoning | DeepSeek V3 ve R1 doğrudan API çıkarımı. |
-| `GROQ_API_KEY` | Hızlı / Ücretsiz | Groq 30 RPM ücretsiz katman (Llama 3.3, gpt-oss-120b). |
-| `CEREBRAS_API_KEY` | Hızlı / Ücretsiz | Cerebras wafer-scale çıkarım motoru. |
-| `NVIDIA_API_KEY` | Donanım Hızlandırma | NVIDIA NIM optimize çıkarım uçları. |
-| `TOGETHER_API_KEY` | Açık Ağırlıklı | Together AI model havuzu. |
-| `DEEPINFRA_API_KEY` | Açık Ağırlıklı | Düşük maliyetli açık ağırlıklı modeller. |
-| `OPENROUTER_API_KEY` | Ağ Geçidi | Frontier modeller için genel gateway anahtarı. |
-| `TAVILY_API_KEY` | OSINT Arama | LLM'ler için optimize olgusal web arama motoru. |
-| `SERPAPI_API_KEY` | OSINT Arama | Google Arama ve ters görsel sorgu motoru. |
-| `EXA_API_KEY` | OSINT Arama | Nöral ve semantik web arama motoru. |
-| `E2B_API_KEY` | Sandbox | İzole kod yürütme kum havuzu. |
-| `PINEAL_ALLOW_PAID_ESCALATION` | Politika | `1` iken ücretli rotalara geçişe izin verir. |
-| `PINEAL_ALLOW_UNPRICED_MODELS` | Politika | `1` iken fiyatı katalogda olmayan doğrudan sağlayıcılara izin verir. |
-| `PINEAL_POST_DETAIL_ENABLED` | Kazıyıcı | `1` iken gönderi detaylarına giderek zaman damgası ve beğeni çeker. |
-| `PINEAL_POST_DETAIL_LIMIT` | Kazıyıcı | Detayı çekilecek maksimum post sayısı (Varsayılan: `12`). |
+Kaynak: `.env.example` (tam küme) + kodda okunan değişkenler. **Kodda olmayan hiçbir anahtar
+bu tabloda yoktur** (ör. `E2B_API_KEY`, `llama-3.3-70b` — yoktur, README'den kaldırılmıştır).
+
+### LLM / Routing
+| Anahtar | Gerçek kullanım |
+|---|---|
+| `OPENROUTER_API_KEY` | OpenRouter taşıyıcısı (ana legacy/OR yolu). |
+| `OPENROUTER_MAX_SPEND_USD` | Üretimde zorunlu pozitif değer; harcama limiti. |
+| `OPENROUTER_TIER_1_MODEL` / `OPENROUTER_TIER_2_MODEL` | Tier model atamaları. |
+| `OPENROUTER_BASE_URL` / `OPENROUTER_VISION_MODEL` | Alternatif uç / görsel model. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` / `LIVE_LLM_E2E` | Zaman aşımı / canlı uç test kapısı. |
+| `PINEAL_LLM_BACKEND` | `unified` \| `legacy` (varsayılan legacy). |
+| `PINEAL_ROUTER_CONFIG` | Unified router config yolu (yoksa katalogdan otomatik). |
+| `PINEAL_ALLOW_PAID_ESCALATION` | `1` → paid/frontier direct'e geçiş izni. |
+| `PINEAL_ALLOW_UNPRICED_MODELS` | `1` → fiyatı bilinmeyen modele izin (kodda okunur; `.env.example`'a eklendi). |
+| `USE_LOCAL_LLM` + `LOCAL_LLM_URL` + `LOCAL_LLM_MODEL` | Yerel LLM yolu (Kasa override eder). |
+| Direct sağlayıcı anahtarları | `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `NOUS_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `DASHSCOPE_API_KEY`, `SAMBANOVA_API_KEY`, `NVIDIA_API_KEY`, `HUGGINGFACE_API_KEY`, `DEEPINFRA_API_KEY`, `PERPLEXITY_API_KEY`, `GEMINI_API_KEY`, `IFLOW_API_KEY`, `GEMINI_BACKUP_API_KEY`, `GEMINI_VERTEX_TOKEN` — ilgili provider için direct rota açar (katalogda modeli olmayanlar yalnız `PINEAL_PROVIDER_MODELS_*` beyanıyla kullanılır). |
+
+### Auth / Güvenlik / Kaynak
+| Anahtar | Gerçek kullanım |
+|---|---|
+| `PINEAL_ENV` | Allowlist dışı her değer → production (fail-closed). |
+| `PINEAL_TOKEN` / `PINEAL_REQUIRE_AUTH` | REST (`X-API-Key`) + WebSocket auth; production'da zorunlu. |
+| `VITE_PINEAL_TOKEN` | Frontend build'ine gömülen token. |
+| `PINEAL_ALLOWED_ORIGINS` | CORS allowlist (boşsa localhost). |
+| `PINEAL_MAX_ROOMS`, `PINEAL_ROOM_TTL_SECONDS`, `PINEAL_MAX_CLIENT_ID_LENGTH`, `PINEAL_MAX_RATE_BUCKETS`, `PINEAL_RATE_SWEEP_INTERVAL_SECONDS` | Oda/rate kaynak tavanları. |
+| `PINEAL_CACHE_MAX_ROWS` | Cache emniyet kemeri. |
+
+### OSINT / Kazıyıcı / Bellek
+`TAVILY_API_KEY`, `SERPAPI_API_KEY`, `SERPAPI_KEY`, `EXA_API_KEY`, `OSINT_INDUSTRIES_KEY`,
+`STEALTH_PROVIDER`, `INVISIBLE_BROWSER_BINARY`, `CLOAK_BROWSER_EXECUTABLE`,
+`PINEAL_MIN_SCRAPER_CONFIDENCE`, `PINEAL_POST_DETAIL_ENABLED` (varsayılan `true`),
+`PINEAL_POST_DETAIL_LIMIT` (varsayılan 12, üst sınır 12), `PLAYWRIGHT_DOWNLOAD_HOST`,
+`ENABLE_MAIGRET` + `MAIGRET_*`, `ENABLE_HOLEHE` + `HOLEHE_*`, `ENABLE_CRAWL4AI` + `CRAWL4AI_*`,
+`ENABLE_INTERPRETER`, `ALLOW_LOCAL_TO_CLOUD_FALLBACK`, `PINEAL_MEMORY_ENGINE`,
+`PINEAL_RESPONSE_CACHE`, `PINEAL_CACHE_PATH`.
 
 ---
 
-## 10. Test ve Doğrulama Disiplini
+## 10. Test ve Doğrulama Disiplini (gerçek durum)
 
-Sistem, sözleşmelerin bozulmasını önleyen **1.014 testlik** devasa bir test süitiyle korunmaktadır:
-```bash
-# Tüm test süitini çalıştır (1014 test):
-pytest -q
+Tam süit HEAD `2006f696`'da: **1135 toplandı / 1132 passed / 3 skipped** (bağımsız denetim koşusu,
+2026-09-08). CI (`ci.yml`) kapıları:
+1. **backend:** `ruff check` + `pytest --cov=agent_core --cov=backend --cov-fail-under=80` +
+   gölge kararlılık (`python scripts/generate_routing_shadows.py && git diff --exit-code`) +
+   katalog sözleşmesi (`python scripts/verify_openrouter_catalog.py`).
+2. **frontend:** `svelte-check` + `vite build` + dist imza grep.
+3. **smoke:** gerçek uvicorn + 4 endpoint (200/sağlık/telemetry/aspasia/WS).
+4. **rust-core:** `cargo check && cargo test --locked`.
+5. **android:** lint + test + assemble.
 
-# Yeni psikodinamik motor, kazıyıcı ve Aspasia derinlik testleri:
-pytest tests/unit/test_gorev1_reel_video_chrono.py tests/unit/test_gorev2_depth_engine.py tests/unit/test_vault_providers_schema.py tests/unit/test_aspasia_depth_hukmu.py tests/unit/test_gorev2_artiklar.py -q
-```
-- **Sıfır Regresyon:** Her yeni geliştirme `comm -13` diferansiyel filtresinden geçirilerek 0 regresyon kanıtıyla repoya girer.
-- **Mutasyon Testi:** Güvenlik kontrolleri bilerek bozulduğunda testlerin kırmızıya (`FAILED`) düştüğü kanıtlanmıştır.
+Not: `verify_openrouter_catalog.py`'nin **yerel** kısmı her CI koşusunda çalışır; **canlı**
+OpenRouter çapraz kontrolü yalnız `OPENROUTER_API_KEY` secret'ı tanımlıysa koşar (yoksa açıkça
+`SKIP:` basar). Mutasyon kanıtları: kilitli harcama testleri bozulduğunda suite KIRMIZI'ya düşer
+(FAZ-1/FAZ-2 kayıtları; `tests/unit/test_tier_variant_gate.py`).
 
 ---
 
 ## 11. Mimari Durum Notları
 
-- **`rust_core/` Durumu:** FAZ 9 Karar B uyarınca şu an bağımsız derlenen deneysel bir bileşendir (`cargo test`). Ürün çalışma zamanına entegrasyonu (özellikle token tasarrufu için RTK entegrasyonu) yol haritasındadır.
-- **Veri Gizliliği:** Kişisel veriler yalnızca yerel `memory/` dizininde saklanır; dış sunuculara telemetri veya profil sızdırılmaz. Sır değişkenler `redact_structure` filtresinden geçirilir.
-- **Etik Çerçeve:** Pineal adli bir analiz istasyonudur; hiçbir platforma gizli/otomatik mesaj atmaz veya bot faaliyeti yürütmez.
+- **`rust_core/`:** Bağımsız derlenen deneysel bileşen (`cargo check/test --locked` CI'da).
+  Ürün Python çalışma zamanına **entegre değildir** (Python tarafında köprü/subprocess yok;
+  `runtime_status` "experimental_optional / ürün kararı etkisiz" bildirir).
+- **`android/`:** Ayrı Gradle projesi; Python servisiyle bağı yoktur (CI'da ayrı leg).
+- **Veri gizliliği:** Kişisel veriler yerel `memory/` dizininde tutulur; dış sunuculara telemetri
+  gönderilmez; log/telemetri öncesi `redact_structure` sırları ayıklar. Kasa anahtarları yalnız
+  oda belleğinde tutulur.
+- **Etik çerçeve:** Hiçbir platforma otomatik/gizli mesaj gönderilmez; X kazıması kodda kapalıdır;
+  Instagram kazıması kullanıcı cookie'si ve Playwright gerektirir (canlı hedefe karşı CI'da test
+  edilmez).
+- **Bilinen açık kararlar / notlar:** (1) OR-legacy liste engeli FAZ-2.1'de uygulandı (ucuz
+  kanal kuruluysa escalation şart; yalnız-kanal modeller koşulsuz) — kalan tradeoff: indirimli
+  direct sağlayıcı geçici hata/cooldown'dayken liste fiyatı ödemek istemeyen operatör hata alır
+  (escalation=1 ile bilinçli ödeme seçilebilir); (2) UI "ACTIVE MODEL/VIA" etiketi şu an statik
+  fallback gösterir (backend `AgentRun` `model`/`via` üretmiyor) — düzeltme kararı bekliyor;
+  (3) katalogda 0 modelli sağlayıcılar operatör beyanına bağlıdır; (4) tek-süreç mimarisi,
+  restart/cok-oda davranışı üretimde ölçülmedi.
