@@ -36,12 +36,13 @@ REQUIRED_OPENROUTTER = {
 }
 
 # Nous FINAL-KARAR-MATRIX facts. These are verified locally, never against
-# the OpenRouter catalog.
+# the OpenRouter catalog. FAZ-2 (2. ajan mühürlü canlı denetim): prefix'ler
+# canlı yazımla birebir (poolside/…, inclusionai/…); eski dots önizleme
+# modeli canlı katalogda YOK -> listeden düşürüldü (ölü kayıt yasak).
 REQUIRED_NOUS_FREE = {
-    "laguna-s-2.1:free",
-    "xs-2.1:free",
-    "ling-3.0-flash-fin:free",
-    "dots-3-note-preview:free",
+    "poolside/laguna-s-2.1:free",
+    "poolside/laguna-xs-2.1:free",
+    "inclusionai/ling-3.0-flash-fin:free",
 }
 REQUIRED_NOUS_PAID = {
     "stepfun/step-3.7-flash": (0.20, 1.15),

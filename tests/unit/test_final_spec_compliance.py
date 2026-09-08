@@ -187,12 +187,15 @@ def test_missing_key_falls_back_to_pool_provider(clean_env, monkeypatch):
     assert clean_env.calls[0][0] == "https://openrouter.ai/api/v1"
 
 
-def test_paid_key_present_but_escalation_off_stays_off(clean_env, monkeypatch):
-    # "anahtar var" != "paid kullanma yetkisi var"
+def test_paid_key_present_but_escalation_off_uses_discounted_direct(clean_env, monkeypatch):
+    # FAZ-2 (sahip Q1: heavy discounted-relax): claude-sonnet-5@nous İNDİRİMLİ
+    # ($1.6/$8) kanaldır — escalation env'siz DOĞRUDAN kullanılır; liste
+    # fiyatı ödemek için escalation gerekir (relax, FAZ-2'de onaylı davranış).
     monkeypatch.setenv("NOUS_API_KEY", "nous-secret")
     gw = _gw()
     run(gw.query_json_chain("p", _Schema, task="depth", agent_name="friction_detector"))
-    assert clean_env.calls[0][0] == "https://openrouter.ai/api/v1"  # OR'da kaldi
+    assert clean_env.calls[0][0].startswith("https://inference-api.nousresearch.com/v1")
+    assert len(clean_env.or_calls) == 0
 
 
 # ------------------------------------------------------------------ #13 QUOTA

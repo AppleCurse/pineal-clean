@@ -1,19 +1,30 @@
-"""FAZ-1 (b'') — tier-gate DENETİM kilitleri (mechanism-only + audit).
+"""Tier-gate kilitleri (FAZ-1 DENETİM + FAZ-2 ENFORCE) — mechanism-only + audit.
 
 (b'') kararı: ajânın tier'ı zincir veri-modeline gömülmez; contextvar
 ``_active_agent_tier`` ile variant katmanına taşınır. get_agent_chain SET
 eder (agent_tiers.json), agent_route_variants OKUR.
 
-FAZ-1 kuralları (bu dosyada KİLİTLENEN):
-- KIRILMA YASAĞI: hard-gate AUDIT modunda. Denetim izi FAZ-2-ENFORCE
-  kararlarını UYGULAMADAN yazar; üretim merdiveni birebir korunur.
-- T1-revize: audit-doğruluğu + sıralama-doğruluğu kilitleri (mechanism-only).
-- T7: sıralı resolve->query'de tier doğruluğu + snapshot sonrası artık-değer
-  yokluğu (M-C3: snapshot sonrası tier kalıntısı bırak -> KIRMIZI).
+FAZ-1 kilitleri (önceki faz, mühürlü): denetim izi FAZ-2 kararlarını
+UYGULAMADAN yazar; T7 contextvar/snapshot/telemetri; saf karar matrisi ve
+sort-key mechanism-only.
 
-Regresyon kilitleri (bu turun dokunmadığı mevcut davranışlar, ayrı suite'ler):
-T2 heavy_cheapest_first (cost ladder), T3 escalation_master (paid firewall),
-T4 vision_direct_first, T5 taskgroups_resolved, T6 shadows_fresh.
+FAZ-2 kilitleri (bu dosyanın güncel hali; sahip kararları Q1/Q2 + 2. ajan
+izin listesi):
+- simple tier: ENFORCE free-only — paid/direct/OR-legacy teklif EDİLMEZ ve
+  boş merdiven [] döner (`[None]` yedeği deny'i bypass edemez).
+- heavy/vision/verify/unknown: İNDİRİMLİ direct kanala escalation'sız izin
+  (relax); liste-fiyat direct bugünkü firewall'da; OR-legacy liste engeli
+  FAZ-3'e (audit-only kalır).
+- Dört simple zincir (pattern_interrupt, passion_mapper,
+  autonomous_verifier_extract, lilith_growth) canlı-teyitli free modele
+  bağlandı: [openai/gpt-oss-120b, poolside/laguna-s-2.1:free]. Bu statik
+  golden M-C1-full mutasyonunda (simple zincire paid sok) KIRMIZI olur.
+- ROUTES canlı düzeltmeleri (prefix poolside//inclusionai/, dots silme)
+  policy testlerinde ayrıca kilitli.
+
+Regresyon kilitleri (ayrı suite'ler): T2 heavy_cheapest_first (cost ladder),
+T3 escalation_master (paid firewall), T4 vision_direct_first,
+T5 taskgroups_resolved, T6 shadows_fresh.
 """
 
 import asyncio
@@ -161,58 +172,67 @@ def test_t7_telemetry_tier_next_to_chain_source(monkeypatch):
 # --------------------------------------------------------------------------- #
 # T1-revize — audit-doğruluğu: simple zincir statik golden (M-C1 KIRMIZI)
 # --------------------------------------------------------------------------- #
-def test_t1_audit_simple_chain_static_golden(monkeypatch):
-    """pattern_interrupt (simple) zinciri: claude + gemini — İKİSİ DE bugün
-    ücretli taşımalarla yürür. FAZ-1 bunları hâlâ TEKLİF eder (kırılma yasağı)
-    ama her taşımayı would_deny=simple_non_free ile DENETİM izine yazar.
+def test_t1_faz2_simple_chains_free_only_static_golden(monkeypatch):
+    """FAZ-2 T1 kilidi (sahip Q2): dört simple zincir canlı-teyitli free
+    modele bağlandı — statik golden. M-C1-full (simple zincire paid sok)
+    bu eşitliği kırar -> KIRMIZI."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    gw = LLMGateway()
+    expected = ["openai/gpt-oss-120b", "poolside/laguna-s-2.1:free"]
+    for agent in ("pattern_interrupt", "passion_mapper",
+                  "autonomous_verifier_extract", "lilith_growth"):
+        assert gw.get_agent_chain(agent, "dialogue") == expected, agent
 
-    M-C1: zincire ücretli üçüncü model eklenirse model kümesi golden'dan
-    sapar -> KIRMIZI."""
+
+def test_t1_faz2_simple_enforce_paid_returns_empty_ladder(monkeypatch):
+    """FAZ-2 ENFORCE (sahip Q1): simple + ücretli model — escalation AÇIK olsa
+    bile rota teklif EDİLMEZ ve merdiven [] döner. `[None]` yedeği deny'i
+    bypass edemez (enforce-bypass yasağı; mühür kriteri 4)."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     monkeypatch.setenv("NOUS_API_KEY", "nk")
     monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
     gw = LLMGateway()
-    chain = gw.get_agent_chain("pattern_interrupt", "dialogue")
-    assert chain == [
-        "anthropic/claude-sonnet-5",
-        "google/gemini-3.7-flash",
-    ]
-    # Üretim merdiveni DEĞİŞMEZ: claude -> [nous indirimli, OR legacy]
-    ladder = gw.agent_route_variants("anthropic/claude-sonnet-5")
-    nous = [v for v in ladder if isinstance(v, GatewayRoute) and v.provider_id == "nous-research"]
-    assert len(nous) == 1 and nous[0].input_per_million_usd == pytest.approx(1.6)
-    assert None in ladder  # legacy OR hâlâ merdivende (FAZ-1'de deny YOK)
-    for model in chain:
-        gw.agent_route_variants(model)
+    gw.get_agent_chain("pattern_interrupt", "dialogue")
+    assert gw.agent_route_variants("anthropic/claude-sonnet-5") == []
 
     trail = gw.tier_audit_trail()
-    models = sorted({e["model"] for e in trail})
-    assert models == ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash"]
-    assert sorted({e["route_key"] for e in trail}) == [
-        "anthropic/claude-sonnet-5@nous-research",
-        "anthropic/claude-sonnet-5@openrouter",
-        "google/gemini-3.7-flash@openrouter",
-    ]
+    assert len(trail) == 2  # OR-legacy + nous direct, ikisi de reddedildi
     for entry in trail:
         assert entry["tier"] == "simple"
         assert entry["would_deny"] is True
         assert entry["reason"] == "simple_non_free"
-        assert entry["tier_unresolved"] is False
+
+
+def test_t1_faz2_simple_free_chain_models_yield_transports(monkeypatch):
+    """FAZ-2: bağlanan free zincir modelleri ENFORCE altında boş kalmaz —
+    simple ajanlar gerçekten çağrı yapabilir (kırılma yok)."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("NOUS_API_KEY", "nk")
+    gw = LLMGateway()
+    gw.get_agent_chain("pattern_interrupt", "dialogue")
+    assert gw.agent_route_variants("openai/gpt-oss-120b")  # groq/cerebras/OR free
+    ladder = gw.agent_route_variants("poolside/laguna-s-2.1:free")
+    nous = [v for v in ladder if isinstance(v, GatewayRoute) and v.provider_id == "nous-research"]
+    assert nous and nous[0].input_per_million_usd == 0.0
 
 
 # --------------------------------------------------------------------------- #
-# T1-revize — audit-doğruluğu: heavy indirimli FAZ-2'de izin olur (görünür)
+# T1-FAZ-2 — heavy indirimli relax (sahip Q1): escalation'sız izin
 # --------------------------------------------------------------------------- #
-def test_t1_audit_heavy_discounted_visible_but_firewall_unchanged(monkeypatch):
-    """friction_detector (heavy), escalation KAPALI. Bugünkü davranış:
-    nous firewall'dan düşer, merdiven [None]. Denetim izi FAZ-2 gerçeğini
-    gösterir: nous indirimli -> allow heavy_discounted (escalation istemez),
-    OR legacy (liste fiyatı) -> would_deny heavy_listed_gate."""
+def test_t1_faz2_heavy_discounted_relax_without_escalation(monkeypatch):
+    """friction_detector (heavy), escalation KAPALI, NOUS anahtarı var.
+    FAZ-2 relax: nous indirimli kanal ($1.6/$8) escalation env'siz TEKLİF
+    edilir (FAZ-1'de firewall düşürüyordu — davranış bilinçli değişti).
+    OR legacy (liste fiyatı) hâlâ koşulsuz + izine would_deny yazar (liste
+    engeli FAZ-3'e)."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     monkeypatch.setenv("NOUS_API_KEY", "nk")
     gw = LLMGateway()
     gw.get_agent_chain("friction_detector", "dialogue")
-    assert gw.agent_route_variants("anthropic/claude-sonnet-5") == [None]
+    ladder = gw.agent_route_variants("anthropic/claude-sonnet-5")
+    nous = [v for v in ladder if isinstance(v, GatewayRoute) and v.provider_id == "nous-research"]
+    assert len(nous) == 1 and nous[0].input_per_million_usd == pytest.approx(1.6)
+    assert None in ladder  # OR-legacy heavy'de hâlâ koşulsuz (FAZ-3'e liste engeli)
 
     trail = gw.tier_audit_trail()
     by_key = {e["route_key"]: e for e in trail}

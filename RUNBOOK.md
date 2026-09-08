@@ -153,18 +153,18 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 | aspasia | heavy | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
 | authenticity_auditor | heavy | deepseek-v4-flash → gemini-3.7-flash → claude-sonnet-5 | agent_matrix |
 | autonomous_verifier | verify | claude-sonnet-5 → grok-4.6 | agent_matrix |
-| autonomous_verifier_extract | simple | deepseek-v4-flash → gemini-3.7-flash | agent_matrix |
+| autonomous_verifier_extract | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | cognitive_profiler | heavy | gemini-3.7-flash → deepseek-v4-flash | agent_matrix |
 | depth_analyst | heavy | deepseek-v4-pro → claude-sonnet-5 → gemini-3.7-flash | task_routing |
 | dialogue_manager | simple | claude-sonnet-5 → gemini-3.7-flash | task_routing |
 | friction_detector | heavy | claude-sonnet-5 → deepseek-v4-pro | agent_matrix |
 | human_behavior | heavy | claude-sonnet-5 → gemini-3.7-flash | task_routing |
 | interpreter | simple | claude-sonnet-5 → deepseek-v4-flash | task_routing |
-| lilith_growth | simple | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
+| lilith_growth | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | mirror_truth | heavy | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
 | osint_investigator | heavy | grok-4.6 → deepseek-v4-pro | agent_matrix |
-| passion_mapper | simple | gemini-3.7-flash → deepseek-v4-flash | agent_matrix |
-| pattern_interrupt | simple | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
+| passion_mapper | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
+| pattern_interrupt | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | resonance_synthesizer | heavy | claude-sonnet-5 → deepseek-v4-pro | agent_matrix |
 | shadow_executor | heavy | claude-sonnet-5 → gemini-3.7-flash | task_routing |
 | vision_analyzer | vision | gemini-3.7-flash → grok-4.6 | agent_matrix |
@@ -172,12 +172,8 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 **Tier ihlalleri (bilgilendirme, v1 — CI kırmaz, düzeltme turu bekler):**
 
 - ⚠️ `cognitive_profiler` [heavy_without_frontier] zincirde frontier (claude/pro/grok) yok: ['google/gemini-3.7-flash', 'deepseek/deepseek-v4-flash']
-- ⚠️ `autonomous_verifier_extract` [simple_without_free] zincirde bedava-rota modeli yok: ['deepseek/deepseek-v4-flash', 'google/gemini-3.7-flash']
 - ⚠️ `dialogue_manager` [simple_without_free] zincirde bedava-rota modeli yok: ['anthropic/claude-sonnet-5', 'google/gemini-3.7-flash']
 - ⚠️ `interpreter` [simple_without_free] zincirde bedava-rota modeli yok: ['anthropic/claude-sonnet-5', 'deepseek/deepseek-v4-flash']
-- ⚠️ `lilith_growth` [simple_without_free] zincirde bedava-rota modeli yok: ['anthropic/claude-sonnet-5', 'google/gemini-3.7-flash']
-- ⚠️ `passion_mapper` [simple_without_free] zincirde bedava-rota modeli yok: ['google/gemini-3.7-flash', 'deepseek/deepseek-v4-flash']
-- ⚠️ `pattern_interrupt` [simple_without_free] zincirde bedava-rota modeli yok: ['anthropic/claude-sonnet-5', 'google/gemini-3.7-flash']
 <!-- ROUTING-GENERATED-END -->
 
 **Sağlayıcı merdiveni (her model için):** `agent_route_variants()` aynı modeli

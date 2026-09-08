@@ -85,10 +85,12 @@ def _canonical_key(model: str, provider: str) -> str:
 ROUTES: Dict[str, RouteSpec] = {
     "openai/gpt-oss-120b@groq": RouteSpec("openai/gpt-oss-120b", "groq", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming","tools"}), "verified", note="Groq 30 RPM / 14400 RPD"),
     "gpt-oss-120b@cerebras": RouteSpec("gpt-oss-120b", "cerebras", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming"}), "verified", note="Cerebras 5 RPM / 30K TPM / 1M TPD"),
-    "laguna-s-2.1:free@nous-research": RouteSpec("laguna-s-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
-    "xs-2.1:free@nous-research": RouteSpec("xs-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
-    "ling-3.0-flash-fin:free@nous-research": RouteSpec("ling-3.0-flash-fin:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
-    "dots-3-note-preview:free@nous-research": RouteSpec("dots-3-note-preview:free", "nous-research", "free", 0.0, 0.0, 524288, frozenset({"chat","streaming","tools"}), "verified", note="512K verified free"),
+    # FAZ-2 canlı-katalog düzeltmesi (2. ajan mühürlü izin): prefix'ler canlı
+    # OpenRouter yazımıyla birebir (poolside/…, inclusionai/…); eski dots
+    # önizleme modeli canlıda YOK -> ölü kayıt yasak, SİLİNDİ.
+    "poolside/laguna-s-2.1:free@nous-research": RouteSpec("poolside/laguna-s-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
+    "poolside/laguna-xs-2.1:free@nous-research": RouteSpec("poolside/laguna-xs-2.1:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
+    "inclusionai/ling-3.0-flash-fin:free@nous-research": RouteSpec("inclusionai/ling-3.0-flash-fin:free", "nous-research", "free", 0.0, 0.0, 262144, frozenset({"chat","streaming","tools"}), "verified"),
     "stepfun/step-3.7-flash@nous-research": RouteSpec("stepfun/step-3.7-flash", "nous-research", "paid", 0.20, 1.15, 262144, frozenset({"chat","streaming","vision","tools","video"}), "verified"),
     "upstage/solar-pro4@nous-research": RouteSpec("upstage/solar-pro4", "nous-research", "paid", 0.03, 0.12, 524288, frozenset({"chat","streaming","tools"}), "verified"),
     "meituan/longcat-2.0@nous-research": RouteSpec("meituan/longcat-2.0", "nous-research", "paid", 0.30, 1.20, 1_048_576, frozenset({"chat","streaming","tools"}), "verified"),
@@ -101,15 +103,15 @@ ROUTES: Dict[str, RouteSpec] = {
 FORBIDDEN_ALIASES = {"poolside/laguna:free", "laguna:free", "xs:free", "ling:free"}
 
 TASK_GROUPS: Dict[str, List[Tuple[str, str]]] = {
-    "general": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research")],
-    "fast": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research"), ("dots-3-note-preview:free","nous-research")],
-    "normal": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research")],
-    "research": [("openai/gpt-oss-120b","groq"), ("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research"), ("dots-3-note-preview:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
-    "deep_reasoning": [("openai/gpt-oss-120b","groq"), ("laguna-s-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
-    "code_fast": [("gpt-oss-120b","cerebras"), ("openai/gpt-oss-120b","groq"), ("laguna-s-2.1:free","nous-research")],
-    "code_expert": [("laguna-s-2.1:free","nous-research"), ("xs-2.1:free","nous-research"), ("ling-3.0-flash-fin:free","nous-research")],
-    "long_document": [("ling-3.0-flash-fin:free","nous-research"), ("dots-3-note-preview:free","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research")],
-    "repo_scale": [("dots-3-note-preview:free","nous-research"), ("meituan/longcat-2.0","nous-research")],
+    "general": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research")],
+    "fast": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research")],
+    "normal": [("openai/gpt-oss-120b","groq"), ("gpt-oss-120b","cerebras"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research")],
+    "research": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
+    "deep_reasoning": [("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research"), ("stepfun/step-3.7-flash","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research"), ("openai/gpt-5.6-luna","nous-research")],
+    "code_fast": [("gpt-oss-120b","cerebras"), ("openai/gpt-oss-120b","groq"), ("poolside/laguna-s-2.1:free","nous-research")],
+    "code_expert": [("poolside/laguna-s-2.1:free","nous-research"), ("poolside/laguna-xs-2.1:free","nous-research"), ("inclusionai/ling-3.0-flash-fin:free","nous-research")],
+    "long_document": [("inclusionai/ling-3.0-flash-fin:free","nous-research"), ("upstage/solar-pro4","nous-research"), ("meituan/longcat-2.0","nous-research")],
+    "repo_scale": [("meituan/longcat-2.0","nous-research")],
     "vision": [("google/gemini-3.7-flash","openrouter"), ("stepfun/step-3.7-flash","nous-research"), ("anthropic/claude-sonnet-5","nous-research")],
     "video": [("stepfun/step-3.7-flash","nous-research")],
     "frontier_daily": [("openai/gpt-5.6-luna","nous-research")],

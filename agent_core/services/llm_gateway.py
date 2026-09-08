@@ -314,7 +314,12 @@ class LLMGateway:
         "deepseek_v4_pro": "deepseek/deepseek-v4-pro",
         "gemini_3_7_flash": "google/gemini-3.7-flash",
         "claude_sonnet_5": "anthropic/claude-sonnet-5",
-        "grok_4_6": "x-ai/grok-4.6"
+        "grok_4_6": "x-ai/grok-4.6",
+        # FAZ-2 (sahip Q2 + 2. ajan izin listesi): simple tier'a bağlanan canlı-
+        # teyitli free modeller. gpt-oss-120b: groq (tam) + cerebras (suffix)
+        # direct free; laguna :free: nous direct free (canlı prefix'li yazım).
+        "gpt_oss_120b": "openai/gpt-oss-120b",
+        "laguna_s_2_1_free": "poolside/laguna-s-2.1:free",
     }
 
     MODEL_PRICING = {
@@ -355,14 +360,23 @@ class LLMGateway:
     AGENT_CHAINS = {
         "cognitive_profiler": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
         "friction_detector": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
-        "passion_mapper": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_flash"]],
+        "passion_mapper": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
         "resonance_synthesizer": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
         "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["grok_4_6"]],
-        "autonomous_verifier_extract": [MODEL_REGISTRY["deepseek_v4_flash"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "autonomous_verifier_extract": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
         "osint_investigator": [MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "aspasia": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
-        "lilith_growth": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "lilith_growth": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
         "authenticity_auditor": [
             MODEL_REGISTRY["deepseek_v4_flash"],
             MODEL_REGISTRY["gemini_3_7_flash"],
@@ -375,8 +389,16 @@ class LLMGateway:
         ],
         "human_behavior": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "mirror_truth": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
-        "pattern_interrupt": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        "pattern_interrupt": [
+            MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["laguna_s_2_1_free"],
+        ],
     }
+    # FAZ-2 notu: simple-tier ajan zincirleri (autonomous_verifier_extract,
+    # lilith_growth, pattern_interrupt, passion_mapper) canlı-teyitli free
+    # modellere bağlandı (sahip Q2: tek-tip [gpt-oss-120b, laguna-s-2.1:free]).
+    # ENFORCE simple=free-only bu zincirlerle uyumludur; paid taşıma isteyen
+    # simple zincir FAZ-2 kilidinde KIRMIZI olur (M-C1-full).
     TASK_CAPABILITIES = {
         "vision": frozenset({"chat", "vision"}),
         "depth": frozenset({"chat"}),
@@ -1232,12 +1254,19 @@ class LLMGateway:
         tier = _active_agent_tier.get()
 
         variants: list = []
+        # (b'') FAZ-2: simple-tier ENFORCE bir taşımayı reddedip merdiven boş
+        # kalırsa [] DÖNER — `or [None]` yedeği DENY'i sessizce bypass etmemeli
+        # (enforce-bypass yasağı; mühür kriteri 4).
+        tier_denied_transport = False
         has_or_transport = self.client is not None or self.use_local
         if has_or_transport:
-            variants.append((_price_sum(self.MODEL_PRICING.get(model)), 1, None))
+            legacy_denied = False
             if tier is not None:
-                # (b'') FAZ-1 DENETİM: legacy OpenRouter taşıması indirimsizdir
-                # (liste fiyatı); model ROUTES'ta free ise free sayılır.
+                # (b'') legacy OpenRouter taşıması indirimsizdir (liste fiyatı);
+                # model ROUTES'ta free ise free sayılır. FAZ-2 ENFORCE (sahip
+                # Q1): simple'da non-free legacy teklif EDİLMEZ; heavy ailesinde
+                # liste engeli FAZ-3'e kaldı — bugünkü gibi koşulsuz kalır (iz
+                # yazar, denetlenebilir).
                 free_legacy = pol.is_free(model)
                 decision = self._tier_route_decision(
                     tier, free=free_legacy, discounted=False,
@@ -1247,6 +1276,11 @@ class LLMGateway:
                     tier=tier, model=model, provider="openrouter", legacy=True,
                     decision=decision,
                 )
+                legacy_denied = tier == "simple" and decision["would_deny"]
+            if legacy_denied:
+                tier_denied_transport = True
+            else:
+                variants.append((_price_sum(self.MODEL_PRICING.get(model)), 1, None))
         try:
             from agent_core.services.provider_manager import (
                 ProviderProtocol,
@@ -1256,6 +1290,8 @@ class LLMGateway:
 
             catalog = load_builtin_catalog()
         except Exception:
+            if not variants and tier_denied_transport:
+                return []  # ENFORCE: deny'i `[None]` yedeği bypass etmez
             return [item[2] for item in variants] or [None]
 
         for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
@@ -1292,11 +1328,15 @@ class LLMGateway:
                 continue
             # MODEL@PROVIDER kimliği: policy kataloğu fiyatın gerçek kaynağı;
             # katalogda listelenmemiş/ücretli rota fail-closed escalation ister.
-            # (b'') FAZ-1 DENETİM: FAZ-2-ENFORCE kararı ÖNCE hesaplanıp izine
-            # yazılır; UYGULANMAZ — mevcut firewall dahil hiçbir kapı değişmez
-            # (üretim davranışı birebir korunur; kırılma yasağı).
+            # (b'') FAZ-2 (sahip Q1 kararı): aynı _tier_route_decision UYGULANIR.
+            # - simple: free-only ENFORCE — would_deny rota teklif edilmez.
+            # - heavy ailesi (heavy/vision/verify/unknown): İNDİRİMLİ direct
+            #   kanala escalation env'siz izin (relax); liste-fiyat/frontier
+            #   direct bugünkü firewall kapısından geçer (değişmedi).
+            # - Denetim izi (tier_audit_trail) her karar için yazılmaya devam eder.
+            spec_pre = pol.ROUTES.get(f"{matched.id}@{provider_id}")
+            enforce_skip = False
             if tier is not None:
-                spec_pre = pol.ROUTES.get(f"{matched.id}@{provider_id}")
                 if spec_pre is not None:
                     route_free = spec_pre.is_free()
                     route_discounted = bool(
@@ -1317,8 +1357,24 @@ class LLMGateway:
                     tier=tier, model=matched.id, provider=provider_id,
                     legacy=False, decision=decision,
                 )
+                if tier == "simple" and decision["would_deny"]:
+                    enforce_skip = True
+            if enforce_skip:
+                tier_denied_transport = True
+                continue  # ENFORCE: simple -> yalnız free (sahip Q1)
             if pol.is_paid(matched.id, provider_id) and not pol.paid_escalation_enabled():
-                continue
+                # FAZ-2 relax (sahip Q1): heavy ailesinin İNDİRİMLİ direct
+                # kanalı escalation env'siz çalışır; liste fiyatı/frontier
+                # rota firewall'da kalmaya devam eder.
+                discounted_channel = bool(
+                    tier not in (None, "simple")
+                    and spec_pre is not None
+                    and spec_pre.list_input_per_million_usd is not None
+                    and spec_pre.input_per_million_usd
+                    < spec_pre.list_input_per_million_usd
+                )
+                if not discounted_channel:
+                    continue
             pricing: "Optional[dict[str, float]]" = None
             list_pricing: "Optional[dict[str, float]]" = None
             spec = pol.ROUTES.get(f"{matched.id}@{provider_id}")
@@ -1369,6 +1425,12 @@ class LLMGateway:
                 ),
             ))
         variants.sort(key=lambda item: (item[0], item[1]))
+        if not variants and tier_denied_transport:
+            # (b'') FAZ-2: ENFORCE (simple free-only) TÜM taşımaları reddetti —
+            # BOŞ merdiven döner; `or [None]` yedeği deny'i sessizce bypass
+            # etmemeli (zincir bu modeli atlar, tüm modeler reddedilirse
+            # zincir tükenir -> hata görünür olur, sessiz liste-fiyat kaçağı yok).
+            return []
         return [item[2] for item in variants] or [None]
 
     def _record_tier_decision(
