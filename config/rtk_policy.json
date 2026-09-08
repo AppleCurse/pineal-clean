@@ -10,7 +10,7 @@
   "bypass": {
     "_comment": "Bu task/agent adlarına RTK sıkıştırması UYGULANMAZ. DEEP_REASONING kategorisi (4 kanallı gerilim matrisi, mikro-dilbilimsel ritim analizi gibi nüans-kritik görevler) tamamen dışlanmıştır.",
     "tasks": ["depth", "reasoning"],
-    "agents": ["depth_analyst", "mirror_truth", "shadow_executor", "lilith_growth", "authenticity_auditor"]
+    "agents": ["depth_analyst", "mirror_truth", "shadow_executor", "lilith_growth", "authenticity_auditor", "human_behavior"]
   },
   "env_overrides": {
     "enabled_flag": "PINEAL_RTK_ENABLED",
