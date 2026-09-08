@@ -1272,6 +1272,62 @@ def _snapshot_status(snap) -> str:
     return str(value).lower()
 
 
+def _run_display_fields(run) -> dict:
+    """(Şeffaflık düzeltmesi, F2) AgentRun'dan CANLI model/provider gösterimi türetir.
+
+    Backend ``AgentRun`` şeması ``model``/``via`` ÜRETMEZ; bir ajanın gerçekten
+    çağırdığı model/provider, o ajanın ``output_summary._provenance`` kaydında
+    yaşar (kaynak: yakalanan çağrı kayıtlarının son başarılısı). UI "ACTIVE
+    MODEL/VIA" çubuğu bu alanlardan beslenir; provenance yoksa/fallback/
+    deterministik ise değerler açıkça söyler — statik fallback'e sessiz düşme
+    yerine (üretici yorumuyla birebir).
+    """
+    prov = (getattr(run, "output_summary", None) or {}).get("_provenance") or {}
+    source = prov.get("source")
+    model = prov.get("model")
+    provider = prov.get("provider")
+    if source in ("llm", "llm_cache"):
+        return {"model": model, "via": provider or "openrouter", "run_source": source}
+    if source == "llm_error":
+        return {
+            "model": model,
+            "via": (provider or "llm") + " (hata)",
+            "run_source": source,
+        }
+    if source == "deterministic":
+        return {"model": None, "via": "deterministik-motor", "run_source": source}
+    if source == "fallback":
+        reason = prov.get("fallback_reason")
+        suffix = f":{reason}" if reason else ""
+        return {"model": None, "via": "fallback" + suffix, "run_source": source}
+    return {"model": None, "via": None, "run_source": source or None}
+
+
+def _serialize_run_entry(run, *, with_timestamps: bool) -> dict:
+    """AgentRun serileştirmesi — tek SoT (iki broadcast noktası da bunu çağırır)."""
+    entry = {
+        "status": getattr(run, "status", None),
+        "confidence": getattr(run, "confidence", None),
+        "error_message": getattr(run, "error_message", None),
+        "call_ids": list(getattr(run, "call_ids", []) or []),
+        "output_summary": redact_structure(
+            getattr(run, "output_summary", None) or {}
+        ),
+        "provenance": redact_structure(
+            (getattr(run, "output_summary", None) or {}).get("_provenance")
+        ),
+    }
+    if with_timestamps:
+        entry["started_at"] = (
+            run.started_at.isoformat() if getattr(run, "started_at", None) else None
+        )
+        entry["completed_at"] = (
+            run.completed_at.isoformat() if getattr(run, "completed_at", None) else None
+        )
+    entry.update(_run_display_fields(run))
+    return entry
+
+
 def _prune_room_stale_state(room: dict) -> None:
     """Odanın task_id ile büyüyen yapılarını retention/tavanla geri kazanır.
 
@@ -1489,20 +1545,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
         "osint_footprint": _dump_field(getattr(snapshot, "osint_footprint", None)),
         "telemetry": snapshot_telemetry,
         "runs": {
-            name: {
-                "status": getattr(r, "status", None),
-                "confidence": getattr(r, "confidence", None),
-                "started_at": r.started_at.isoformat() if getattr(r, "started_at", None) else None,
-                "completed_at": r.completed_at.isoformat() if getattr(r, "completed_at", None) else None,
-                "error_message": getattr(r, "error_message", None),
-                "call_ids": list(getattr(r, "call_ids", []) or []),
-                "output_summary": redact_structure(
-                    getattr(r, "output_summary", None) or {}
-                ),
-                "provenance": redact_structure(
-                    (getattr(r, "output_summary", None) or {}).get("_provenance")
-                ),
-            }
+            name: _serialize_run_entry(r, with_timestamps=True)
             for name, r in snapshot.agent_runs.items()
         }
     })
@@ -1764,18 +1807,7 @@ def broadcast_result(client_id, res):
         "planned_agents": getattr(res, "planned_agents", []) or [],
         "completed_agents": getattr(res, "completed_agents", []) or [],
         "runs": {
-            name: {
-                "status": getattr(run, "status", None),
-                "confidence": getattr(run, "confidence", None),
-                "error_message": getattr(run, "error_message", None),
-                "call_ids": list(getattr(run, "call_ids", []) or []),
-                "output_summary": redact_structure(
-                    getattr(run, "output_summary", None) or {}
-                ),
-                "provenance": redact_structure(
-                    (getattr(run, "output_summary", None) or {}).get("_provenance")
-                ),
-            }
+            name: _serialize_run_entry(run, with_timestamps=False)
             for name, run in (getattr(res, "agent_runs", None) or {}).items()
         },
         "follower_audit": _dump_field(getattr(res, "follower_audit", None)),

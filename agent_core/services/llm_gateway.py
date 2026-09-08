@@ -1227,6 +1227,37 @@ class LLMGateway:
             return (1 if is_legacy_or else 0, price_sum)
         return (price_sum, 1 if is_legacy_or else 0)
 
+    def _cheaper_direct_available(self, model: str) -> bool:
+        """(FAZ-2.1) OR-legacy liste-fiyat kapatma kapısı.
+
+        True: model için ``final_routing_policy.ROUTES`` içinde İNDİRİMLİ bir
+        direct spec var (liste fiyatı < listelenen fiyat), o provider'ın
+        anahtarı kurulu ve provider cooldown'da değil -> daha ucuz kanal
+        MEVCUT; OR-legacy (liste fiyatı) bu durumda escalation ister.
+        False: daha ucuz kanal yok (yalnız-kanal) -> legacy koşulsuz kalır.
+        """
+        from agent_core.services import final_routing_policy as pol
+
+        for spec in pol.ROUTES.values():
+            if not (spec.model == model or model.endswith(f"/{spec.model}")):
+                continue
+            if spec.list_input_per_million_usd is None:
+                continue
+            if not (
+                spec.input_per_million_usd
+                < spec.list_input_per_million_usd
+            ):
+                continue
+            for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
+                if spec.provider != provider_id:
+                    continue
+                if not self._provider_api_key(provider_id, key_env):
+                    continue
+                if self._route_cooldown_remaining(provider_id) > 0:
+                    continue
+                return True
+        return False
+
     def agent_route_variants(self, model: str,
                               required: frozenset[str] = frozenset()) -> "list[Optional[GatewayRoute]]":
         """MP-ROUTING: cost ladder for ONE chain model across providers.
@@ -1262,21 +1293,38 @@ class LLMGateway:
         if has_or_transport:
             legacy_denied = False
             if tier is not None:
-                # (b'') legacy OpenRouter taşıması indirimsizdir (liste fiyatı);
-                # model ROUTES'ta free ise free sayılır. FAZ-2 ENFORCE (sahip
-                # Q1): simple'da non-free legacy teklif EDİLMEZ; heavy ailesinde
-                # liste engeli FAZ-3'e kaldı — bugünkü gibi koşulsuz kalır (iz
-                # yazar, denetlenebilir).
+                # (b'') OR-legacy liste-fiyat kapatması (FAZ-2.1, komutan emri
+                # 2026-09-08): audit kararı (would_deny) ile ENFORCE filtresi
+                # aynı satırdan döner.
+                #   simple        -> non-free legacy teklif EDİLMEZ (FAZ-2).
+                #   heavy ailesi  -> modelin DAHA UCUZ indirimli direct kanalı
+                #     KURULUYSA (anahtar + ROUTES indirim spec'i) liste fiyatı
+                #     legacy yalnız PINEAL_ALLOW_PAID_ESCALATION=1 ile teklif
+                #     edilir; daha ucuz kanal YOKSA (yalnız-kanal, örn. gemini
+                #     OR-legacy tek taşıma) legacy koşulsuz kalır — kestirme
+                #     kapatma heavy/vision ajanlarını kırmaz (only_channel).
                 free_legacy = pol.is_free(model)
+                if free_legacy:
+                    gate_context = "free"
+                elif tier == "simple":
+                    gate_context = "simple_non_free"
+                elif self._cheaper_direct_available(model):
+                    gate_context = "cheaper_direct_available"
+                else:
+                    gate_context = "only_channel"
                 decision = self._tier_route_decision(
                     tier, free=free_legacy, discounted=False,
-                    escalation_enabled=pol.paid_escalation_enabled(),
+                    escalation_enabled=(
+                        pol.paid_escalation_enabled()
+                        or gate_context == "only_channel"
+                    ),
                 )
+                decision["gate_context"] = gate_context
                 self._record_tier_decision(
                     tier=tier, model=model, provider="openrouter", legacy=True,
                     decision=decision,
                 )
-                legacy_denied = tier == "simple" and decision["would_deny"]
+                legacy_denied = bool(decision["would_deny"])
             if legacy_denied:
                 tier_denied_transport = True
             else:
@@ -1453,6 +1501,7 @@ class LLMGateway:
             "would_deny": bool(decision.get("would_deny")),
             "tier_unresolved": bool(decision.get("tier_unresolved")),
             "price_class": decision.get("price_class"),
+            "gate_context": decision.get("gate_context"),
         }
         agent_hint = _active_agent_hint.get()
         if agent_hint:
