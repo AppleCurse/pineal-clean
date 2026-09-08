@@ -217,14 +217,15 @@ def test_t1_faz2_simple_free_chain_models_yield_transports(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# T1-FAZ-2 — heavy indirimli relax (sahip Q1): escalation'sız izin
+# T1-FAZ-2.1 — heavy indirimli relax + OR-legacy liste engeli (komutan emri)
 # --------------------------------------------------------------------------- #
 def test_t1_faz2_heavy_discounted_relax_without_escalation(monkeypatch):
     """friction_detector (heavy), escalation KAPALI, NOUS anahtarı var.
     FAZ-2 relax: nous indirimli kanal ($1.6/$8) escalation env'siz TEKLİF
-    edilir (FAZ-1'de firewall düşürüyordu — davranış bilinçli değişti).
-    OR legacy (liste fiyatı) hâlâ koşulsuz + izine would_deny yazar (liste
-    engeli FAZ-3'e)."""
+    edilir. FAZ-2.1 (komutan emri 2026-09-08): daha ucuz indirimli direct
+    KURULUYSA OR-legacy (liste fiyatı) TEKLİF EDİLMEZ — audit'in would_deny
+    kararı ile ENFORCE filtresi aynı satırdan döner (liste engeli uygulandı;
+    FAZ-3 ertelemesi kaldırıldı)."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
     monkeypatch.setenv("NOUS_API_KEY", "nk")
     gw = LLMGateway()
@@ -232,7 +233,7 @@ def test_t1_faz2_heavy_discounted_relax_without_escalation(monkeypatch):
     ladder = gw.agent_route_variants("anthropic/claude-sonnet-5")
     nous = [v for v in ladder if isinstance(v, GatewayRoute) and v.provider_id == "nous-research"]
     assert len(nous) == 1 and nous[0].input_per_million_usd == pytest.approx(1.6)
-    assert None in ladder  # OR-legacy heavy'de hâlâ koşulsuz (FAZ-3'e liste engeli)
+    assert None not in ladder  # FAZ-2.1: ucuz kanal varken liste fiyatı legacy teklif edilmez
 
     trail = gw.tier_audit_trail()
     by_key = {e["route_key"]: e for e in trail}
@@ -240,7 +241,50 @@ def test_t1_faz2_heavy_discounted_relax_without_escalation(monkeypatch):
     assert by_key["anthropic/claude-sonnet-5@nous-research"]["reason"] == "heavy_discounted"
     assert by_key["anthropic/claude-sonnet-5@openrouter"]["would_deny"] is True
     assert by_key["anthropic/claude-sonnet-5@openrouter"]["reason"] == "heavy_listed_gate"
+    assert by_key["anthropic/claude-sonnet-5@openrouter"]["gate_context"] == "cheaper_direct_available"
     assert all(e["tier"] == "heavy" for e in trail)
+
+
+def test_t1_faz2_heavy_escalation_restores_or_legacy(monkeypatch):
+    """FAZ-2.1: aynı senaryoda PINEAL_ALLOW_PAID_ESCALATION=1 -> operatör
+    liste fiyatını açıkça seçti -> OR-legacy TEKLİF edilir (escalated izi)."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    monkeypatch.setenv("NOUS_API_KEY", "nk")
+    monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
+    gw = LLMGateway()
+    gw.get_agent_chain("friction_detector", "dialogue")
+    ladder = gw.agent_route_variants("anthropic/claude-sonnet-5")
+    assert None in ladder
+    trail = gw.tier_audit_trail()
+    by_key = {e["route_key"]: e for e in trail}
+    assert by_key["anthropic/claude-sonnet-5@openrouter"]["decision"] == "allow"
+    assert by_key["anthropic/claude-sonnet-5@openrouter"]["reason"] == "heavy_listed_escalated"
+    assert by_key["anthropic/claude-sonnet-5@openrouter"]["would_deny"] is False
+
+
+def test_t1_faz2_heavy_or_legacy_only_channel_kept(monkeypatch):
+    """FAZ-2.1 kırılma yasağı: modelin daha ucuz direct kanalı YOKSA
+    (yalnız-kanal — örn. vision_analyzer/gemini OR-tek taşıma, ya da yalnız
+    OR anahtarı kurulu heavy) OR-legacy koşulsuz kalır. Kestirme kapatma
+    heavy/vision ajanlarını kırmaz."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    gw = LLMGateway()
+    # vision: gemini — ROUTES'ta indirimli direct yok -> only_channel
+    gw.get_agent_chain("vision_analyzer", "dialogue")
+    ladder = gw.agent_route_variants("google/gemini-3.7-flash")
+    assert None in ladder
+    trail = gw.tier_audit_trail()
+    by_key = {e["route_key"]: e for e in trail}
+    assert by_key["google/gemini-3.7-flash@openrouter"]["gate_context"] == "only_channel"
+    assert by_key["google/gemini-3.7-flash@openrouter"]["decision"] == "allow"
+
+    # heavy + yalnız OR anahtarı (nous kurulu değil) -> only_channel
+    gw2 = LLMGateway()
+    gw2.get_agent_chain("friction_detector", "dialogue")
+    ladder2 = gw2.agent_route_variants("anthropic/claude-sonnet-5")
+    assert None in ladder2
+    by_key2 = {e["route_key"]: e for e in gw2.tier_audit_trail()}
+    assert by_key2["anthropic/claude-sonnet-5@openrouter"]["gate_context"] == "only_channel"
 
 
 # --------------------------------------------------------------------------- #
