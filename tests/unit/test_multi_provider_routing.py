@@ -58,12 +58,19 @@ def _providers_of(variants):
 # ------------------------------------------------------------------ #
 # R1. havuz genisligi
 # ------------------------------------------------------------------ #
-def test_pool_known_providers_cover_fourteen_direct():
-    assert len(_AGENT_DIRECT_PROVIDER_KEYS) == 14
+def test_pool_known_providers_cover_fifteen_direct():
+    # FAZ-2-P4: google-gemini-backup (2. Google key, aynı endpoint) direct
+    # havuza alındı — 429 sonrası merdiven otomatik backup'a düşer.
+    assert len(_AGENT_DIRECT_PROVIDER_KEYS) == 15
     ids = [pid for pid, _ in _AGENT_DIRECT_PROVIDER_KEYS]
     for expected in ("groq", "deepseek", "cerebras", "nous-research", "mistral",
-                     "together", "fireworks", "alibaba-dashscope", "google-gemini"):
+                     "together", "fireworks", "alibaba-dashscope", "google-gemini",
+                     "google-gemini-backup"):
         assert expected in ids
+    # vertex farklı protokol ister — diagnostic'ta kalır (transport yok).
+    diag = [pid for pid, _ in _DIAGNOSTIC_ONLY_PROVIDERS]
+    assert "google-gemini-vertex" in diag
+    assert "google-gemini-backup" not in diag
 
 
 def test_pool_spans_providers_with_attested_models(monkeypatch):
@@ -327,12 +334,16 @@ def test_inventory_keys_visible_as_diagnostic_only(monkeypatch):
     monkeypatch.setenv("GEMINI_VERTEX_TOKEN", "gv-x")
     gw = LLMGateway()
     diag = gw.route_diagnostics("vendor/x7")
-    for pid in ("iflow", "google-gemini-backup", "google-gemini-vertex"):
+    # FAZ-2-P4: google-gemini-backup artik DIRECT (aynı endpoint 2. key);
+    # diagnostic yalnız transport'suzlar: iflow + vertex.
+    for pid in ("iflow", "google-gemini-vertex"):
         assert diag["skipped"][pid]["reason"] == "transport_unsupported"
         assert diag["skipped"][pid]["key_present"] is True
+    # backup direct oldu — vendor/x7 sunmadığı için model_not_served (transport değil)
+    assert diag["skipped"]["google-gemini-backup"]["reason"] == "model_not_served"
     # tasiyicisiz anahtar asla rota teklif etmez
     offered_providers = {o["provider"] for o in diag["offered"]}
-    assert not (offered_providers & {"iflow", "google-gemini-backup", "google-gemini-vertex"})
+    assert not (offered_providers & {"iflow", "google-gemini-vertex"})
     # ...ama kasa/vault kabul eder (gorunurluk icin)
     gw.set_provider_key("iflow", "k")
     assert gw._provider_key_source("iflow", "IFLOW_API_KEY") == "instance"

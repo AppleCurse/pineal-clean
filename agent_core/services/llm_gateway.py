@@ -197,7 +197,11 @@ _FALLBACK_GUARD_MARKERS = (
 # anahtarlari route_diagnostics'te gorunur (transport_unsupported).
 # google-gemini BURADA: Google'in resmi OpenAI-uyumlu endpoint'i
 # (.../v1beta/openai/) katalogda openai_chat isaretli; sifir yeni transport
-# koduyla ayni AsyncOpenAI tasmasi kullanilir (canli dogrulama ayri is).
+# koduyla ayni AsyncOpenAI tasmasi kullanilir.
+# FAZ-2-P4 (2026-09-08, sahip onayi): google-gemini-backup AYNI endpoint'in
+# 2. anahtari (GEMINI_BACKUP_API_KEY) — 429/limit durumunda merdiven otomatik
+# backup key'e duser (ayni model, ayri kontenjan). Vertex (GEMINI_VERTEX_TOKEN)
+# ayri base/protokol ister -> diagnostic'ta kalir (canli dogrulama sonrasi eklenir).
 _AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
     ("groq", "GROQ_API_KEY"),
     ("deepseek", "DEEPSEEK_API_KEY"),
@@ -213,6 +217,7 @@ _AGENT_DIRECT_PROVIDER_KEYS: tuple[tuple[str, str], ...] = (
     ("deepinfra", "DEEPINFRA_API_KEY"),
     ("perplexity", "PERPLEXITY_API_KEY"),
     ("google-gemini", "GEMINI_API_KEY"),
+    ("google-gemini-backup", "GEMINI_BACKUP_API_KEY"),
 )
 
 # FAZ 3: tasiyicisi openai_chat olmayan uzak saglayicilar. Rota TEKLIF
@@ -226,11 +231,11 @@ _DIAGNOSTIC_ONLY_PROVIDERS: tuple[tuple[str, str], ...] = (
     ("cohere", "COHERE_API_KEY"),
     ("azure-openai", "AZURE_OPENAI_API_KEY"),
     # FAZ 3-EK: operator envanterindeki ek anahtarlar. iflow = ozel ag
-    # gecidi (baz URL/protokol bilinmeden rota TEKLIF EDILMEZ); yedek/
-    # vertex gemini anahtarlari = tasiyici destegi yok (rotasyon ayri is).
-    # Hepsi tani ekraninda GORUNUR (sessiz yutma yok).
+    # gecidi (baz URL/protokol bilinmeden rota TEKLIF EDILMEZ); vertex
+    # gemini (GEMINI_VERTEX_TOKEN) farkli base/protokol ister — rotasyon
+    # canli dogrulama sonrasi eklenir (FAZ-2-P4). Hepsi tani ekraninda
+    # GORUNUR (sessiz yutma yok).
     ("iflow", "IFLOW_API_KEY"),
-    ("google-gemini-backup", "GEMINI_BACKUP_API_KEY"),
     ("google-gemini-vertex", "GEMINI_VERTEX_TOKEN"),
 )
 

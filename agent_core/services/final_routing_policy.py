@@ -111,6 +111,15 @@ ROUTES: Dict[str, RouteSpec] = {
     # değiştirilmez (list değeri 2.00/10.00 = arşivlenen promo).
     "anthropic/claude-sonnet-5@nous-research": RouteSpec("anthropic/claude-sonnet-5", "nous-research", "paid", 1.60, 8.00, 1_048_576, frozenset({"chat","streaming","vision","tools","reasoning"}), "verified", 2.00, 10.00, "Nous 20% discount vs archived $2/$10 promo (liste 31.08.2026'da $3/$15'e taşındı)"),
     "google/gemini-3.7-flash@openrouter": RouteSpec("google/gemini-3.7-flash", "openrouter", "paid", 0.75, 3.75, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified"),
+    # FAZ-2-P4 (2026-09-08, sahip onayı): Google resmi OpenAI-uyumlu endpoint
+    # (generativelanguage .../v1beta/openai/). Model kimliği Google'in kendi
+    # adı (öneksiz "gemini-3.7-flash"); gateway model eşleşmesi OR'daki
+    # "google/gemini-3.7-flash" ile endswith yoluyla çakışır. Fiyat OR liste
+    # ($0.75/$3.75) — AI Studio free tier'i CANLI teyit bekler; teyit sonrası
+    # free kayda çevrilir (Cerebras dersi: teyitsiz free yazılmaz). Backup =
+    # aynı endpoint, 2. anahtar (429/limit → otomatik rotasyon).
+    "gemini-3.7-flash@google-gemini": RouteSpec("gemini-3.7-flash", "google-gemini", "paid", 0.75, 3.75, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified", note="Google direkt; free-tier canlı teyit bekler"),
+    "gemini-3.7-flash@google-gemini-backup": RouteSpec("gemini-3.7-flash", "google-gemini-backup", "paid", 0.75, 3.75, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified", note="429 sonrası backup key (aynı endpoint)"),
     "openai/gpt-5.6-sol-pro@openrouter": RouteSpec("openai/gpt-5.6-sol-pro", "openrouter", "frontier", 2.00, 10.00, 1_048_576, frozenset({"chat","streaming","tools","reasoning"}), "verified", note="Frontier explicit"),
 }
 
