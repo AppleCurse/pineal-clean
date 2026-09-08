@@ -9,6 +9,13 @@ import os
 import sys
 from pathlib import Path
 
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import httpx
 
 REPO = Path(__file__).resolve().parents[1]
@@ -87,8 +94,17 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             print(f"  JSON değil (HTTP {r.status_code}), ilk 200: {r.text[:200]}")
             continue
-        raw = payload.get("data") or payload.get("models") or []
-        ids = sorted({str(m.get("id", "")).strip() for m in raw if m.get("id")})
+        if isinstance(payload, list):
+            raw = payload
+        elif isinstance(payload, dict):
+            raw = payload.get("data") or payload.get("models") or []
+        else:
+            raw = []
+        ids = sorted({
+            (str(m.get("id", "")) if isinstance(m, dict) else str(m)).strip()
+            for m in raw
+            if (isinstance(m, dict) and m.get("id")) or (isinstance(m, str) and m)
+        })
         print(f"  Canlı model sayısı: {len(ids)}")
         catalog = CATALOG_MODELS.get(pid, [])
         routes_here = [m for m, *_ in ROUTES.get(pid, [])]
