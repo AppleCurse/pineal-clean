@@ -137,4 +137,10 @@ def test_disk_rtk_policy_contract_locks_all_bypass_agents_and_tasks():
     assert gw.should_bypass_rtk(agent_name="mirror_truth") is True
     assert gw.should_bypass_rtk(agent_name="authenticity_auditor") is True
     assert gw.should_bypass_rtk(task="depth") is True
-    assert gw.should_bypass_rtk(task="reasoning") is True
+    assert gw.should_bypass_rtk(task="reasoning") is True
+
+    # Çift yönlü kilit: Sadece bypass listesindekilerin True olduğunu değil,
+    # non-bypass ajan/görevlerin False döndüğünü de doğrular (enabled=true doğrulaması).
+    assert gw.should_bypass_rtk(agent_name="dialogue_manager") is False
+    assert gw.should_bypass_rtk(task="fast_classify") is False
+
