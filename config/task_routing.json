@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "_meta": {
+    "purpose": "Step 1 task routing: agent -> ordered MODEL_REGISTRY key chains. Read by task_routing_resolver (pure, stdlib-only); consumed by LLMGateway.get_agent_chain.",
+    "precedence": "OPENROUTER_AGENT_CHAIN_<AGENT> env override > task_routing.json > AGENT_CHAINS > task fallback (CHAINS).",
+    "key_space": "MODEL_REGISTRY KEYS ONLY (snake_case ids). Vendor/model-id strings (e.g. 'anthropic/claude-sonnet-5') are REJECTED by the resolver. The gateway maps keys to model-id values.",
+    "fail_mode": "Fail-closed per entry: any invalid/unknown key in an agent's list resolves that agent to None (falls through to AGENT_CHAINS). No partial amputation. Missing/corrupt file resolves ALL agents to None.",
+    "restatement_vs_delta": "This file is a DELTA over AGENT_CHAINS, not a restatement: only agents whose chain differs from (or is absent in) AGENT_CHAINS are listed. Agents not listed here keep matrix/task behavior byte-identical.",
+    "notes": {
+      "depth_analyst": "DELTA (flip): deepseek-first [deepseek_v4_pro, claude_sonnet_5, gemini_3_7_flash]. Matrix order was [claude, deepseek_pro, gemini]. Gemini kept 3rd as non-vision fallback anchor.",
+      "human_behavior": "DELTA (dead-slot cleanup): [claude_sonnet_5, gemini_3_7_flash]. Matrix 2nd slot (deepseek_v4_pro) is replaced with vision-capable gemini. NOT a capability addition: claude was already vision-eligible.",
+      "dialogue_manager": "NEW: no AGENT_CHAINS entry (fell through to task_chain). Mirrors CHAINS.dialogue baseline [claude, gemini].",
+      "shadow_executor": "NEW: no AGENT_CHAINS entry. Evidence-gated execution needs frontier judgment first, cheap vision-capable fallback second.",
+      "interpreter": "NEW: no AGENT_CHAINS entry. 2-long minimum (no-fallback single chains are rejected by Step-1 locks). Tool-output interpretation needs strong reasoning first, cheap fallback second."
+    }
+  },
+  "depth_analyst": ["deepseek_v4_pro", "claude_sonnet_5", "gemini_3_7_flash"],
+  "human_behavior": ["claude_sonnet_5", "gemini_3_7_flash"],
+  "dialogue_manager": ["claude_sonnet_5", "gemini_3_7_flash"],
+  "shadow_executor": ["claude_sonnet_5", "gemini_3_7_flash"],
+  "interpreter": ["claude_sonnet_5", "deepseek_v4_flash"]
+}

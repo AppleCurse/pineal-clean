@@ -18,6 +18,7 @@ from pydantic import BaseModel, ValidationError
 
 from pathlib import Path
 from agent_core.services.response_cache import build_cache_from_env
+from agent_core.services.task_routing_resolver import resolve_task_chain
 from agent_core.services.token_compressor import compress_prompt, CompressionLevel
 
 _RTK_POLICY_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "rtk_policy.json"
@@ -399,6 +400,14 @@ class LLMGateway:
                 # operasyon/acil override'ıdır ve telemetride işaretlenir.
                 _active_chain_source.set("env_override")
                 return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+            # STEP-1 TASK ROUTING: config-driven delta over AGENT_CHAINS.
+            # Precedence: env (above) > task_routing > agent_matrix > task_chain.
+            routed = resolve_task_chain(
+                agent_name, task, valid_keys=frozenset(self.MODEL_REGISTRY.keys())
+            )
+            if routed is not None:
+                _active_chain_source.set("task_routing")
+                return [self.MODEL_REGISTRY[key] for key in routed]
             if agent_name in self.AGENT_CHAINS:
                 _active_chain_source.set("agent_matrix")
                 return self.AGENT_CHAINS[agent_name]
