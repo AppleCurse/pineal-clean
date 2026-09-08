@@ -142,5 +142,5 @@ def test_disk_rtk_policy_contract_locks_all_bypass_agents_and_tasks():
     # Çift yönlü kilit: Sadece bypass listesindekilerin True olduğunu değil,
     # non-bypass ajan/görevlerin False döndüğünü de doğrular (enabled=true doğrulaması).
     assert gw.should_bypass_rtk(agent_name="dialogue_manager") is False
-    assert gw.should_bypass_rtk(task="fast_classify") is False
+    assert gw.should_bypass_rtk(task="vision") is False
 
