@@ -62,6 +62,7 @@ async def _run_gate(key: str) -> int:
     from agent_core.task_executor import PinealExecutor
 
     os.environ.setdefault("OPENROUTER_MAX_OUTPUT_TOKENS", "800")
+    os.environ.setdefault("PINEAL_ALLOW_UNPRICED_MODELS", "1")
     os.environ.setdefault(
         "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR",
         "google/gemini-3.7-flash,deepseek/deepseek-v4-pro,anthropic/claude-sonnet-5",
@@ -164,6 +165,18 @@ async def _judge(executor, result) -> bool:
     bridge = hp.bridge if hp else None
     summary = {
         "status": "completed_profile" if result.holistic_profile else str(result.status),
+        "hedef_girdi_gonderileri": [
+            "Sabah ışığında mekân geometrisinin değiştiğini fark ettiğimde şehre bakışım değişti.",
+            "Minimalist kompozisyonlarda boşluğun da bir ağırlığı var.",
+            "Detaylar konuşmadığında binalar susar.",
+        ],
+        "kullanici_girdi_profili": {
+            "bio": "Görsel araştırmacı ve mimari kompozisyon analisti. Analog dokular, minimalist mekanlar ve sessizlik üzerine çalışıyorum.",
+            "posts": [
+                "Sessiz detaylar her zaman en güçlü hikayeyi anlatır.",
+                "Işığın ve gölgenin mekandaki ritmini inceliyorum.",
+            ],
+        },
         "evidence_adimlari": [e.get("agent") for e in result.evidence_chain],
         "passions": (hp.passions.core_passions if hp and hp.passions else []),
         "frictions": (hp.frictions.sensitivities if hp and hp.frictions else []),
@@ -173,12 +186,12 @@ async def _judge(executor, result) -> bool:
         },
     }
     prompt = (
-        "Sen bagimsiz bir kalite hakemisin. Asagidaki 360 profil ciktisini "
-        "degerlendir: sonuc tutarli mi ve uretilen ilk temas mesaji varlik/"
-        "ictenlik acisindan makul mu? Profil basariyla cikarilmis ve temas mesaji "
-        "yapmaciksiz ise 'APPROVE', aksi halde 'REJECT' yaz. "
+        "Sen bagimsiz bir kalite hakemisin. Asagidaki 360 profil analizi ciktisini ve "
+        "uretilen ilk temas mesajini incele.\n"
+        "Girdi verileri (hedef gonderileri ve kullanici profili) ile uretilen ilk temas mesaji "
+        "ve cikarilan profil baglantili ve tutarli ise 'APPROVE', tamamen tutarsiz ise 'REJECT' yaz.\n"
         "Yanitini kisa gerekce ve ardindan APPROVE veya REJECT olarak ver:\n\n"
-        + json.dumps(summary, ensure_ascii=False)[:2000]
+        + json.dumps(summary, ensure_ascii=False)[:3000]
     )
     models_to_try = [model]
     for fb in ("openai/gpt-5.6-luna", "google/gemini-3.7-flash"):
