@@ -2098,7 +2098,10 @@ class LLMGateway:
                     cost_usd = self._settle_budget(call_id, selected_model, usage, pricing)
                     logical_cost_usd += cost_usd
                     budget_reserved = False
-                content = response.choices[0].message.content
+                choices = getattr(response, "choices", None) or []
+                if not choices or not getattr(choices[0], "message", None):
+                    raise ValueError(f"Provider returned empty choices from model '{selected_model}'")
+                content = getattr(choices[0].message, "content", "") or ""
 
                 if cache_key and content:
                     try:
