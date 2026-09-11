@@ -99,6 +99,9 @@ export const armEngaged = writable<boolean>(false);
 export const sigintEngaged = writable<boolean>(false);
 export const recordEngaged = writable<boolean>(true);
 export const keyUnlocked = writable<boolean>(false);
+// POWER: uplink (WebSocket) ana şalteri. Kapalıysa soket kapatılır ve
+// otomatik yeniden bağlanma durur (App.svelte abonesi yönetir).
+export const powerEngaged = writable<boolean>(true);
 
 // i18n köprüsü
 export { currentLang, type Language } from './i18n';

@@ -1,7 +1,17 @@
 let ctx: AudioContext | null = null;
 
+// PROP düğmesi: konsol sesleri ana şalteri (varsayılan açık).
+let soundEnabled = true;
+export function setSoundEnabled(on: boolean) {
+  soundEnabled = on;
+}
+export function isSoundEnabled(): boolean {
+  return soundEnabled;
+}
+
 function getCtx() {
   if (typeof window === 'undefined') return null;
+  if (!soundEnabled) return null;
   if (!ctx) {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (AudioCtx) ctx = new AudioCtx();
