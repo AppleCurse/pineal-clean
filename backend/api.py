@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 from collections import deque
 import asyncio
+import io
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ from agent_core.aspasia.interface import AspasiaCommandGateway
 from agent_core.chat.dialogue_manager import DialogueManager
 from agent_core.scraper.instagram_ghost import InstagramGhostScraper
 from agent_core.services import crawl_enricher, socid_enricher
+from agent_core.services.browser_session import BrowserSession
 from agent_core.services.dependency_health import (
     StartupDependencyError,
     check_startup_dependencies,
@@ -851,6 +853,15 @@ def get_executor(client_id: str) -> PinealExecutor:
 
 def get_vault(client_id: str) -> dict:
     return get_room(client_id)["vault"]
+
+
+def _room_browser(room: dict) -> BrowserSession:
+    """Oda başına tek canlı tarayıcı (lazy)."""
+    sess = room.get("browser")
+    if sess is None:
+        sess = BrowserSession()
+        room["browser"] = sess
+    return sess
 
 
 class OpenAIChatCompletionPayload(BaseModel):
@@ -1690,15 +1701,20 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
             "aspasia_goals": list(req.aspasia_goals or []),
         }
         
-        # Otonom Cookie Rotasyonu
+        # Otonom Cookie Rotasyonu — canlı LCD oturumu önceliklidir.
         cookie = ""
-        cookie_pool = vault.get("x_cookie", "").strip()
-        if cookie_pool:
-            cookie_list = [c.strip() for c in cookie_pool.split('\n') if c.strip()]
-            if cookie_list:
-                import random
-                cookie = random.choice(cookie_list)
-                broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
+        live_session = (vault.get("ig_sessionid", "") or "").strip()
+        if live_session:
+            cookie = live_session
+            broadcast_log(client_id, "INFO", "DAEMON: Canlı LCD oturum çerezi kullanılıyor.")
+        else:
+            cookie_pool = vault.get("x_cookie", "").strip()
+            if cookie_pool:
+                cookie_list = [c.strip() for c in cookie_pool.split('\n') if c.strip()]
+                if cookie_list:
+                    import random
+                    cookie = random.choice(cookie_list)
+                    broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
         if effective_type == "x":
@@ -2066,11 +2082,12 @@ async def api_telemetry(client_id: str):
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
         # geriye uyumlu anahtar; artik import basarisi degil, GERCEK yetenek
         "scraper": capability["instagram"],
-        "vault": "x_cookie" in vault or bool(vault.get("or_key")),
+        "vault": "x_cookie" in vault or bool(vault.get("or_key")) or "ig_sessionid" in vault,
         "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
         # W5: gercek capability raporu
         "x_scraper": False,  # B4: X kazimasi devre disi birakildi
         "instagram_scraper": capability["instagram"],
+        "instagram_session": "ig_sessionid" in vault,
         "browser_installed": capability["browser"],
         # P2-MALİYET: committed + in-flight reservations are read atomically.
         "llm_spend_usd": round(float(budget.get("spend_usd", 0.0)), 6),
@@ -2445,6 +2462,147 @@ async def _run_public_web_research(url: str, search_engine: Any) -> Dict[str, An
         "searched_at": datetime.now().isoformat(),
         "note": note,
     }
+
+
+class BrowserClientPayload(BaseModel):
+    client_id: str
+
+
+class BrowserOpenPayload(BaseModel):
+    client_id: str
+    url: str = ""
+
+
+class BrowserClickPayload(BaseModel):
+    client_id: str
+    x: int = 0
+    y: int = 0
+
+
+class BrowserTypePayload(BaseModel):
+    client_id: str
+    text: str = Field(max_length=500)
+
+
+class BrowserPressPayload(BaseModel):
+    client_id: str
+    key: str = Field(max_length=24)
+
+
+def _browser_error_response(e: Exception):
+    from agent_core.services.browser_session import (
+        BrowserNotOpenError,
+        BrowserUnavailableError,
+    )
+
+    if isinstance(e, BrowserUnavailableError):
+        return JSONResponse(
+            {"error": {"code": "BROWSER_UNAVAILABLE", "message": str(e)[:200]}},
+            status_code=503,
+        )
+    if isinstance(e, BrowserNotOpenError):
+        return JSONResponse(
+            {"error": {"code": "BROWSER_NOT_OPEN", "message": str(e)[:200]}},
+            status_code=409,
+        )
+    if isinstance(e, ValueError):
+        return JSONResponse(
+            {"error": {"code": "BROWSER_BAD_REQUEST", "message": str(e)[:200]}},
+            status_code=400,
+        )
+    return JSONResponse(
+        {"error": {"code": "BROWSER_ERROR", "message": str(e)[:200]}}, status_code=500
+    )
+
+
+@app.post("/api/browser/open")
+async def api_browser_open(req: BrowserOpenPayload):
+    room = get_room(req.client_id)
+    try:
+        result = await _room_browser(room).open(req.url)
+    except Exception as e:
+        return _browser_error_response(e)
+    broadcast_log(req.client_id, "INFO", f"TARAYICI: Canlı oturum açıldı -> {result.get('url', '')[:80]}")
+    return result
+
+
+@app.get("/api/browser/shot")
+async def api_browser_shot(client_id: str):
+    room = get_room(client_id)
+    try:
+        png = await _room_browser(room).shot()
+    except Exception as e:
+        return _browser_error_response(e)
+    return StreamingResponse(io.BytesIO(png), media_type="image/png")
+
+
+@app.get("/api/browser/state")
+async def api_browser_state(client_id: str):
+    room = get_room(client_id)
+    st = await _room_browser(room).state()
+    st["saved_session"] = "ig_sessionid" in room.get("vault", {})
+    return st
+
+
+@app.post("/api/browser/click")
+async def api_browser_click(req: BrowserClickPayload):
+    room = get_room(req.client_id)
+    try:
+        return await _room_browser(room).click(req.x, req.y)
+    except Exception as e:
+        return _browser_error_response(e)
+
+
+@app.post("/api/browser/type")
+async def api_browser_type(req: BrowserTypePayload):
+    room = get_room(req.client_id)
+    try:
+        # NOT: metin yalnızca tarayıcıya yazılır; loga/hafızaya alınmaz.
+        return await _room_browser(room).type_text(req.text)
+    except Exception as e:
+        return _browser_error_response(e)
+
+
+@app.post("/api/browser/press")
+async def api_browser_press(req: BrowserPressPayload):
+    room = get_room(req.client_id)
+    try:
+        return await _room_browser(room).press(req.key)
+    except Exception as e:
+        return _browser_error_response(e)
+
+
+@app.post("/api/browser/back")
+async def api_browser_back(req: BrowserClientPayload):
+    room = get_room(req.client_id)
+    try:
+        return await _room_browser(room).back()
+    except Exception as e:
+        return _browser_error_response(e)
+
+
+@app.post("/api/browser/save")
+async def api_browser_save(req: BrowserClientPayload):
+    room = get_room(req.client_id)
+    try:
+        sessionid = await _room_browser(room).session_cookie()
+    except Exception as e:
+        return _browser_error_response(e)
+    if not sessionid:
+        return {
+            "status": "no_session",
+            "saved": False,
+            "hint": "Tarayıcıda Instagram girişi tamamlanmamış (sessionid yok).",
+        }
+    room["vault"]["ig_sessionid"] = sessionid
+    broadcast_log(req.client_id, "INFO", "KASA: Canlı IG oturumu mühürlendi (sessionid).")
+    return {"status": "saved", "saved": True}
+
+
+@app.post("/api/browser/close")
+async def api_browser_close(req: BrowserClientPayload):
+    room = get_room(req.client_id)
+    return await _room_browser(room).close()
 
 
 @app.post("/api/scraper/authorize-alternative")

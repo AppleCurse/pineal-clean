@@ -1,12 +1,26 @@
 <script lang="ts">
-  import { onMount, afterUpdate } from 'svelte';
-  import { 
-    clientId, apiFetch, apiToken, setApiToken, currentApiToken, 
-    isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents, 
-    armEngaged, sigintEngaged, recordEngaged, keyUnlocked 
+  import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { get } from 'svelte/store';
+  import {
+    clientId, apiFetch, apiToken, setApiToken, currentApiToken,
+    isAuthFailure, isProcessing, logs, taskStatus, telemetryEvents,
+    armEngaged, sigintEngaged, recordEngaged, keyUnlocked, powerEngaged
   } from '../store';
   import { currentLang, t } from '../i18n';
-  import { playClick, playRunning, playHalt, playToggle } from '../lib/consoleAudio';
+  import { playClick, playRunning, playHalt, playToggle, setSoundEnabled } from '../lib/consoleAudio';
+  import {
+    health, sysTelemetry, uplinkState, throttleIdx, THROTTLE_DETENTS,
+    ttsRate, TTS_DETENTS, startHealthPoll, stopHealthPoll
+  } from '../lib/telemetry';
+  import AnalogGauge from './diesel/AnalogGauge.svelte';
+  import ToggleSwitch from './diesel/ToggleSwitch.svelte';
+  import KeyLock from './diesel/KeyLock.svelte';
+  import EmergencyStop from './diesel/EmergencyStop.svelte';
+  import SplitFlap from './diesel/SplitFlap.svelte';
+  import LcdLogin from './diesel/LcdLogin.svelte';
+
+  onMount(() => startHealthPoll());
+  onDestroy(() => stopHealthPoll());
 
   // ==========================================
   // ANALOG ŞALTER & DÜĞME FONKSİYONLARI (USER CODE)
@@ -50,16 +64,61 @@
     });
   }
 
-  // Knobs: THROTTLE, MIXTURE, PROP
+  function togglePower() {
+    powerEngaged.update(v => {
+      const next = !v;
+      playToggle(next);
+      // POWER bildirimi RECORD'dan muaftır: bilinçli kesintinin kaydı kaybolmaz.
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: next ? 'INFO' : 'WARNING', msg: next ? 'POWER: UPLINK AÇILDI' : 'POWER: UPLINK KAPATILDI' }]);
+      return next;
+    });
+  }
+
+  function emergencyStop() {
+    playHalt();
+    const active = get(isProcessing) || get(taskStatus)?.status === 'processing';
+    if (active) {
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'ERROR', msg: 'ACİL STOP: görev iptal emri verildi' }]);
+      cancelAnalysis();
+    } else {
+      playClick(120, 90);
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: 'ACİL STOP: hat boşta (iptal edilecek görev yok)' }]);
+    }
+  }
+
+  // Düğmeler GERÇEK işlevlidir (süs değil):
+  // THROTTLE → sağlık/telemetri ping aralığı · MIXTURE → Aspasia TTS hızı ·
+  // PROP → konsol sesleri ana şalteri. Her detent loglanır.
   let throttleAngle = 45;
   let mixtureAngle = 120;
   let propAngle = 210;
+  let soundOn = true;
 
-  function rotateKnob(knob: 'throttle' | 'mixture' | 'prop') {
+  function cycleThrottle() {
     playClick(240, 30);
-    if (knob === 'throttle') throttleAngle = (throttleAngle + 45) % 360;
-    if (knob === 'mixture') mixtureAngle = (mixtureAngle + 45) % 360;
-    if (knob === 'prop') propAngle = (propAngle + 45) % 360;
+    throttleAngle = (throttleAngle + 45) % 360;
+    throttleIdx.update(i => {
+      const next = (i + 1) % THROTTLE_DETENTS.length;
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: `THROTTLE: ping aralığı ${THROTTLE_DETENTS[next]} sn` }]);
+      return next;
+    });
+  }
+
+  function cycleMixture() {
+    playClick(240, 30);
+    mixtureAngle = (mixtureAngle + 45) % 360;
+    const cur = TTS_DETENTS.indexOf(get(ttsRate));
+    const next = TTS_DETENTS[(cur + 1) % TTS_DETENTS.length];
+    ttsRate.set(next);
+    logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: `MIXTURE: Aspasia TTS hızı ${next}x` }]);
+  }
+
+  function cycleProp() {
+    soundOn = !soundOn;
+    setSoundEnabled(soundOn);
+    propAngle = (propAngle + 45) % 360;
+    if (soundOn) playClick(240, 30);
+    logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: soundOn ? 'PROP: konsol sesi AÇIK' : 'PROP: konsol sesi KAPALI' }]);
   }
 
   // Odometer (REC 00087)
@@ -89,6 +148,36 @@
   ];
   
 // <ROUTING-GENERATED-END>
+
+  // --- İKİ DİLLİ ETİKETLER (EN gravür + TR alt satır) ---
+  // Ajan TR adları ROUTING bloğunun dışında tutulur (üretilmiş blok korunur).
+  const agentTr: Record<string, string> = {
+    mirror_truth: 'HAKİKAT AYNASI',
+    autonomous_verifier: 'OTONOM DOĞRULAYICI',
+    human_behavior: 'İNSAN DAVRANIŞI',
+    passion_mapper: 'TUTKU HARİTASI',
+    friction_detector: 'SÜRTÜNME & SINIRLAR',
+    cognitive_profiler: 'BİLİŞSEL PROFİL',
+    resonance_calc: 'REZONANS HESABI',
+    pattern_interrupt: 'ÖRÜNTÜ KESİCİ',
+    resonance_synthesizer: 'SAHİCİ KÖPRÜ',
+    vision_analyzer: 'GÖRÜ ANALİZİ',
+    osint_investigator: 'OSINT ARAŞTIRMACI',
+    authenticity_auditor: 'ÖZGÜNLÜK DENETÇİSİ',
+    depth_analyst: 'DERİNLİK ANALİZİ',
+  };
+  const tabTr: Record<string, string> = {
+    ASPASIA: 'ASPASİA', VISION: 'GÖRÜ', OSINT: 'OSINT',
+    FRICTION: 'SÜRTÜNME', VERIFY: 'DOĞRULA',
+  };
+  function trStatus(s: string): string {
+    const m: Record<string, string> = {
+      ready: 'HAZIR', degraded: 'KISMÎ', failed: 'HATALI',
+      unreachable: 'ERİŞİLEMEZ', unknown: 'BİLİNMEYEN',
+      processing: 'İŞLENİYOR', completed: 'TAMAMLANDI',
+    };
+    return m[(s || '').toLowerCase()] || (s || '').toUpperCase();
+  }
 
   // ==========================================
   // STATE & TELEMETRY
@@ -250,7 +339,7 @@
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(reply);
         u.lang = $currentLang === 'tr' ? 'tr-TR' : 'en-US';
-        u.rate = 1.0;
+        u.rate = get(ttsRate);
         window.speechSynthesis.speak(u);
       }
     } catch (error: any) {
@@ -264,6 +353,12 @@
 
   export async function triggerAnalysis() {
     if (!targetUrl) return;
+    // VAULT interlock: anahtar açılmadan ateşleme yok.
+    if (!$keyUnlocked) {
+      playHalt();
+      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'ERROR', msg: 'ATEŞLEME REDDEDİLDİ: VAULT anahtarı kilitli — önce anahtarı çevirin' }]);
+      return;
+    }
     if (!$armEngaged) {
       armEngaged.set(true);
       logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: 'SİSTEM KİLİDİ AÇILDI: ARM otonom aktif edildi' }]);
@@ -306,46 +401,58 @@
 </script>
 
 <div class="steampunk-console">
-  <!-- ==================== ÜST SIRA: 3 ANALOG DAİRESEL GÖSTERGE ==================== -->
+  <!-- ==================== ÜST SIRA: CANLI GÖSTERGELER + DURUM PANOSU ==================== -->
+  <!-- İbreler /health + /api/telemetry ölçümlerine bağlıdır; veri yoksa park eder. -->
   <div class="top-dials-row">
-    <!-- 1. LLM GATEWAY DIAL -->
-    <div class="gauge-enclosure">
-      <div class="gauge-outer-ring red-glow">
-        <div class="gauge-glass">
-          <div class="gauge-cage"></div>
-          <div class="gauge-spokes"></div>
-          <div class="gauge-face-marble">
-            <span class="gauge-bust">🏛️</span>
-          </div>
-          <div class="gauge-needle" style="transform: rotate({$isProcessing ? '65deg' : '-45deg'});"></div>
-        </div>
-      </div>
-      <div class="gauge-label-brass">LLM GATEWAY</div>
+    <LcdLogin />
+    <div class="dials-cluster">
+    <AnalogGauge
+      label="LLM GATEWAY"
+      tr="LLM GEÇİDİ"
+      tone="red"
+      value={$sysTelemetry.ok ? ($sysTelemetry.gateway ? 82 : 12) : null}
+      sub={$sysTelemetry.ok ? ($sysTelemetry.gateway ? `CANLI · $${$sysTelemetry.spendUsd.toFixed(2)}` : 'BEKLEMEDE (STANDBY)') : '—'}
+    />
+    <AnalogGauge
+      label="SCRAPER NODE"
+      tr="KAZIYICI DÜĞÜM"
+      tone="gold"
+      value={$sysTelemetry.ok ? (($sysTelemetry.scraper || $sysTelemetry.browser) ? 82 : 12) : null}
+      sub={$sysTelemetry.ok ? (($sysTelemetry.scraper || $sysTelemetry.browser) ? 'HAZIR (READY)' : 'TARAYICI YOK (NO BROWSER)') : '—'}
+    />
+    <AnalogGauge
+      label="CORE ENGINE"
+      tr="ÇEKİRDEK MOTOR"
+      tone="green"
+      value={$health.ok ? $health.integrityPct : null}
+      sub={$health.ok ? `${$health.integrityPct}% · ${$health.status.toUpperCase()} (${trStatus($health.status)})` : '—'}
+    />
     </div>
-
-    <!-- 2. SCRAPER NODE DIAL -->
-    <div class="gauge-enclosure">
-      <div class="gauge-outer-ring gold-glow">
-        <div class="gauge-glass">
-          <div class="gauge-gear {$isProcessing ? 'spinning' : ''}"></div>
-          <div class="gauge-hub"></div>
-        </div>
-      </div>
-      <div class="gauge-label-brass">SCRAPER NODE</div>
-    </div>
-
-    <!-- 3. CORE ENGINE DIAL -->
-    <div class="gauge-enclosure">
-      <div class="gauge-outer-ring white-glow">
-        <div class="gauge-glass">
-          <div class="gauge-sun-rays"></div>
-          <div class="gauge-face-classical">
-            <span class="gauge-bust">🗿</span>
-          </div>
-        </div>
-      </div>
-      <div class="gauge-label-brass">CORE ENGINE</div>
-    </div>
+    <SplitFlap
+      title="PINEAL · STATUS"
+      titleTr="PİNEAL DURUM PANOSU"
+      rows={[
+        { k: 'LATENCY', ktr: 'GECİKME', v: $health.ok && $health.latencyMs !== null ? `${$health.latencyMs}ms` : '—' },
+        { k: 'INTEGRITY', ktr: 'BÜTÜNLÜK', v: $health.ok ? `${$health.integrityPct}%` : '—' },
+        { k: 'HAT', ktr: 'LINE', v: $uplinkState },
+      ]}
+      foot={$health.ok ? `SYS ${$health.status.toUpperCase()} · NOMINAL` : 'SYS UNREACHABLE'}
+      footTr={$health.ok ? `SİS. ${trStatus($health.status)} · NOMİNAL` : 'SİS. ERİŞİLEMEZ'}
+      online={$uplinkState === 'ONLINE' && $health.ok}
+    />
+    <SplitFlap
+      title="SEFER · LEDGER"
+      titleTr="GÖREV DEFTERİ"
+      rows={[
+        { k: 'HARCAMA', ktr: 'SPEND', v: $sysTelemetry.ok ? `$${$sysTelemetry.spendUsd.toFixed(4)}` : '—' },
+        { k: 'TAVAN', ktr: 'CAP', v: $sysTelemetry.ok ? ($sysTelemetry.spendCapUsd > 0 ? `$${$sysTelemetry.spendCapUsd.toFixed(2)}` : 'YOK (NONE)') : '—' },
+        { k: 'REZERV', ktr: 'RESV', v: $sysTelemetry.ok ? String($sysTelemetry.activeReservations) : '—' },
+        { k: 'GÖREV', ktr: 'RUNS', v: $sysTelemetry.ok ? String($sysTelemetry.taskRuns) : '—' },
+      ]}
+      foot="BÜTÇE · QUOTA"
+      footTr={$sysTelemetry.ok ? 'CANLI AKIŞ' : 'VERİ YOK'}
+      online={$sysTelemetry.ok}
+    />
   </div>
 
   <!-- ==================== ANA KOKPİT GÖVDESİ (3 SÜTUN) ==================== -->
@@ -353,70 +460,63 @@
 
     <!-- SOL PANEL: DONANIM VE ŞALTERLER -->
     <aside class="left-hardware-rack">
-      <!-- 1. VAULT KEY LOCK -->
+      <!-- 1. VAULT KEY LOCK (ateşleme interlock'u) -->
       <div class="hardware-module keylock-module">
-        <div class="module-title">VAULT KEY LOCK</div>
-        <button class="brass-keyhole-disc {$keyUnlocked ? 'unlocked' : ''}" on:click={toggleKey} title="Click to insert & turn key">
-          <div class="keyhole-slot"></div>
-        </button>
+        <div class="module-title">VAULT KEY LOCK<span class="module-tr">KASA ANAHTAR KİLİDİ</span></div>
+        <KeyLock unlocked={$keyUnlocked} onToggle={toggleKey} />
+        <span class="knob-detent">{$keyUnlocked ? 'AÇIK · ateş serbest' : 'KİLİTLİ'}</span>
       </div>
 
-      <!-- 2. THROTTLE · MIXTURE · PROP -->
+      <!-- 2. THROTTLE · MIXTURE · PROP (gerçek işlevli detentler) -->
       <div class="hardware-module knobs-module">
-        <div class="module-title">THROTTLE &bull; MIXTURE &bull; PROP</div>
+        <div class="module-title">THROTTLE &bull; MIXTURE &bull; PROP<span class="module-tr">GAZ · KARIŞIM · PERVANE</span></div>
         <div class="knobs-row">
           <div class="knob-col">
-            <button class="knurled-knob" aria-label="Throttle knob" style="transform: rotate({throttleAngle}deg);" on:click={() => rotateKnob('throttle')}>
+            <button class="knurled-knob" aria-label="Throttle: ping aralığı" style="transform: rotate({throttleAngle}deg);" on:click={cycleThrottle}>
               <div class="knob-notch"></div>
             </button>
             <span class="knob-label">THROTTLE</span>
+            <span class="knob-tr">GAZ</span>
+            <span class="knob-detent">{THROTTLE_DETENTS[$throttleIdx]} sn</span>
           </div>
           <div class="knob-col">
-            <button class="knurled-knob" aria-label="Mixture knob" style="transform: rotate({mixtureAngle}deg);" on:click={() => rotateKnob('mixture')}>
+            <button class="knurled-knob" aria-label="Mixture: TTS hızı" style="transform: rotate({mixtureAngle}deg);" on:click={cycleMixture}>
               <div class="knob-notch"></div>
             </button>
             <span class="knob-label">MIXTURE</span>
+            <span class="knob-tr">KARIŞIM</span>
+            <span class="knob-detent">{$ttsRate}x</span>
           </div>
           <div class="knob-col">
-            <button class="knurled-knob" aria-label="Prop knob" style="transform: rotate({propAngle}deg);" on:click={() => rotateKnob('prop')}>
+            <button class="knurled-knob" aria-label="Prop: konsol sesi" style="transform: rotate({propAngle}deg);" on:click={cycleProp}>
               <div class="knob-notch"></div>
             </button>
             <span class="knob-label">PROP</span>
+            <span class="knob-tr">PERVANE</span>
+            <span class="knob-detent">{soundOn ? 'SES' : 'SESSİZ'}</span>
           </div>
         </div>
       </div>
 
-      <!-- 3. POWER SWITCHES (ARM, RECORD, SIGINT) -->
+      <!-- 3. POWER · ARM · RECORD · SIGINT -->
       <div class="hardware-module switches-module">
-        <div class="module-title">POWER</div>
+        <div class="module-title">POWER<span class="module-tr">GÜÇ</span></div>
         <div class="switches-row">
-          <div class="switch-col">
-            <div class="jewel-led {$armEngaged ? 'led-on-green' : 'led-off'}"></div>
-            <button class="brass-lever {$armEngaged ? 'lever-up' : 'lever-down'}" aria-label="ARM switch" on:click={toggleArm}>
-              <div class="lever-handle"></div>
-            </button>
-            <span class="switch-label">ARM</span>
-          </div>
-          <div class="switch-col">
-            <div class="jewel-led {$recordEngaged ? 'led-on-green' : 'led-off'}"></div>
-            <button class="brass-lever {$recordEngaged ? 'lever-up' : 'lever-down'}" aria-label="RECORD switch" on:click={toggleRecord}>
-              <div class="lever-handle"></div>
-            </button>
-            <span class="switch-label">RECORD</span>
-          </div>
-          <div class="switch-col">
-            <div class="jewel-led {$sigintEngaged ? 'led-on-red' : 'led-off'}"></div>
-            <button class="brass-lever {$sigintEngaged ? 'lever-up' : 'lever-down'}" aria-label="SIGINT switch" on:click={toggleSigint}>
-              <div class="lever-handle"></div>
-            </button>
-            <span class="switch-label">SIGINT</span>
-          </div>
+          <ToggleSwitch label="POWER" tr="GÜÇ" engaged={$powerEngaged} led="green" onToggle={togglePower} />
+          <ToggleSwitch label="ARM" tr="KURMA" engaged={$armEngaged} led="green" onToggle={toggleArm} />
+          <ToggleSwitch label="RECORD" tr="KAYIT" engaged={$recordEngaged} led="green" onToggle={toggleRecord} />
+          <ToggleSwitch label="SIGINT" tr="SİNYAL" engaged={$sigintEngaged} led="red" onToggle={toggleSigint} />
         </div>
+      </div>
+
+      <!-- 4. EMERGENCY STOP (işleyen görevi iptal eder) -->
+      <div class="hardware-module estop-module">
+        <EmergencyStop armed={$isProcessing || taskState === 'processing'} onPress={emergencyStop} />
       </div>
 
       <!-- 4. REC ODOMETER COUNTER (00087) -->
       <div class="hardware-module odometer-module">
-        <span class="counter-tag">REC</span>
+        <span class="counter-tag">REC <span class="tr-micro">(KAYIT)</span></span>
         <div class="odometer-bezel">
           <div class="odometer-digits">
             {#each String(odometer).padStart(5, '0').split('') as digit}
@@ -426,20 +526,22 @@
         </div>
       </div>
 
-      <!-- 5. STATUS ACTIVE LAMP -->
+      <!-- 6. STATUS ACTIVE LAMP -->
       <div class="hardware-module status-module">
-        <span class="status-title">STATUS<br>ACTIVE</span>
+        <span class="status-title">STATUS<br>ACTIVE<br><span class="tr-micro">DURUM: AKTİF</span></span>
         <div class="big-jewel-lamp {$isProcessing ? 'lamp-pulse' : 'lamp-steady'}"></div>
       </div>
 
-      <!-- 6. PINEAL TOKEN PLAQUE -->
+      <!-- 7. PINEAL TOKEN PLAQUE (canlı kasa durumu — uydurma seri no yok) -->
       <div class="hardware-module token-plaque">
         <div class="plaque-screw top-left"></div>
         <div class="plaque-screw top-right"></div>
         <div class="plaque-screw btm-left"></div>
         <div class="plaque-screw btm-right"></div>
         <div class="plaque-header">PINEAL TOKEN</div>
-        <div class="plaque-code">PH-v4.0-7F3X9K2</div>
+        <div class="plaque-tr">PİNEAL ANAHTARI</div>
+        <div class="plaque-code">{$apiToken ? 'KASA · AÇIK' : 'KASA · KİLİTLİ'}</div>
+        <div class="plaque-sub">{$clientId}</div>
       </div>
     </aside>
 
@@ -450,7 +552,7 @@
           <!-- Monitor Header -->
           <div class="crt-header">
             <div class="header-title-group">
-              <span class="font-cinzel deck-title">AGENT DECK &bull; ASPASIA OBSERVER</span>
+              <span class="font-cinzel deck-title">AGENT DECK &bull; ASPASIA OBSERVER<span class="deck-tr">AJAN GÜVERTESİ • ASPASİA GÖZLEM</span></span>
               <span class="sound-wave-icon {isSending ? 'wave-active' : ''}">)))</span>
             </div>
 
@@ -461,7 +563,7 @@
                   class="monitor-tab-btn {activeTab === tab ? 'tab-selected' : ''}" 
                   on:click={() => { activeTab = tab; playClick(300, 30); }}
                 >
-                  {tab}
+                  {tab}<span class="tab-tr">{tabTr[tab]}</span>
                 </button>
               {/each}
             </div>
@@ -471,17 +573,17 @@
           <div class="active-route-subbar">
             <div class="route-text">
               {#if ($isProcessing || taskState === 'processing') && currentAgent}
-                <b style="color: var(--gold);">ACTIVE:</b> {currentAgent}
+                <b style="color: var(--gold);">AKTİF (ACTIVE):</b> {currentAgent}
                 &bull; <b style="color: var(--gold);">MODEL:</b> {runs[currentAgent]?.model || agentList.find(a => a.id === currentAgent)?.primaryModel || 'auto'}
-                &bull; <b style="color: var(--gold);">VIA:</b> {runs[currentAgent]?.via || agentList.find(a => a.id === currentAgent)?.via || 'unified-router'}
+                &bull; <b style="color: var(--gold);">YOL (VIA):</b> {runs[currentAgent]?.via || agentList.find(a => a.id === currentAgent)?.via || 'unified-router'}
               {:else if $isProcessing || taskState === 'processing'}
-                <b style="color: var(--gold);">STATUS:</b> İŞLENİYOR (Ajan başlatılıyor...)
+                <b style="color: var(--gold);">DURUM (STATUS):</b> İŞLENİYOR (Ajan başlatılıyor...)
               {:else if taskState === 'completed'}
-                <b style="color: #22c55e;">STATUS:</b> TAMAMLANDI (Tüm kanıtlar doğrulandı)
+                <b style="color: #22c55e;">DURUM (STATUS):</b> TAMAMLANDI (Tüm kanıtlar doğrulandı)
               {:else if taskState && taskState.startsWith('halted')}
-                <b style="color: #ef4444;">STATUS:</b> DURDURULDU ({haltedReason || taskState})
+                <b style="color: #ef4444;">DURUM (STATUS):</b> DURDURULDU ({haltedReason || taskState})
               {:else}
-                <b style="color: var(--gold);">STATUS:</b> BEKLEMEDE (Sistem Hazır &bull; Hedef Bekleniyor)
+                <b style="color: var(--gold);">DURUM (STATUS):</b> BEKLEMEDE (Sistem Hazır &bull; Hedef Bekleniyor)
               {/if}
             </div>
             <div class="route-dots">
@@ -494,7 +596,7 @@
             <input 
               type="text" 
               bind:value={targetUrl} 
-              placeholder="Hedef kullanıcı adı veya URL girin (@kullanici)..." 
+              placeholder="Hedef kullanıcı adı / URL (@kullanici) · Target username / URL..." 
               disabled={$isProcessing} 
             />
             <button 
@@ -502,7 +604,7 @@
               on:click={triggerAnalysis} 
               disabled={$isProcessing || !targetUrl}
             >
-              {$isProcessing ? 'İŞLENİYOR...' : 'BAŞLAT'}
+              {$isProcessing ? 'İŞLENİYOR (BUSY)...' : 'BAŞLAT (LAUNCH)'}
             </button>
           </div>
 
@@ -539,11 +641,11 @@
               class="terminal-input"
               bind:value={inputMessage} 
               on:keydown={handleKeydown} 
-              placeholder="Enter command or query..." 
+              placeholder="Komut girin · Enter command or query..." 
               disabled={isSending} 
             />
             <button class="brass-send-btn" on:click={sendMessage} disabled={isSending || (!inputMessage.trim() && !attachedImage)}>
-              SEND
+              GÖNDER (SEND)
             </button>
           </div>
         </div>
@@ -553,7 +655,7 @@
     <!-- SAĞ PANEL: AJAN ZİNCİRİ (KULLANICININ VERDİĞİ KODUN TAM VE EKSİKSİZ UYARLAMASI) -->
     <aside class="right-agent-rack">
       <div class="rack-header">
-        <span class="font-cinzel rack-title">AJAN ZİNCİRİ</span>
+        <span class="font-cinzel rack-title">AJAN ZİNCİRİ<span class="rack-tr">AGENT CHAIN · 13 CANLI AJAN</span></span>
         <div class="jewel-led led-on-green"></div>
       </div>
 
@@ -578,11 +680,12 @@
 
               <div class="agent-info-meta">
                 <div class="agent-title-text">{agent.name}</div>
+                <div class="agent-tr">{agentTr[agent.id] || ''}</div>
                 <div class="agent-spec-lines">
-                  <div><b style="color: var(--gold);">STATUS:</b> {isCompleted ? 'DONE' : isHalted ? 'HALT' : isRunning ? 'RUNNING' : 'WAIT'}</div>
+                  <div><b style="color: var(--gold);">DURUM:</b> {isCompleted ? 'TAMAM' : isHalted ? 'DURDU' : isRunning ? 'ÇALIŞIYOR' : 'BEKLİYOR'}</div>
                   <div><b style="color: var(--gold);">MODEL:</b> {liveModel}</div>
-                  <div><b style="color: var(--gold);">VIA:</b> {liveVia}</div>
-                  <div><b style="color: var(--gold);">CALL:</b> {provCallId ? provCallId.slice(0, 14) + '…' : '—'}</div>
+                  <div><b style="color: var(--gold);">YOL:</b> {liveVia}</div>
+                  <div><b style="color: var(--gold);">ÇAĞRI:</b> {provCallId ? provCallId.slice(0, 14) + '…' : '—'}</div>
                 </div>
               </div>
 
@@ -609,6 +712,7 @@
           <span class="forensic-icon">🕸️</span>
         </div>
         <span class="forensic-name">FOLLOWER</span>
+        <span class="forensic-tr">TAKİPÇİ</span>
       </button>
 
       <button class="round-brass-btn {activeForensicModal === 'timing' ? 'btn-active' : ''}" on:click={() => toggleForensic('timing')}>
@@ -616,6 +720,7 @@
           <span class="forensic-icon">⏱️</span>
         </div>
         <span class="forensic-name">TIMING</span>
+        <span class="forensic-tr">ZAMANLAMA</span>
       </button>
 
       <button class="round-brass-btn {activeForensicModal === 'depth' ? 'btn-active' : ''}" on:click={() => toggleForensic('depth')}>
@@ -623,6 +728,7 @@
           <span class="forensic-icon">📑</span>
         </div>
         <span class="forensic-name">DEPTH</span>
+        <span class="forensic-tr">DERİNLİK</span>
       </button>
 
       <button class="round-brass-btn {activeForensicModal === 'visual' ? 'btn-active' : ''}" on:click={() => toggleForensic('visual')}>
@@ -630,6 +736,7 @@
           <span class="forensic-icon">👁️</span>
         </div>
         <span class="forensic-name">VISUAL</span>
+        <span class="forensic-tr">GÖRSEL</span>
       </button>
 
       <button class="round-brass-btn {activeForensicModal === 'shadow' ? 'btn-active' : ''}" on:click={() => toggleForensic('shadow')}>
@@ -637,6 +744,7 @@
           <span class="forensic-icon">🎭</span>
         </div>
         <span class="forensic-name">SHADOW</span>
+        <span class="forensic-tr">GÖLGE</span>
       </button>
 
       <button class="round-brass-btn {activeForensicModal === 'osint' ? 'btn-active' : ''}" on:click={() => toggleForensic('osint')}>
@@ -644,6 +752,7 @@
           <span class="forensic-icon">🌐</span>
         </div>
         <span class="forensic-name">OSINT</span>
+        <span class="forensic-tr">OSINT</span>
       </button>
 
       <button class="round-brass-btn {activeForensicModal === 'resonance' ? 'btn-active' : ''}" on:click={() => toggleForensic('resonance')}>
@@ -651,6 +760,7 @@
           <span class="forensic-icon">🎯</span>
         </div>
         <span class="forensic-name">RESONANCE</span>
+        <span class="forensic-tr">REZONANS</span>
       </button>
     </div>
   </footer>
@@ -741,110 +851,21 @@
     position: relative;
   }
 
-  /* --- TOP DIALS ROW --- */
+  /* --- TOP DIALS ROW (canlı göstergeler + split-flap pano) --- */
   .top-dials-row {
     display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 40px;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
     padding-bottom: 8px;
+    flex-wrap: wrap;
   }
-
-  .gauge-enclosure {
+  .dials-cluster {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .gauge-outer-ring {
-    width: 95px;
-    height: 95px;
-    border-radius: 50%;
-    background: radial-gradient(circle, #2d1c0f 40%, #5a3d1c 90%, #8a6332 100%);
-    border: 3px solid #b8860b;
-    box-shadow: inset 0 0 15px rgba(0,0,0,0.9), 0 4px 10px rgba(0,0,0,0.8);
-    display: flex;
-    align-items: center;
+    gap: 28px;
+    flex-wrap: wrap;
     justify-content: center;
-    position: relative;
-  }
-
-  .gauge-outer-ring.red-glow {
-    box-shadow: inset 0 0 20px rgba(239,68,68,0.4), 0 0 15px rgba(239,68,68,0.25);
-  }
-  .gauge-outer-ring.gold-glow {
-    box-shadow: inset 0 0 20px rgba(212,175,55,0.4), 0 0 15px rgba(212,175,55,0.2);
-  }
-  .gauge-outer-ring.white-glow {
-    box-shadow: inset 0 0 20px rgba(255,255,255,0.2), 0 0 15px rgba(255,255,255,0.1);
-  }
-
-  .gauge-glass {
-    width: 78px;
-    height: 78px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.15), rgba(0,0,0,0.9) 80%);
-    border: 1px solid #3d2711;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
-
-  .gauge-needle {
-    position: absolute;
-    width: 2px;
-    height: 35px;
-    background: #ef4444;
-    bottom: 39px;
-    transform-origin: bottom center;
-    transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-    box-shadow: 0 0 6px #ef4444;
-  }
-
-  .gauge-gear {
-    width: 50px;
-    height: 50px;
-    border: 4px dashed #99733d;
-    border-radius: 50%;
-  }
-
-  .gauge-gear.spinning {
-    animation: spinGear 4s linear infinite;
-  }
-
-  @keyframes spinGear {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-
-  .gauge-hub {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #d4af37;
-    border: 2px solid #553a18;
-  }
-
-  .gauge-bust {
-    font-size: 24px;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
-  }
-
-  .gauge-label-brass {
-    font-family: 'Cinzel', serif;
-    font-size: 9px;
-    font-weight: 800;
-    color: var(--gold);
-    letter-spacing: 1px;
-    background: #170d06;
-    border: 1px solid #5a3d1c;
-    padding: 2px 8px;
-    border-radius: 3px;
-    box-shadow: inset 0 1px 0 rgba(212,175,55,0.3);
+    align-items: flex-start;
   }
 
   /* --- MAIN COCKPIT 3-COLUMN GRID --- */
@@ -887,32 +908,7 @@
     margin-bottom: 6px;
   }
 
-  /* Keylock */
-  .brass-keyhole-disc {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    background: radial-gradient(circle, #8a6332 0%, #4a3014 90%);
-    border: 2px solid #b8860b;
-    box-shadow: 0 3px 6px rgba(0,0,0,0.7), inset 0 1px 1px #fff4;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .brass-keyhole-disc.unlocked {
-    box-shadow: 0 0 10px #10b981, inset 0 0 6px #10b981;
-    border-color: #10b981;
-  }
-  .keyhole-slot {
-    width: 6px;
-    height: 18px;
-    background: #000;
-    border-radius: 3px 3px 1px 1px;
-    position: relative;
-  }
-
-  /* Knobs */
+  /* Knobs (KeyLock bileşenine taşındı) */
   .knobs-row {
     display: flex;
     justify-content: space-around;
@@ -951,17 +947,28 @@
     font-weight: 700;
   }
 
-  /* Switches */
+  /* Switches (ToggleSwitch bileşenleri; 4'lü sıra) */
   .switches-row {
     display: flex;
-    justify-content: space-around;
+    justify-content: space-between;
+    align-items: flex-start;
     width: 100%;
+    gap: 2px;
   }
-  .switch-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
+  .knob-detent {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7px;
+    font-weight: 700;
+    color: #7dfcd0;
+    background: #050302;
+    border: 1px solid #3d2b17;
+    border-radius: 2px;
+    padding: 1px 5px;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .estop-module {
+    padding: 4px 8px 8px;
   }
   .jewel-led {
     width: 7px;
@@ -971,43 +978,6 @@
   .led-on-green {
     background: #10b981;
     box-shadow: 0 0 8px #10b981, 0 0 2px #fff;
-  }
-  .led-on-red {
-    background: #ef4444;
-    box-shadow: 0 0 8px #ef4444;
-  }
-  .led-off {
-    background: #1b120a;
-    box-shadow: inset 0 1px 2px #000;
-  }
-
-  .brass-lever {
-    width: 22px;
-    height: 34px;
-    background: #120904;
-    border: 1px solid #5a3d1c;
-    border-radius: 4px;
-    cursor: pointer;
-    position: relative;
-    padding: 0;
-  }
-  .lever-handle {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: radial-gradient(circle, #d4af37, #7a5629);
-    position: absolute;
-    left: 3px;
-    box-shadow: 0 2px 4px #000;
-    transition: top 0.15s ease;
-  }
-  .lever-up .lever-handle { top: 3px; }
-  .lever-down .lever-handle { top: 15px; }
-
-  .switch-label {
-    font-size: 7px;
-    color: var(--text-dim);
-    font-weight: 700;
   }
 
   /* Odometer */
@@ -1095,6 +1065,7 @@
   .plaque-screw.btm-right { bottom: 3px; right: 3px; }
   .plaque-header { font-family: 'Cinzel', serif; font-size: 8px; font-weight: 900; letter-spacing: 0.5px; }
   .plaque-code { font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
+  .plaque-sub { font-family: 'JetBrains Mono', monospace; font-size: 7px; font-weight: 500; letter-spacing: 0.5px; opacity: 0.75; margin-top: 2px; }
 
   /* --- CENTER MONITOR CHASSIS --- */
   .center-monitor-chassis {
@@ -1472,6 +1443,17 @@
   }
   .fill-red { background: #ef4444; }
   .fill-dim { background: transparent; }
+
+  /* --- İKİ DİLLİ ALT SATIRLAR (TR) --- */
+  .module-tr { display: block; font-family: 'JetBrains Mono', monospace; font-size: 7px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.4px; margin-top: 1px; }
+  .knob-tr { font-family: 'JetBrains Mono', monospace; font-size: 6px; font-weight: 700; color: var(--text-muted); }
+  .tr-micro { font-family: 'JetBrains Mono', monospace; font-size: 7px; color: var(--text-muted); }
+  .deck-tr { display: block; font-family: 'JetBrains Mono', monospace; font-size: 7px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.8px; margin-top: 1px; }
+  .tab-tr { display: block; font-family: 'JetBrains Mono', monospace; font-size: 6px; font-weight: 500; color: var(--text-muted); }
+  .rack-tr { display: block; font-family: 'JetBrains Mono', monospace; font-size: 7px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.8px; }
+  .agent-tr { font-family: 'JetBrains Mono', monospace; font-size: 7px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .forensic-tr { font-family: 'JetBrains Mono', monospace; font-size: 6px; font-weight: 700; color: var(--text-muted); }
+  .plaque-tr { font-family: 'JetBrains Mono', monospace; font-size: 6px; font-weight: 700; letter-spacing: 0.5px; opacity: 0.7; }
 
   /* --- BOTTOM FORENSIC BAR --- */
   .bottom-forensic-bar {
