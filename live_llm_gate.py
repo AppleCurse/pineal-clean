@@ -44,7 +44,7 @@ CRITICAL_AGENTS = (
     "pattern_interrupt",
 )
 
-DEFAULT_JUDGE_MODEL = "openai/gpt-5.6-sol-pro"  # "hakem / kritik gorev" (kullanici listesi #9)
+DEFAULT_JUDGE_MODEL = "openai/gpt-5.6-luna"
 
 
 def main() -> int:
@@ -61,14 +61,26 @@ def main() -> int:
 async def _run_gate(key: str) -> int:
     from agent_core.task_executor import PinealExecutor
 
-    os.environ.setdefault("OPENROUTER_MAX_OUTPUT_TOKENS", "800")
+    os.environ.setdefault("OPENROUTER_MAX_OUTPUT_TOKENS", "180")
     os.environ.setdefault("PINEAL_ALLOW_UNPRICED_MODELS", "1")
-    os.environ.setdefault(
-        "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR",
-        "openai/gpt-oss-120b,openai/gpt-5.6-luna,deepseek/deepseek-v4-flash,google/gemini-3.7-flash",
-    )
+    os.environ.setdefault("OPENROUTER_JUDGE_MODEL", "openai/gpt-5.6-luna")
+    os.environ.setdefault("OPENROUTER_TIER_1_MODEL", "openai/gpt-5.6-luna")
+
+    fast_chain = "openai/gpt-oss-120b,openai/gpt-5.6-luna,deepseek/deepseek-v4-flash"
+    for ag in (
+        "MIRROR_TRUTH",
+        "HUMAN_BEHAVIOR",
+        "PASSION_MAPPER",
+        "FRICTION_DETECTOR",
+        "COGNITIVE_PROFILER",
+        "PATTERN_INTERRUPT",
+        "RESONANCE_SYNTHESIZER",
+        "AUTONOMOUS_VERIFIER",
+    ):
+        os.environ.setdefault(f"OPENROUTER_AGENT_CHAIN_{ag}", fast_chain)
+
     executor = PinealExecutor(log_callback=lambda lvl, msg: print(f"[{lvl}] {msg}"))
-    executor.llm_gateway.max_output_tokens = 800
+    executor.llm_gateway.max_output_tokens = 180
     executor.llm_gateway.set_key(key, unlock_live=True)
 
     # Kisa ve gercekci girdi: token maliyetini sinirli tutar, 360 yolunun
