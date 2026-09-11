@@ -36,6 +36,8 @@ WORKDIR /app
 # yeniden üretmek için requirements.lock başlığındaki tarife bakın.)
 COPY requirements.lock ./
 RUN pip install --default-timeout=300 -r requirements.lock
+# Railway/WebSocket kapısı: uvicorn'un WebSocket yolu runtime'da açıkça garanti edilir.
+RUN pip install --default-timeout=120 "websockets==17.1"
 
 # Opsiyonel Playwright indirme aynası (bölgesel CDN engeli; build-time).
 # Kullanım: .env → PLAYWRIGHT_DOWNLOAD_HOST=... sonra docker compose build pineal
@@ -70,4 +72,4 @@ r = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4); \
 d = json.loads(r.read()); \
 sys.exit(0 if d.get('status') in ('ready', 'degraded') else 1)" || exit 1
 
-CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PINEAL_PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-${PINEAL_PORT:-8000}}"]
