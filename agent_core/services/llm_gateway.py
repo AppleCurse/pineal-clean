@@ -301,6 +301,8 @@ def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
     err = str(exc).lower()
     if isinstance(exc, SpendCapExceeded):
         return False
+    if "in_flight" in err or "in-flight" in err:
+        return True
     if any(marker in err for marker in ("401", "unauthorized", "invalid_api_key")):
         return False
     if any(marker in err for marker in _FALLBACK_GUARD_MARKERS):
@@ -1036,11 +1038,14 @@ class LLMGateway:
         except Exception:
             pass
 
+        err = str(exc).lower()
+        if "in_flight" in err or "in-flight" in err:
+            return True
+
         status = getattr(exc, "status_code", None)
         if isinstance(status, int):
             return status in (408, 429) or 500 <= status < 600
 
-        err = str(exc).lower()
         if any(m in err for m in (
             "timeout", "timed out", "connection", "connect", "refused",
             "reset", "10061", "429", "rate limit", "rate_limit",

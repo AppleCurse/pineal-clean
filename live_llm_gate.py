@@ -65,7 +65,7 @@ async def _run_gate(key: str) -> int:
     os.environ.setdefault("PINEAL_ALLOW_UNPRICED_MODELS", "1")
     os.environ.setdefault(
         "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR",
-        "google/gemini-3.7-flash,deepseek/deepseek-v4-pro,anthropic/claude-sonnet-5",
+        "openai/gpt-oss-120b,openai/gpt-5.6-luna,deepseek/deepseek-v4-flash,google/gemini-3.7-flash",
     )
     executor = PinealExecutor(log_callback=lambda lvl, msg: print(f"[{lvl}] {msg}"))
     executor.llm_gateway.max_output_tokens = 800
