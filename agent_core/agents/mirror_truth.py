@@ -60,18 +60,32 @@ class MirrorOfTruth:
             f"Kıskançlık/Arzu: {merged_user['secret_envies']}\n\n"
             f"Algoritmik frekans sinyali: {core_freq}\n"
             f"Anchor'lar: {anchors}\n"
-            f"{sacred_rules}\n"
+            f"{sacred_rules}\n\n"
+            "Confidence kuralı: confidence alanını yalnızca verilen kullanıcı kanıtlarının tamlığına göre 0.0 ile 1.0 arasında ölç; veri yetersizse 0.0 döndür.\n"
             "Beklenen JSON formatında çıktı üret."
         )
 
         try:
             # F-3: agent kimliği matrise bağlandı (task fallback yerine SoT zinciri)
-            return await self.llm_gateway.query_json_chain(
+            result = await self.llm_gateway.query_json_chain(
                 prompt,
                 MirrorReflection,
                 task="dialogue",
                 agent_name="mirror_truth",
             )
+            has_reflection = bool(
+                result.surface_persona
+                and result.surface_persona != "bilinmiyor_llm_kapali"
+                and result.authentic_anchors
+                and result.alignment_score > 0.0
+            )
+            conf = result.confidence if (getattr(result, "confidence", 0.0) > 0.0) else (0.85 if has_reflection else 0.0)
+            has_valid_evidence = has_reflection and (conf > 0.0)
+            return result.model_copy(update={
+                "confidence": conf,
+                "data_confidence": has_valid_evidence,
+                "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence",
+            })
         except Exception as exc:
             log.warning(
                 "MirrorOfTruth: LLM atlandı, deterministik fallback kullanılıyor: %s - %s",

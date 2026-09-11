@@ -8,6 +8,8 @@ Kural: karakter sayısı confidence ÜRETMEZ.
 - şemada olmayan ekstra alanlar confidence'i YÜKSELTMEMELİ
 """
 
+import pytest
+
 from agent_core.agents.mirror_truth import MirrorReflection
 from agent_core.domain.memory_models import PassionProfile
 from agent_core.services.uncertainty_engine import UncertaintyEngine
@@ -129,3 +131,38 @@ def test_list_score_is_constant_not_length_based():
     empty = engine._score_field_value([], empty_list_penalty=0.12)
     assert short_items == long_items == 1.0
     assert empty == 0.12
+
+
+@pytest.mark.asyncio
+async def test_mirror_of_truth_sets_confidence_when_grounded():
+    """MirrorOfTruth valid LLM sonucunda confidence >= 0.70 ve data_confidence=True donmeli."""
+    from unittest.mock import AsyncMock
+    from agent_core.agents.mirror_truth import MirrorOfTruth, MirrorReflection
+
+    mock_gateway = AsyncMock()
+    mock_gateway.query_json_chain = AsyncMock(return_value=MirrorReflection(
+        user_core_frequency="ambient_fotograf_gece",
+        surface_persona="Sessiz ve estetik gozlemci",
+        alignment_score=0.88,
+        authentic_anchors=["fotograf_anchor", "gece_anchor"],
+        confidence=0.0,
+    ))
+
+    agent = MirrorOfTruth(llm_gateway=mock_gateway)
+    res = await agent.execute({
+        "user_profile": {
+            "private_rituals": ["gece okumalari", "fotograf"],
+            "late_night_playlist": ["ambient", "caz"],
+            "secret_envies": ["sahici diyalog"],
+        }
+    })
+
+    assert res.confidence >= 0.70
+    assert res.data_confidence is True
+    assert res.fallback_reason is None
+
+    engine = UncertaintyEngine()
+    report = engine.evaluate(res, "mirror_truth")
+    assert not report.is_suspicious
+    assert report.confidence >= 0.70
+
