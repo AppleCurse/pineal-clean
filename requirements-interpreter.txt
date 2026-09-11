@@ -1,0 +1,16 @@
+# OPSİYONEL Open Interpreter katmanı — production imajına ve CI'a GİRMEZ.
+#
+# [AUDIT 2026-09-11 P0] open-interpreter bu dosyaya taşındı çünkü 0.4.x wheel
+# metadata'si `starlette>=0.37.2,<0.38.0` dayatıyor; bu pin CVE-2026-48710
+# "BadHost" düzeltmesinin (starlette>=1.0.1) kurulmasını engelliyordu.
+# Güvenlik hattı (auth middleware) opsiyonel bir aracın pin'ine rehin olamaz.
+#
+# Kod tarafı zaten izolasyona hazır:
+#   - agent_core/agents/interpreter_agent.py lazy import + dürüst fallback
+#   - ENABLE_INTERPRETER=true kapısı (varsayılan: kapalı)
+#   - registry'ye yalnızca kapı açıkken kaydedilir (task_executor.py)
+#
+# Kurulum (ayrı adım; core ile AYNI pip işleminde KURMAYIN — starlette pin'i
+# resolver'da çakışır):
+#   pip install -r requirements.txt && pip install -r requirements-interpreter.txt
+open-interpreter>=0.4.0

@@ -207,10 +207,26 @@ def _openai_error(message: str, error_type: str, code: str, param: Optional[str]
     }
 
 
+def _secure_path(request: Request) -> str:
+    """Güvenlik kararları için TEK GERÇEK kaynak: ham ASGI path.
+
+    [AUDIT 2026-09-11 P0-1 / CVE-2026-48710 "BadHost", GHSA-86qp-5c8j-p5mr]
+    request.url, DOĞRULANMAMIŞ Host header'ından yeniden kurulur: Starlette
+    <=1.0.0'da Host içine '/', '?' veya '#' yerleştirilerek request.url.path,
+    router'ın dispatch ettiği GERÇEK path'ten farklı gösterilebilir ve
+    startswith("/api/") tarzı kontroller atlatılır (ampirik PoC:
+    starlette 0.37.2 + Host: x/zzz?y= -> tokensiz istek /api/* ucundan 200 aldı).
+    scope["path"] sunucunun aldığı ham yoldur; Host zehirlenmesinden etkilenmez.
+    Eksikse boş döner -> hiçbir güvenlik öneki eşleşmez (fail-closed).
+    """
+    return request.scope.get("path", "")
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    is_api = request.url.path.startswith("/api/")
-    is_openai = request.url.path.startswith("/v1/")
+    path = _secure_path(request)
+    is_api = path.startswith("/api/")
+    is_openai = path.startswith("/v1/")
     if (is_api or is_openai) and request.method != "OPTIONS":
         try:
             posture = security_posture()
@@ -251,7 +267,7 @@ async def auth_middleware(request: Request, call_next):
         # client_id'yi anahtar olarak kullanıyordu; client_id her istekte
         # değiştirilince sınır hiç devreye girmiyordu (ölçülen: 200/200 geçti).
         request.state.rate_identity = identity_hash
-        if request.url.path.startswith("/api/experimental/"):
+        if path.startswith("/api/experimental/"):
             if not rate_limit(f"experimental:{identity_hash}", "experimental"):
                 return JSONResponse(
                     {"error": {"code": "RATE_LIMITED", "message": "Experimental endpoint rate limit exceeded"}},
@@ -289,7 +305,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 async def http_error_handler(request: Request, exc: StarletteHTTPException):
     body = (
         _openai_error(str(exc.detail), "invalid_request_error", str(exc.status_code))
-        if request.url.path.startswith("/v1/")
+        if _secure_path(request).startswith("/v1/")
         else {"error": {"code": str(exc.status_code), "message": str(exc.detail)}}
     )
     return JSONResponse(body, status_code=exc.status_code)
@@ -297,7 +313,7 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    if not request.url.path.startswith("/v1/"):
+    if not _secure_path(request).startswith("/v1/"):
         return await request_validation_exception_handler(request, exc)
     first_error = exc.errors()[0] if exc.errors() else {}
     location = first_error.get("loc", ())
@@ -317,7 +333,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 async def unhandled_error_handler(request: Request, exc: Exception):
     body = (
         _openai_error("Internal server error", "server_error", "internal_error")
-        if request.url.path.startswith("/v1/")
+        if _secure_path(request).startswith("/v1/")
         else {"error": {"code": "INTERNAL", "message": type(exc).__name__}}
     )
     return JSONResponse(body, status_code=500)
@@ -662,10 +678,10 @@ async def room_capacity_handler(request: Request, exc: RoomCapacityExceeded):
     500 değil 503 döner: istemci (ve yük dengeleyici) bunu "geçici, tekrar
     denenebilir" olarak yorumlar; 500 ile karıştırılıp alarm üretilmez.
     """
-    logger.warning("ROOM_CAPACITY_EXCEEDED path=%s", request.url.path)
+    logger.warning("ROOM_CAPACITY_EXCEEDED path=%s", _secure_path(request))
     body = (
         _openai_error("Server room capacity exceeded", "server_error", "room_capacity_exceeded")
-        if request.url.path.startswith("/v1/")
+        if _secure_path(request).startswith("/v1/")
         else {"error": {"code": "ROOM_CAPACITY_EXCEEDED", "message": str(exc)}}
     )
     return JSONResponse(body, status_code=503)
@@ -1603,16 +1619,19 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         room["websockets"].discard(websocket)
 
 class InitiatePayload(BaseModel):
-    client_id: str
-    url: str
-    rituals: str
-    playlist: str
-    envies: str
-    scraper_type: str = "instagram"
+    # [AUDIT 2026-09-11 P2] Public /api/initiate gövdesi sınırsız string
+    # kabul ediyordu (OpenAI ucu 1 MiB + alan limitliyken burası değildi).
+    # Bellek/istismar yüzeyini daraltmak için katı alan tavanları:
+    client_id: str = Field(max_length=_MAX_CLIENT_ID_LENGTH)
+    url: str = Field(max_length=8_192)
+    rituals: str = Field(max_length=32_000)
+    playlist: str = Field(max_length=32_000)
+    envies: str = Field(max_length=32_000)
+    scraper_type: str = Field(default="instagram", max_length=64)
     # ASPASIA TRUE CHIEF LAYER: kullanicinin AMACI (goal id'leri) görev
     # verisiyle birlikte tasinir — ama AJAN SECIMI degil; sozlesme tek
     # kaynagi CognitiveRouter.GOAL_FOCUS. Bos = eski davranis (compat).
-    aspasia_goals: List[str] = []
+    aspasia_goals: List[str] = Field(default_factory=list, max_length=64)
     # [037] fix: aggressiveness/evidence_th kabul ediliyordu ama HİÇBİR davranışa
     # bağlanmamıştı (ölü API sözleşmesi). Kaldırıldı; eşik ayarı gerekiyorsa
     # DecisionConfig üzerinden gerçek davranışla bağlanmalı. Eski istemcilerin

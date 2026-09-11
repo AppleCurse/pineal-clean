@@ -34,10 +34,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install dependencies (Dockerfile ile aynı iki adım)
+      - name: Install dependencies (Dockerfile ile aynı deterministik lock)
         run: |
-          pip install --default-timeout=300 -r requirements.txt
-          pip install --default-timeout=300 -r requirements-osint.txt
+          pip install --default-timeout=300 -r requirements.lock
       - name: Fail-closed secret kontrolu
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
