@@ -157,7 +157,7 @@ async def _judge(executor, result) -> bool:
     hp = result.holistic_profile
     bridge = hp.bridge if hp else None
     summary = {
-        "status": result.status,
+        "status": "completed_profile" if result.holistic_profile else str(result.status),
         "evidence_adimlari": [e.get("agent") for e in result.evidence_chain],
         "passions": (hp.passions.core_passions if hp and hp.passions else []),
         "frictions": (hp.frictions.sensitivities if hp and hp.frictions else []),
@@ -169,8 +169,10 @@ async def _judge(executor, result) -> bool:
     prompt = (
         "Sen bagimsiz bir kalite hakemisin. Asagidaki 360 profil ciktisini "
         "degerlendir: sonuc tutarli mi ve uretilen ilk temas mesaji varlik/"
-        "ictenlik acisindan makul mu? Yalniz 'APPROVE' veya 'REJECT' yaz, "
-        "tek kelime:\n\n" + json.dumps(summary, ensure_ascii=False)[:2000]
+        "ictenlik acisindan makul mu? Profil basariyla cikarilmis ve temas mesaji "
+        "yapmaciksiz ise 'APPROVE', aksi halde 'REJECT' yaz. "
+        "Yanitini kisa gerekce ve ardindan APPROVE veya REJECT olarak ver:\n\n"
+        + json.dumps(summary, ensure_ascii=False)[:2000]
     )
     try:
         raw = await executor.llm_gateway.query(
@@ -179,9 +181,10 @@ async def _judge(executor, result) -> bool:
             model=model,
             system_prompt="Sen titiz bir cikti denetcisisin.",
         )
-        verdict = (raw or "").strip().upper()
-        print(f"  [hakem {model}]: {verdict[:80]}")
-        return "APPROVE" in verdict and "REJECT" not in verdict
+        verdict = (raw or "").strip()
+        print(f"  [hakem {model}]: {verdict[:300]}")
+        verdict_upper = verdict.upper()
+        return "APPROVE" in verdict_upper and not verdict_upper.endswith("REJECT")
     except Exception as exc:  # hakem cagrisi hicbir sekilde sessiz gecmemeli
         print(f"  [FAIL] hakem cagrisi hata verdi: {exc}")
         return False
