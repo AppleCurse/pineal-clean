@@ -362,7 +362,9 @@ class LLMGateway:
         "openai/gpt-oss-120b": {"in": 0.15, "out": 0.60},
         # live_llm_gate.py varsayılan hakemi (OPENROUTER_JUDGE_MODEL). Guard bunu
         # fiyatsız görüp gate'i UNKNOWN_PRICING ile düşürüyordu — eklendi.
-        "openai/gpt-5.6-sol-pro": {"in": 2.0, "out": 10.0}
+        "openai/gpt-5.6-sol-pro": {"in": 2.0, "out": 10.0},
+        # FAZ-2 free model accounting record
+        "poolside/laguna-s-2.1:free": {"in": 0.0, "out": 0.0},
     }
     
     # Defaults follow the 2026-09-02 decision matrix (retired promo slugs are
@@ -2684,7 +2686,9 @@ class LLMGateway:
 
     def extract_json(self, text: str) -> dict:
         """Markdown fence ve etiketleri temizleyip JSON ayıklar."""
-        text = text.strip()
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("Boş metin; JSON ayıklanamaz.")
         
         # 1. Kod blokları varsa önce onları dene
         if "```json" in text:
