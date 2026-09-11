@@ -61,31 +61,41 @@ def main() -> int:
 async def _run_gate(key: str) -> int:
     from agent_core.task_executor import PinealExecutor
 
-    executor = PinealExecutor()
+    executor = PinealExecutor(log_callback=lambda lvl, msg: print(f"[{lvl}] {msg}"))
     executor.llm_gateway.set_key(key, unlock_live=True)
 
     # Kisa ve gercekci girdi: token maliyetini sinirli tutar, 360 yolunun
-    # tamamini tetikler.
+    # tamamini (mirror_truth, human_behavior, passion_mapper, friction_detector,
+    # cognitive_profiler, resonance_calc, pattern_interrupt, resonance_synthesizer) tetikler.
     payload = {
         "user_profile": {
-            "private_rituals": ["gece okumalari", "fotograf cekimi"],
-            "late_night_playlist": ["ambient", "caz"],
-            "secret_envies": ["sahici diyalog"],
+            "bio": "Görsel araştırmacı ve mimari kompozisyon analisti. Analog dokular, minimalist mekanlar ve sessizlik üzerine çalışıyorum.",
+            "posts": [
+                "Sessiz detaylar her zaman en güçlü hikayeyi anlatır.",
+                "Işığın ve gölgenin mekandaki ritmini inceliyorum.",
+                "Gece sakinliğinde analog arşivleri taramak zihni tazeliyor.",
+            ],
+            "private_rituals": ["gece okumalari", "analog fotograf cekimi", "karanlik oda baskisi"],
+            "late_night_playlist": ["ambient", "caz", "klasik piyano"],
+            "secret_envies": ["sahici ve yalin paylasimlar", "yapmaciksiz derinlik"],
         },
         "target_profile": {
             "username": "@gate_ornek",
-            "bio": "Mimar ve analog fotografci. Estetik her seydir. Samimiyetsiz gurultu ve yuzeysellikten uzak duruyorum.",
+            "bio": "Mimar ve analog fotografci. Estetik her seydir. Sadece sahici isler, asla yapay kalabaliklar ve gurultu yok.",
             "posts": [
                 "Sabah isiginda cekim yaptim, sehir farkli gorunuyor.",
-                "Sessizlik iyi bir tasarimcidir.",
-                "Yeni sergi hazirligi basladi.",
-                "Bos sohbetler ve yapay kalabaliklar enerjimi cok cabuk tuketiyor.",
+                "Sessizlik en duru tasarimcidir.",
+                "Yeni analog sergi hazirligi basladi, sadece dogal isik.",
+                "Yapay sohbetler enerjimi cok cabuk tuketiyor, uzak durun.",
             ],
+            "post_times": ["01:30", "02:45", "03:15", "14:00"],
         },
     }
 
     print("[gate] pipeline basliyor (kriter 1-4)...")
     result = await executor.execute_task(payload, task_id="live_gate")
+    if result.status not in ("completed", "partially_completed"):
+        print(f"  [gate debug] status={result.status}, reason={result.halted_reason}, completed_agents={result.completed_agents}")
 
     checks: list = []
 
