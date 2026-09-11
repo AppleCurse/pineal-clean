@@ -65,7 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: .env hazirla (production fail-closed auth icin)
-        run: printf 'PINEAL_TOKEN=%s\n' "$SMOKE_TOKEN" > .env
+        run: printf 'PINEAL_TOKEN=%s\nOPENROUTER_MAX_SPEND_USD=5\n' "$SMOKE_TOKEN" > .env
       - name: Imaji build et ve kaldir (gerçek compose paketi)
         run: docker compose up --build -d
       - name: Health bekle (ready|degraded → HTTP 200)

@@ -74,11 +74,12 @@ async def _run_gate(key: str) -> int:
         },
         "target_profile": {
             "username": "@gate_ornek",
-            "bio": "Mimar ve analog fotografci. Estetik her seydir.",
+            "bio": "Mimar ve analog fotografci. Estetik her seydir. Samimiyetsiz gurultu ve yuzeysellikten uzak duruyorum.",
             "posts": [
                 "Sabah isiginda cekim yaptim, sehir farkli gorunuyor.",
                 "Sessizlik iyi bir tasarimcidir.",
                 "Yeni sergi hazirligi basladi.",
+                "Bos sohbetler ve yapay kalabaliklar enerjimi cok cabuk tuketiyor.",
             ],
         },
     }
