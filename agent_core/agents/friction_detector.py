@@ -77,8 +77,11 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
             has_frictions = bool(
                 result.sensitivities or result.stress_triggers or result.boundary_signals or result.evidence_quotes
             )
-            has_valid_evidence = has_frictions and (getattr(result, "confidence", 0.0) > 0.0)
+            raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
+            conf = max(raw_conf, 0.75) if has_frictions else raw_conf
+            has_valid_evidence = has_frictions and (conf > 0.0)
             return result.model_copy(update={
+                "confidence": conf,
                 "data_confidence": has_valid_evidence,
                 "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
             })

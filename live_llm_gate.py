@@ -81,12 +81,12 @@ async def _run_gate(key: str) -> int:
         },
         "target_profile": {
             "username": "@gate_ornek",
-            "bio": "Mimar ve analog fotografci. Estetik her seydir. Sadece sahici isler, asla yapay kalabaliklar ve gurultu yok.",
+            "bio": "Mimar ve analog fotografci. Estetik her seydir. Sadece sahici ve yalin isler; yapmacik kalabaliklar, samimiyetsiz gurultu ve bos ovgulerden kesinlikle uzak durun.",
             "posts": [
                 "Sabah isiginda cekim yaptim, sehir farkli gorunuyor.",
-                "Sessizlik en duru tasarimcidir.",
-                "Yeni analog sergi hazirligi basladi, sadece dogal isik.",
-                "Yapay sohbetler enerjimi cok cabuk tuketiyor, uzak durun.",
+                "Sessizlik en duru tasarimcidir; gereksiz toplantilar ve laf kalabaligi zihni kirletir.",
+                "Yeni analog sergi hazirligi basladi, sadece dogal isik ve mekan geometrisi.",
+                "Yapay sohbetler ve samimiyetsiz iltifatlar enerjimi aninda tuketiyor, ozel alanima saygi bekliyorum.",
             ],
             "post_times": ["01:30", "02:45", "03:15", "14:00"],
         },
@@ -160,6 +160,7 @@ async def _judge(executor, result) -> bool:
         "status": result.status,
         "evidence_adimlari": [e.get("agent") for e in result.evidence_chain],
         "passions": (hp.passions.core_passions if hp and hp.passions else []),
+        "frictions": (hp.frictions.sensitivities if hp and hp.frictions else []),
         "bridge": {
             "shared_passions": (bridge.shared_passions if bridge else []),
             "opening_message": (bridge.suggested_opening_message if bridge else ""),
