@@ -1,8 +1,18 @@
 pydantic>=2.10.0,<3.0.0
 setuptools>=70.0.0,<81.0.0
 httpx>=0.27.0
-open-interpreter>=0.4.0
-fastapi>=0.115.0
+# [AUDIT 2026-09-11 P0] open-interpreter BURADAN ÇIKARILDI ->
+# requirements-interpreter.txt (opsiyonel, ENABLE_INTERPRETER=true).
+# Nedeni: open-interpreter 0.4.x wheel metadata'si starlette>=0.37.2,<0.38.0
+# dayatıyor; bu pin CVE-2026-48710 "BadHost" düzeltmesini (starlette 1.0.1)
+# imkânsız kılıyordu. Kod zaten lazy-import + default-kapalı kapı kullanıyor.
+fastapi>=0.141.0
+# [AUDIT 2026-09-11 P0] CVE-2026-48710 / GHSA-86qp-5c8j-p5mr ("BadHost"):
+# Host header zehirlenmesi request.url.path'i gerçek path'ten saptırıp
+# path-tabanlı auth'u atlatıyor; düzeltme starlette 1.0.1. Auth hattı artık
+# raw scope path kullansa da (backend/api.py _secure_path) savunma derinliği
+# için yamalı alt sınır açıkça sabitlenir.
+starlette>=1.0.1,<2.0.0
 uvicorn>=0.30.0
 playwright>=1.49.0
 playwright-stealth>=2.0.0
@@ -12,7 +22,7 @@ numpy>=1.26.0
 aiofiles>=23.2.1
 python-dotenv>=1.0.0
 # Aşağıdaki ikisi doğrudan kaynak tarafından import edilir (beyan açığı kapatıldı);
-# PyYAML: config_loader.yaml — open-interpreter transitif çekse de açık beyan edilir.
+# PyYAML: config_loader.yaml — açık beyan edilir.
 PyYAML>=6.0.1
 aiohttp>=3.9.0
 # OSINT zenginleştirme: profil URL'sinden kararlı kimlik kaydı (MIT, hafif).
@@ -25,15 +35,11 @@ maigret>=0.6.5
 # bağımlılık olarak). Kapı: ENABLE_HOLEHE (varsayılan kapalı); istisnaları
 # rateLimit maskesi hata sayılır, kapalı ağda 'kayıtlı değil' iddia edilmez.
 holehe>=1.61
-# [KALDIRILDI -> requirements-osint.txt] crawl4ai psutil>=6.1.1 BEYAN eder;
-# open-interpreter (yukarıda) psutil<6.0.0 BEYAN eder. İki metadata aralığı
-# aynı pip işleminde ResolutionImpossible — bu dosya TEK İŞLEMDE kurulabilir
-# olmalı (taze-kurulum sözleşmesi; test: test_declared_libraries + psutil
-# çalışma-zamanı). crawl4ai İKİNCİ ADIM olarak kurulur:
+# [KALDIRILDI -> requirements-osint.txt] crawl4ai İKİNCİ ADIM olarak kurulur:
 #   pip install -r requirements.txt && pip install -r requirements-osint.txt
-# Kanıt (kaynak okuması + çalışma zamanı): open-interpreter yalnız
-# virtual_memory/disk_usage kullanır, crawl4ai yalnız Process/process_iter —
-# her ikisi de her psutil sürümünde çalışır; çatışma aşırı-katı beyandır.
+# [AUDIT 2026-09-11] open-interpreter core'dan çıkarıldığı için eski
+# psutil<6 vs psutil>=6.1.1 ResolutionImpossible çatışması da ortadan kalktı;
+# crawl4ai'nin psutil>=6.1.1 beyanı artık tek psutil kaynağıdır.
 # Stealth sağlayıcı seçenekleri (STEALTH_PROVIDER; default playwright_stealth).
 # invisible-playwright (MIT): patched Firefox launch-level wrapper; pip paketi
 # hafiftir, binary İNDİRMEZ — binary opsiyoneldir (INVISIBLE_BROWSER_BINARY).

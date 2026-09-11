@@ -257,7 +257,7 @@ bu tabloda yoktur** (ör. `E2B_API_KEY`, `llama-3.3-70b` — yoktur, README'den 
 |---|---|
 | `PINEAL_ENV` | Allowlist dışı her değer → production (fail-closed). |
 | `PINEAL_TOKEN` / `PINEAL_REQUIRE_AUTH` | REST (`X-API-Key`) + WebSocket auth; production'da zorunlu. |
-| `VITE_PINEAL_TOKEN` | Frontend build'ine gömülen token. |
+| ~~`VITE_PINEAL_TOKEN`~~ | **KALDIRILDI** (AUDIT 2026-09-11 P0): server secret'ı bundle'a gömülmez; UI token'ı çalışma zamanında Kasa'dan girer. |
 | `PINEAL_ALLOWED_ORIGINS` | CORS allowlist (boşsa localhost). |
 | `PINEAL_MAX_ROOMS`, `PINEAL_ROOM_TTL_SECONDS`, `PINEAL_MAX_CLIENT_ID_LENGTH`, `PINEAL_MAX_RATE_BUCKETS`, `PINEAL_RATE_SWEEP_INTERVAL_SECONDS` | Oda/rate kaynak tavanları. |
 | `PINEAL_CACHE_MAX_ROWS` | Cache emniyet kemeri. |

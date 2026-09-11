@@ -10,14 +10,13 @@ export const API_BASE = (envBase && envBase.trim()) || origin;
 export const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
 // FAZ 3: PINEAL_TOKEN kipinde UI da kimligini tasir.
-// İki kaynak (öncelik sırasıyla):
-//  1. Çalışma zamanı: kullanıcı arayüzden (Kasa) girdiği token — localStorage'da kalıcı.
-//  2. Derleme zamanı: VITE_PINEAL_TOKEN (üretim imajına gömülür).
-// Önceden token yalnızca derleme zamanında gömülebiliyordu; PINEAL_TOKEN set edilmiş
-// ama VITE_PINEAL_TOKEN gömülmemişse arayüz 401'e takılıp "ağ hatası" gibi yanıltıcı
-// mesajlar veriyordu (bkz. App.svelte onclose + UnifiedCompactPanel hata yolları).
-const bakedToken = (((import.meta.env && (import.meta.env as any).VITE_PINEAL_TOKEN) as string | undefined) || '').trim();
-
+// [AUDIT 2026-09-11 P0] Token kaynağı TEK: çalışma zamanı. Kullanıcı arayüzden
+// (Kasa -> "API ERİŞİM ANAHTARI") girdiği token localStorage'da kalıcı.
+// Derleme zamanı gömme (eski VITE_PINEAL_TOKEN) KALDIRILDI: Vite VITE_*
+// değerlerini bundle'a plaintext derlediği için server secret'ı statik
+// asset'e dönüşüyordu — secret olmaktan çıkıyordu. Token girilmezse
+// arayüz 401'de dürüst hata gösterir (bkz. App.svelte onclose +
+// UnifiedCompactPanel hata yolları); "ağ hatası" maskesi yok.
 const TOKEN_STORAGE_KEY = 'pineal_api_token';
 
 function readStoredToken(): string {
@@ -29,10 +28,10 @@ function readStoredToken(): string {
   }
 }
 
-export const apiToken = writable<string>(readStoredToken() || bakedToken);
+export const apiToken = writable<string>(readStoredToken());
 
 export function currentApiToken(): string {
-  return (get(apiToken) || bakedToken).trim();
+  return get(apiToken).trim();
 }
 
 export function setApiToken(value: string): void {

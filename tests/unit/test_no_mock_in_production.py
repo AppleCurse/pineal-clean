@@ -111,7 +111,13 @@ class TestPsutilAdjudicationRuntime:
     sürümü kurulursa kurulsun, iki paketin GERÇEK kullandığı API'ler çalışır."""
 
     def test_both_packages_real_apis_work(self):
-        psutil = __import__("psutil")
+        # [AUDIT 2026-09-11] psutil artık yalnız OPSİYONEL katmanların
+        # (open-interpreter -> requirements-interpreter.txt, crawl4ai ->
+        # requirements-osint.txt) bağımlılığı; core kurulumda bulunmayabilir.
+        psutil = pytest.importorskip(
+            "psutil",
+            reason="psutil opsiyonel katman bağımlılığıdır (core requirements.txt'te yok)",
+        )
         assert psutil.virtual_memory().total > 0          # open-interpreter
         assert psutil.disk_usage("/").free > 0             # open-interpreter
         assert psutil.Process().pid > 0                    # crawl4ai
@@ -119,6 +125,12 @@ class TestPsutilAdjudicationRuntime:
 
     def test_open_interpreter_imports_with_installed_psutil(self):
         importlib = __import__("importlib")
+        # [AUDIT 2026-09-11] open-interpreter core'dan çıkarıldı
+        # (requirements-interpreter.txt); kurulu değilse dürüst skip.
+        pytest.importorskip(
+            "interpreter",
+            reason="open-interpreter opsiyonel katmandır (requirements-interpreter.txt)",
+        )
         importlib.import_module("interpreter")  # psutil'i dolaylı çeker
 
     def test_crawl4ai_psutil_consuming_modules_import(self):

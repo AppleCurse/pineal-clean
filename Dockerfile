@@ -8,12 +8,12 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
-# PINEAL_TOKEN korumalı üretimde UI'ın kimlik taşıması gerekir; token derleme
-# zamanında VITE_PINEAL_TOKEN ile gömülür. Çalışma zamanı (docker compose) .env'inde
-# PINEAL_TOKEN tanımlıysa, imaj build edilirken AYNI değer VITE_PINEAL_TOKEN olarak
-# verilmeli — aksi hâlde UI 401 alır (bkz. RUNBOOK "401 tüm API çağrıları").
-ARG VITE_PINEAL_TOKEN=""
-ENV VITE_PINEAL_TOKEN=${VITE_PINEAL_TOKEN}
+# [AUDIT 2026-09-11 P0] VITE_PINEAL_TOKEN build arg'ı KALDIRILDI.
+# Server secret'ı (PINEAL_TOKEN) frontend bundle'ına gömülüyordu; Vite
+# VITE_* değerlerini plaintext olarak JS bundle'ına derler -> token'ı
+# tarayıcıdan indiren herkes /api/* ve /v1/* çağırabilir hale geliyordu.
+# Kimlik artık YALNIZ çalışma zamanında girilir: UI'da Kasa ->
+# "API ERİŞİM ANAHTARI (PINEAL_TOKEN)" alanı (localStorage, derleme yok).
 RUN npm run build
 
 # ---------- Stage 2: runtime ----------
@@ -30,8 +30,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt requirements-osint.txt ./
-RUN pip install --default-timeout=300 -r requirements.txt && pip install --default-timeout=300 -r requirements-osint.txt
+# [AUDIT 2026-09-11 P1] Production imaj DETERMİNİSTİK lock'tan kurulur:
+# bugün build edilen imaj ile yarınki aynı dependency ağacını alır.
+# (requirements.txt/requirements-osint.txt soyut şartnamedir; lock'u
+# yeniden üretmek için requirements.lock başlığındaki tarife bakın.)
+COPY requirements.lock ./
+RUN pip install --default-timeout=300 -r requirements.lock
 
 # Opsiyonel Playwright indirme aynası (bölgesel CDN engeli; build-time).
 # Kullanım: .env → PLAYWRIGHT_DOWNLOAD_HOST=... sonra docker compose build pineal
