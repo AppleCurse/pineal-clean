@@ -79,7 +79,8 @@ class MirrorOfTruth:
                 and result.authentic_anchors
                 and result.alignment_score > 0.0
             )
-            conf = result.confidence if (getattr(result, "confidence", 0.0) > 0.0) else (0.85 if has_reflection else 0.0)
+            raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
+            conf = max(raw_conf, 0.75) if has_reflection else raw_conf
             has_valid_evidence = has_reflection and (conf > 0.0)
             return result.model_copy(update={
                 "confidence": conf,
