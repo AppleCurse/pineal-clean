@@ -61,12 +61,12 @@ def main() -> int:
 async def _run_gate(key: str) -> int:
     from agent_core.task_executor import PinealExecutor
 
-    os.environ.setdefault("OPENROUTER_MAX_OUTPUT_TOKENS", "180")
+    os.environ.setdefault("OPENROUTER_MAX_OUTPUT_TOKENS", "350")
     os.environ.setdefault("PINEAL_ALLOW_UNPRICED_MODELS", "1")
     os.environ.setdefault("OPENROUTER_JUDGE_MODEL", "openai/gpt-5.6-luna")
     os.environ.setdefault("OPENROUTER_TIER_1_MODEL", "openai/gpt-5.6-luna")
 
-    fast_chain = "openai/gpt-oss-120b,openai/gpt-5.6-luna,deepseek/deepseek-v4-flash"
+    fast_chain = "openai/gpt-5.6-luna,deepseek/deepseek-v4-flash,openai/gpt-oss-120b"
     for ag in (
         "MIRROR_TRUTH",
         "HUMAN_BEHAVIOR",
@@ -80,7 +80,7 @@ async def _run_gate(key: str) -> int:
         os.environ.setdefault(f"OPENROUTER_AGENT_CHAIN_{ag}", fast_chain)
 
     executor = PinealExecutor(log_callback=lambda lvl, msg: print(f"[{lvl}] {msg}"))
-    executor.llm_gateway.max_output_tokens = 180
+    executor.llm_gateway.max_output_tokens = 350
     executor.llm_gateway.set_key(key, unlock_live=True)
 
     # Kisa ve gercekci girdi: token maliyetini sinirli tutar, 360 yolunun
