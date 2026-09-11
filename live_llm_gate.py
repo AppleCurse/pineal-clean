@@ -61,7 +61,13 @@ def main() -> int:
 async def _run_gate(key: str) -> int:
     from agent_core.task_executor import PinealExecutor
 
+    os.environ.setdefault("OPENROUTER_MAX_OUTPUT_TOKENS", "800")
+    os.environ.setdefault(
+        "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR",
+        "google/gemini-3.7-flash,deepseek/deepseek-v4-pro,anthropic/claude-sonnet-5",
+    )
     executor = PinealExecutor(log_callback=lambda lvl, msg: print(f"[{lvl}] {msg}"))
+    executor.llm_gateway.max_output_tokens = 800
     executor.llm_gateway.set_key(key, unlock_live=True)
 
     # Kisa ve gercekci girdi: token maliyetini sinirli tutar, 360 yolunun
@@ -174,20 +180,43 @@ async def _judge(executor, result) -> bool:
         "Yanitini kisa gerekce ve ardindan APPROVE veya REJECT olarak ver:\n\n"
         + json.dumps(summary, ensure_ascii=False)[:2000]
     )
-    try:
-        raw = await executor.llm_gateway.query(
-            prompt,
-            temperature=0.0,
-            model=model,
-            system_prompt="Sen titiz bir cikti denetcisisin.",
-        )
-        verdict = (raw or "").strip()
-        print(f"  [hakem {model}]: {verdict[:300]}")
-        verdict_upper = verdict.upper()
-        return "APPROVE" in verdict_upper and not verdict_upper.endswith("REJECT")
-    except Exception as exc:  # hakem cagrisi hicbir sekilde sessiz gecmemeli
-        print(f"  [FAIL] hakem cagrisi hata verdi: {exc}")
-        return False
+    models_to_try = [model]
+    for fb in ("openai/gpt-5.6-luna", "google/gemini-3.7-flash"):
+        if fb not in models_to_try:
+            models_to_try.append(fb)
+
+    last_exc = None
+    for m in models_to_try:
+        try:
+            raw = await executor.llm_gateway.query(
+                prompt,
+                temperature=0.0,
+                model=m,
+                system_prompt="Sen titiz bir cikti denetcisisin.",
+            )
+            verdict = (raw or "").strip()
+            print(f"  [hakem {m}]: {verdict[:300]}")
+            verdict_upper = verdict.upper()
+            verdict_clean = verdict_upper.replace(".", " ").replace(":", " ").strip()
+            tokens = verdict_clean.split()
+            decision = None
+            for tok in reversed(tokens):
+                if tok in ("APPROVE", "APPROVED"):
+                    decision = True
+                    break
+                if tok in ("REJECT", "REJECTED"):
+                    decision = False
+                    break
+            if decision is not None:
+                return decision
+            return "APPROVE" in verdict_upper and "REJECT" not in verdict_upper
+        except Exception as exc:
+            last_exc = exc
+            print(f"  [hakem uyarisi] {m} hata verdi ({exc}), siradaki model deneniyor...")
+            continue
+
+    print(f"  [FAIL] hakem cagrisi tum modellerde hata verdi: {last_exc}")
+    return False
 
 
 if __name__ == "__main__":
