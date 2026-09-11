@@ -56,6 +56,11 @@ from agent_core.utils.security import (
     validate_identifier,
 )
 from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
+from agent_core.services.browser_session import (
+    BrowserNotOpenError,
+    BrowserSession,
+    BrowserUnavailableError,
+)
 
 
 shadow_executor = ShadowExecutor()
@@ -848,6 +853,15 @@ def get_room(client_id: str) -> dict:
 
 def get_executor(client_id: str) -> PinealExecutor:
     return get_room(client_id)["executor"]
+
+
+def _room_browser(room: dict) -> BrowserSession:
+    """Oda basina tek lazy BrowserSession (Chromium yalniz open'da acilir)."""
+    sess = room.get("browser")
+    if not isinstance(sess, BrowserSession):
+        sess = BrowserSession()
+        room["browser"] = sess
+    return sess
 
 def get_vault(client_id: str) -> dict:
     return get_room(client_id)["vault"]
@@ -1692,6 +1706,11 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
         
         # Otonom Cookie Rotasyonu
         cookie = ""
+        live_session = vault.get("ig_sessionid", "").strip()
+        if live_session:
+            # Canli LCD oturumu havuzdan ONCELIKLIDIR (elle giris tazedir).
+            cookie = live_session
+            broadcast_log(client_id, "INFO", "DAEMON: Canlı LCD oturum çerezi kullanılıyor.")
         cookie_pool = vault.get("x_cookie", "").strip()
         if cookie_pool:
             cookie_list = [c.strip() for c in cookie_pool.split('\n') if c.strip()]
@@ -2071,6 +2090,7 @@ async def api_telemetry(client_id: str):
         # W5: gercek capability raporu
         "x_scraper": False,  # B4: X kazimasi devre disi birakildi
         "instagram_scraper": capability["instagram"],
+        "instagram_session": "ig_sessionid" in vault,
         "browser_installed": capability["browser"],
         # P2-MALİYET: committed + in-flight reservations are read atomically.
         "llm_spend_usd": round(float(budget.get("spend_usd", 0.0)), 6),
@@ -2725,6 +2745,129 @@ async def api_delete_task(task_id: str, client_id: str):
         "snapshot_removed": removed_snapshot is not None,
         "memory_file_deleted": file_deleted,
     }
+
+
+class BrowserOpenPayload(BaseModel):
+    client_id: str
+    url: str = ""
+
+
+class BrowserClickPayload(BaseModel):
+    client_id: str
+    x: int
+    y: int
+
+
+class BrowserTypePayload(BaseModel):
+    client_id: str
+    text: str = Field(default="", max_length=500)
+
+
+class BrowserPressPayload(BaseModel):
+    client_id: str
+    key: str = Field(default="Enter", max_length=20)
+
+
+class BrowserSimplePayload(BaseModel):
+    client_id: str
+
+
+def _browser_err(code: str, message: str, status: int) -> JSONResponse:
+    return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
+
+
+@app.get("/api/browser/state")
+async def api_browser_state(client_id: str):
+    room = get_room(client_id)
+    st = await _room_browser(room).state()
+    st["saved_session"] = "ig_sessionid" in room.get("vault", {})
+    return st
+
+
+@app.post("/api/browser/open")
+async def api_browser_open(payload: BrowserOpenPayload):
+    room = get_room(payload.client_id)
+    try:
+        return await _room_browser(room).open(payload.url)
+    except BrowserUnavailableError as e:
+        return _browser_err("BROWSER_UNAVAILABLE", str(e)[:200], 503)
+    except ValueError as e:
+        return _browser_err("BROWSER_BAD_REQUEST", str(e)[:160], 400)
+
+
+@app.get("/api/browser/shot")
+async def api_browser_shot(client_id: str):
+    room = get_room(client_id)
+    try:
+        png = await _room_browser(room).shot()
+    except BrowserNotOpenError as e:
+        return _browser_err("BROWSER_NOT_OPEN", str(e)[:160], 409)
+    return StreamingResponse(iter([png]), media_type="image/png")
+
+
+@app.post("/api/browser/click")
+async def api_browser_click(payload: BrowserClickPayload):
+    room = get_room(payload.client_id)
+    try:
+        return await _room_browser(room).click(payload.x, payload.y)
+    except BrowserNotOpenError as e:
+        return _browser_err("BROWSER_NOT_OPEN", str(e)[:160], 409)
+    except ValueError as e:
+        return _browser_err("BROWSER_BAD_REQUEST", str(e)[:160], 400)
+
+
+@app.post("/api/browser/type")
+async def api_browser_type(payload: BrowserTypePayload):
+    # NOT: text ASLA loglanmaz (parola bu yoldan gecebilir).
+    room = get_room(payload.client_id)
+    try:
+        return await _room_browser(room).type_text(payload.text)
+    except BrowserNotOpenError as e:
+        return _browser_err("BROWSER_NOT_OPEN", str(e)[:160], 409)
+    except ValueError as e:
+        return _browser_err("BROWSER_BAD_REQUEST", str(e)[:160], 400)
+
+
+@app.post("/api/browser/press")
+async def api_browser_press(payload: BrowserPressPayload):
+    room = get_room(payload.client_id)
+    try:
+        return await _room_browser(room).press(payload.key)
+    except BrowserNotOpenError as e:
+        return _browser_err("BROWSER_NOT_OPEN", str(e)[:160], 409)
+    except ValueError as e:
+        return _browser_err("BROWSER_BAD_REQUEST", str(e)[:160], 400)
+
+
+@app.post("/api/browser/back")
+async def api_browser_back(payload: BrowserSimplePayload):
+    room = get_room(payload.client_id)
+    try:
+        return await _room_browser(room).back()
+    except BrowserNotOpenError as e:
+        return _browser_err("BROWSER_NOT_OPEN", str(e)[:160], 409)
+
+
+@app.post("/api/browser/save")
+async def api_browser_save(payload: BrowserSimplePayload):
+    room = get_room(payload.client_id)
+    vault = room.get("vault", {})
+    sid = await _room_browser(room).session_cookie()
+    if not sid:
+        return {
+            "status": "no_session",
+            "saved": False,
+            "hint": "Tarayıcıda Instagram girişi tamamlanmamış (sessionid yok).",
+        }
+    vault["ig_sessionid"] = sid
+    broadcast_log(payload.client_id, "INFO", "KASA: Canlı LCD oturumu mühürlendi (sessionid).")
+    return {"status": "saved", "saved": True}
+
+
+@app.post("/api/browser/close")
+async def api_browser_close(payload: BrowserSimplePayload):
+    room = get_room(payload.client_id)
+    return await _room_browser(room).close()
 
 
 static_dir = "frontend/dist" if os.path.exists("frontend/dist") else "frontend"

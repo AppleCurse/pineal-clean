@@ -1,235 +1,397 @@
-<!-- KASA GİRİŞ LCD'si: Instagram çerez havuzu mühürleme (GERÇEK /api/vault).
-     X satırı B4 ile devre dışıdır — dürüstçe öyle yazar, sahte giriş yok.
-     Çerez değeri asla loglanmaz ve mühür sonrası girdiden silinir. -->
+<!-- CANLI TARAYICI LCD'si: kokpit içinden gerçek Chromium görünümü.
+     Kullanıcı Instagram girişini burada ELLE yapar (şifre / Google / 2FA);
+     tuşlar doğrudan Instagram'a gider, parola backend'e asla ulaşmaz.
+     Giriş bitince OTURUMU KAYDET yalnız `sessionid`'yi kasaya mühürler.
+     Chromium yoksa dürüstçe TARAYICI YOK basar + manuel çerez yedeği sunar. -->
 <script lang="ts">
+  import { get } from 'svelte/store';
   import { clientId, apiFetch, logs } from '../../store';
   import { sysTelemetry } from '../../lib/telemetry';
   import { playClick } from '../../lib/consoleAudio';
 
-  let cookie = '';
-  let sealing = false;
+  // Backend viewport sözleşmesi: 800x600 (browser_session.VIEWPORT_*).
+  const VW = 800;
+  const VH = 600;
 
-  // Sunucuda kasa okuma ucu yok (secret'lar geri verilmez); bu istemciden
-  // mühürleme yapıldığı bilgisi yalnızca yerel hatırlanır.
-  const SEAL_KEY = 'pineal_vault_cookie_sealed';
-  function readSeal(): string {
-    try { return localStorage.getItem(SEAL_KEY) || ''; } catch { return ''; }
+  let live = false;
+  let pageUrl = '';
+  let pageTitle = '';
+  let unavailable = false; // Chromium bu makinede yok
+  let unavailMsg = '';
+  let shotUrl: string | null = null;
+  let shotEl: HTMLImageElement | null = null;
+  let textBuf = '';
+  let cookieFallback = ''; // manuel çerez yedeği (TARAYICI YOK iken)
+  let busy = false; // tek uçuş kuralı
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  function log(level: string, msg: string) {
+    logs.update((l) => [...l, { ts: new Date().toLocaleTimeString(), level, msg }]);
   }
-  let sealedAt = readSeal();
 
-  async function seal() {
-    if (!cookie.trim() || sealing) return;
-    sealing = true;
-    playClick(280, 50);
+  async function post(path: string, body: Record<string, unknown>): Promise<Response> {
+    return apiFetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function refreshState(): Promise<void> {
     try {
-      const res = await apiFetch('/api/vault', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: $clientId, x_cookie: cookie.trim() }),
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const now = new Date().toLocaleString();
-      try { localStorage.setItem(SEAL_KEY, now); } catch { /* bellek yetmezse oturumluk kalır */ }
-      sealedAt = now;
-      cookie = '';
-      playClick(420, 60);
-      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'INFO', msg: 'KASA: IG çerez havuzu mühürlendi (rotasyon hazır)' }]);
-    } catch (e: any) {
-      logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level: 'ERROR', msg: `KASA HATASI: ${e?.message || e}` }]);
-    } finally {
-      sealing = false;
+      const res = await apiFetch(`/api/browser/state?client_id=${get(clientId)}`);
+      if (!res.ok) return;
+      const st = await res.json();
+      live = !!st.live;
+      pageUrl = String(st.url || '');
+      pageTitle = String(st.title || '');
+    } catch {
+      /* telemetri yokluğunda sessiz; ibreler park eder */
     }
   }
 
-  function forgetSeal() {
-    try { localStorage.removeItem(SEAL_KEY); } catch { /* ignore */ }
-    sealedAt = '';
-    playClick(140, 40);
+  async function refreshShot(): Promise<void> {
+    if (!live || busy) return;
+    try {
+      const res = await apiFetch(`/api/browser/shot?client_id=${get(clientId)}&k=${Date.now()}`);
+      if (!res.ok) {
+        if (res.status === 409) { live = false; }
+        return;
+      }
+      const blob = await res.blob();
+      const next = URL.createObjectURL(blob);
+      if (shotUrl) URL.revokeObjectURL(shotUrl);
+      shotUrl = next;
+    } catch {
+      /* kare kaçarsa sonraki tur dener */
+    }
   }
+
+  function startPoll() {
+    stopPoll();
+    pollTimer = setInterval(() => {
+      void refreshState().then(() => refreshShot());
+    }, 2000);
+  }
+
+  function stopPoll() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  async function act(label: string, fn: () => Promise<Response>): Promise<void> {
+    if (busy) return;
+    busy = true;
+    playClick(280, 50);
+    try {
+      const res = await fn();
+      if (res.status === 503) {
+        const data = await res.json().catch(() => ({}));
+        unavailable = true;
+        unavailMsg = String(data?.error?.message || 'Chromium yok');
+        live = false;
+        log('ERROR', `TARAYICI YOK: ${unavailMsg.slice(0, 90)}`);
+        return;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      unavailable = false;
+      await refreshState();
+      await refreshShot();
+      playClick(420, 60);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log('ERROR', `LCD ${label} HATASI: ${msg}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function openBrowser() {
+    void act('aç', () => post('/api/browser/open', { client_id: get(clientId) }));
+  }
+
+  function closeBrowser() {
+    void act('kapat', () => post('/api/browser/close', { client_id: get(clientId) }));
+  }
+
+  function goBack() { void act('geri', () => post('/api/browser/back', { client_id: get(clientId) })); }
+
+  function pressKey(key: string) {
+    void act(key, () => post('/api/browser/press', { client_id: get(clientId), key }));
+  }
+
+  function sendText() {
+    const text = textBuf;
+    if (!text) return;
+    textBuf = '';
+    // NOT: parola bu yoldan geçebilir; log satırına ASLA yazılmaz.
+    void act('yaz', () => post('/api/browser/type', { client_id: get(clientId), text }));
+  }
+
+  function handleShotClick(e: MouseEvent) {
+    if (!live || !shotEl) return;
+    const r = shotEl.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
+    const x = Math.round(((e.clientX - r.left) / r.width) * VW);
+    const y = Math.round(((e.clientY - r.top) / r.height) * VH);
+    void act('tık', () => post('/api/browser/click', { client_id: get(clientId), x, y }));
+  }
+
+  // Klavye: viewport odaktayken oklar/Enter/Tab/Escape Instagram'a gider.
+  function handleViewportKey(e: KeyboardEvent) {
+    if (!live) return;
+    const map: Record<string, string> = {
+      Enter: 'Enter', Tab: 'Tab', Escape: 'Escape', Backspace: 'Backspace', Delete: 'Delete',
+      ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',
+    };
+    const key = map[e.key];
+    if (!key) return;
+    e.preventDefault();
+    pressKey(key);
+  }
+
+  async function saveSession() {
+    if (busy) return;
+    busy = true;
+    playClick(280, 50);
+    try {
+      const res = await post('/api/browser/save', { client_id: get(clientId) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.saved) {
+        log('INFO', 'KASA: Canlı LCD oturumu mühürlendi (sessionid).');
+        playClick(520, 70);
+      } else {
+        log('WARNING', `OTURUM YOK: ${data.hint || 'Instagram girişi tamamlanmamış.'}`);
+      }
+      await refreshState();
+    } catch (e: unknown) {
+      log('ERROR', `KAYIT HATASI: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Manuel çerez yedeği: TARAYICI YOK iken eski /api/vault yoluna mühürler.
+  async function sealCookieFallback() {
+    if (!cookieFallback.trim() || busy) return;
+    busy = true;
+    playClick(280, 50);
+    const value = cookieFallback.trim();
+    cookieFallback = '';
+    try {
+      const res = await post('/api/vault', { client_id: get(clientId), x_cookie: value });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      log('INFO', 'KASA: Manuel çerez mühürlendi (yedek havuz).');
+      playClick(420, 60);
+    } catch (e: unknown) {
+      log('ERROR', `KASA HATASI: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // Bileşen yaşam döngüsü: açılırken bir kez yokla, sonra 2 sn nabız.
+  import { onMount, onDestroy } from 'svelte';
+  onMount(() => {
+    void refreshState().then(() => refreshShot());
+    startPoll();
+  });
+  onDestroy(() => {
+    stopPoll();
+    if (shotUrl) URL.revokeObjectURL(shotUrl);
+  });
 </script>
 
 <div class="lcd-bezel">
-  <div class="lcd-scan"></div>
   <div class="lcd-head">
-    <span class="lcd-title">KASA · GİRİŞ</span>
-    <span class="lcd-title-tr">VAULT · LOGIN</span>
+    <span class="lcd-title">CANLI TARAYICI</span>
+    <span class="lcd-dot" class:on={live} class:off={!live}></span>
   </div>
 
-  <!-- INSTAGRAM: gerçek çerez havuzu girişi -->
-  <div class="lcd-row">
-    <div class="lcd-line">
-      <span class="lcd-net">INSTAGRAM</span>
-      <span class="lcd-led {sealedAt ? 'on' : 'off'}" title={sealedAt ? `Mühürlendi: ${sealedAt}` : 'Henüz mühür yok'}></span>
+  {#if unavailable && !live}
+    <div class="lcd-noavail">
+      <div class="lcd-noavail-big">TARAYICI YOK</div>
+      <div class="lcd-noavail-msg" title={unavailMsg}>{unavailMsg.slice(0, 110) || 'Chromium kurulu değil.'}</div>
+      <button type="button" class="lcd-btn" on:click={openBrowser} disabled={busy}>YENİDEN DENE</button>
     </div>
-    <textarea
-      class="lcd-input"
-      rows="2"
-      bind:value={cookie}
-      placeholder="sessionid çerezi · cookie"
-      spellcheck={false}
-      disabled={sealing}
-    ></textarea>
-    <div class="lcd-line">
-      <button class="lcd-btn" on:click={seal} disabled={sealing || !cookie.trim()}>
-        {sealing ? 'MÜHÜRLENİYOR…' : 'MÜHÜRLE (SEAL)'}
-      </button>
-      {#if sealedAt}
-        <button class="lcd-mini" on:click={forgetSeal} title="Yerel mühür notunu unut">UNUT</button>
+  {:else if !live}
+    <div class="lcd-idle">
+      <div class="lcd-idle-msg">Tarayıcı kapalı — açıp Instagram'a elle giriş yap.</div>
+      <button type="button" class="lcd-btn lcd-btn-big" on:click={openBrowser} disabled={busy}>TARAYICIYI AÇ</button>
+    </div>
+  {:else}
+    <!-- svelte-ignore a11y-no-noninteractive-tabindex a11y-no-noninteractive-element-interactions --
+        Uzak masaüstü viewport'u: role=application + tam klavye kontrolü (oklar/Enter/Tab/Escape) bilinçli seçimdir. -->
+    <div
+      class="lcd-viewport"
+      role="application"
+      tabindex="0"
+      aria-label="Canlı tarayıcı görünümü. Fareyle tıklayın, ok tuşları ve Enter klavyeden çalışır."
+      on:click={handleShotClick}
+      on:keydown={handleViewportKey}
+    >
+      {#if shotUrl}
+        <img
+          bind:this={shotEl}
+          src={shotUrl}
+          alt="Canlı tarayıcı"
+          class="lcd-shot"
+          draggable={false}
+        />
+      {:else}
+        <div class="lcd-loading">GÖRÜNTÜ ALINIYOR…</div>
       {/if}
     </div>
-    <div class="lcd-note">{sealedAt ? `Mühürlü: ${sealedAt}` : 'Havuzu değiştirir · Replaces pool'}</div>
-  </div>
+    <div class="lcd-url" title={pageTitle || pageUrl}>{pageUrl ? pageUrl.slice(0, 52) : '—'}</div>
 
-  <!-- X: B4 ile devre dışı — giriş yok, bilgi var -->
-  <div class="lcd-row lcd-x">
-    <div class="lcd-line">
-      <span class="lcd-net">X (TWITTER)</span>
-      <span class="lcd-led off-red"></span>
+    <div class="lcd-row">
+      <input
+        class="lcd-input"
+        type="text"
+        placeholder="metin yaz… (şifre buraya, loga düşmez)"
+        bind:value={textBuf}
+        on:keydown={(e) => { if (e.key === 'Enter') sendText(); }}
+        disabled={busy}
+        autocomplete="off"
+        spellcheck={false}
+      />
+      <button type="button" class="lcd-btn" on:click={sendText} disabled={busy || !textBuf}>YAZ</button>
     </div>
-    <div class="lcd-off">DEVRE DIŞI · B4 (DISABLED)</div>
-    <div class="lcd-note">X kazıması kapalı; havuz IG rotasyonunda kullanılır</div>
-  </div>
+
+    <div class="lcd-row lcd-keys">
+      <button type="button" class="lcd-btn lcd-mini" on:click={() => pressKey('Tab')} disabled={busy}>TAB</button>
+      <button type="button" class="lcd-btn lcd-mini" on:click={() => pressKey('Enter')} disabled={busy}>ENTER</button>
+      <button type="button" class="lcd-btn lcd-mini" on:click={() => pressKey('Escape')} disabled={busy}>ESC</button>
+      <button type="button" class="lcd-btn lcd-mini" on:click={() => pressKey('Backspace')} disabled={busy}>⌫</button>
+      <button type="button" class="lcd-btn lcd-mini" on:click={goBack} disabled={busy}>← GERİ</button>
+    </div>
+
+    <div class="lcd-row">
+      <span class="lcd-x-Disabled" title="B4: X kazıması devre dışıdır">X: KAPALI</span>
+      <button type="button" class="lcd-btn lcd-save" on:click={saveSession} disabled={busy}>OTURUMU KAYDET</button>
+      <button type="button" class="lcd-btn lcd-mini" on:click={closeBrowser} disabled={busy}>KAPAT</button>
+    </div>
+  {/if}
+
+  {#if unavailable && !live}
+    <details class="lcd-fallback">
+      <summary>Manuel çerez yedeği</summary>
+      <div class="lcd-row">
+        <input
+          class="lcd-input"
+          type="password"
+          placeholder="sessionid çerezi yapıştır…"
+          bind:value={cookieFallback}
+          disabled={busy}
+          autocomplete="off"
+          spellcheck={false}
+        />
+        <button type="button" class="lcd-btn" on:click={sealCookieFallback} disabled={busy || !cookieFallback}>MÜHÜRLE</button>
+      </div>
+    </details>
+  {/if}
 
   <div class="lcd-foot">
-    <span>KASA: {$sysTelemetry.ok ? ($sysTelemetry.vault ? 'DOLU' : 'BOŞ') : '—'}</span>
-    <span>BROWSER: {$sysTelemetry.ok ? ($sysTelemetry.browser ? 'VAR' : 'YOK') : '—'}</span>
+    <span>OTURUM: {$sysTelemetry.instagramSession ? 'KAYITLI' : 'YOK'}</span>
+    <span>KASA: {$sysTelemetry.vault ? 'DOLU' : 'BOŞ'}</span>
   </div>
 </div>
 
 <style>
   .lcd-bezel {
-    position: relative;
-    width: 248px;
-    background: linear-gradient(180deg, #1c1408 0%, #0d0903 100%);
-    border: 2px solid #8a6332;
-    border-radius: 6px;
-    padding: 8px 10px;
-    box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.9), 0 4px 10px rgba(0, 0, 0, 0.7);
-    overflow: hidden;
-  }
-  .lcd-scan {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+    width: 330px;
+    background: #101408;
+    border: 2px solid #3a3f2a;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: 'Courier New', monospace;
+    color: #c8d47a;
+    box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.75);
   }
   .lcd-head {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    border-bottom: 1px solid #3d2b17;
-    padding-bottom: 5px;
+    justify-content: space-between;
     margin-bottom: 6px;
   }
-  .lcd-title {
-    font-family: 'Cinzel', serif;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 1.5px;
-    color: #ffb000;
-    text-shadow: 0 0 8px rgba(255, 176, 0, 0.6);
-  }
-  .lcd-title-tr {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 7px;
-    letter-spacing: 1px;
-    color: #8a6a2a;
-  }
-  .lcd-row {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 5px 0;
-  }
-  .lcd-x {
-    border-top: 1px dashed #3d2b17;
-    margin-top: 2px;
-  }
-  .lcd-line {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 6px;
-  }
-  .lcd-net {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    color: #ffcf6e;
-  }
-  .lcd-led {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    border: 1px solid #000;
-    flex-shrink: 0;
-  }
-  .lcd-led.on { background: #10b981; box-shadow: 0 0 8px #10b981; }
-  .lcd-led.off { background: #2a1a08; box-shadow: inset 0 1px 2px #000; }
-  .lcd-led.off-red { background: #3a1512; box-shadow: inset 0 1px 2px #000; }
-  .lcd-input {
-    background: #050302;
-    border: 1px solid #5a3d1c;
-    color: #ffb000;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 9px;
-    border-radius: 3px;
-    padding: 4px 6px;
+  .lcd-title { font-size: 11px; letter-spacing: 2px; color: #e0e8a0; }
+  .lcd-dot { width: 9px; height: 9px; border-radius: 50%; background: #4a4a3a; }
+  .lcd-dot.on { background: #9dff57; box-shadow: 0 0 6px #9dff57; }
+  .lcd-viewport {
     width: 100%;
-    resize: none;
+    aspect-ratio: 4 / 3;
+    background: #050604;
+    border: 1px solid #2c3120;
+    border-radius: 3px;
+    overflow: hidden;
+    cursor: crosshair;
     outline: none;
-    box-shadow: inset 0 0 8px #000;
   }
-  .lcd-input:focus { border-color: #ffb000; }
-  .lcd-input::placeholder { color: #6b4e1e; }
-  .lcd-btn {
-    flex: 1;
-    background: linear-gradient(180deg, #d4af37, #8a6332);
-    border: 1px solid #ffe89e;
-    color: #120904;
-    font-family: 'Cinzel', serif;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.8px;
-    border-radius: 3px;
-    padding: 4px 8px;
-    cursor: pointer;
+  .lcd-viewport:focus { border-color: #9dff57; }
+  .lcd-shot { width: 100%; height: 100%; object-fit: fill; display: block; }
+  .lcd-loading {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #7a8455;
   }
-  .lcd-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-  .lcd-mini {
-    background: transparent;
-    border: 1px solid #5a3d1c;
-    color: #8a6a2a;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 7px;
-    border-radius: 3px;
-    padding: 3px 6px;
-    cursor: pointer;
-  }
-  .lcd-note {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 6.5px;
-    color: #8a6a2a;
-    line-height: 1.3;
-  }
-  .lcd-off {
-    font-family: 'JetBrains Mono', monospace;
+  .lcd-url {
     font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    color: #5a3a30;
+    color: #8b9560;
+    margin: 4px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
+  .lcd-row { display: flex; gap: 5px; margin-top: 5px; align-items: center; }
+  .lcd-input {
+    flex: 1;
+    min-width: 0;
+    background: #050604;
+    border: 1px solid #2c3120;
+    color: #e0e8a0;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 5px 6px;
+    border-radius: 3px;
+  }
+  .lcd-input:focus { border-color: #9dff57; outline: none; }
+  .lcd-btn {
+    background: #232818;
+    border: 1px solid #4a5232;
+    color: #d8e49a;
+    font-family: inherit;
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 5px 9px;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .lcd-btn:hover:not(:disabled) { background: #313823; border-color: #9dff57; }
+  .lcd-btn:disabled { opacity: 0.45; cursor: default; }
+  .lcd-btn-big { font-size: 12px; padding: 9px 14px; width: 100%; margin-top: 6px; }
+  .lcd-mini { font-size: 9px; padding: 4px 6px; }
+  .lcd-save { flex: 1; border-color: #6a7a35; color: #f0f5c8; }
+  .lcd-keys { flex-wrap: wrap; }
+  .lcd-idle, .lcd-noavail { text-align: center; padding: 10px 4px; }
+  .lcd-idle-msg, .lcd-noavail-msg { font-size: 10px; color: #8b9560; margin-bottom: 4px; }
+  .lcd-noavail-big { font-size: 16px; letter-spacing: 3px; color: #ff9d5c; margin-bottom: 4px; }
+  .lcd-x-Disabled { font-size: 9px; color: #6a5a4a; letter-spacing: 1px; white-space: nowrap; }
+  .lcd-fallback { margin-top: 6px; font-size: 10px; }
+  .lcd-fallback summary { cursor: pointer; color: #8b9560; }
   .lcd-foot {
     display: flex;
     justify-content: space-between;
-    border-top: 1px solid #3d2b17;
-    margin-top: 4px;
+    margin-top: 7px;
     padding-top: 5px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 7.5px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    color: #ffcf6e;
+    border-top: 1px solid #2c3120;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: #7a8455;
   }
 </style>

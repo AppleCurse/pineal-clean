@@ -38,6 +38,7 @@ export interface SysTelemetry {
   scraper: boolean; // kazıyıcı yeteneği
   browser: boolean; // chromium kurulu mu
   vault: boolean; // kasada çerez/anahtar var mı
+  instagramSession: boolean; // canlı LCD'den mühürlü sessionid var mı
   spendUsd: number;
   spendCapUsd: number;
   activeReservations: number;
@@ -50,6 +51,7 @@ export const sysTelemetry = writable<SysTelemetry>({
   scraper: false,
   browser: false,
   vault: false,
+  instagramSession: false,
   spendUsd: 0,
   spendCapUsd: 0,
   activeReservations: 0,
@@ -107,6 +109,7 @@ async function pollOnce() {
         scraper: !!(t.scraper || t.instagram_scraper),
         browser: !!t.browser_installed,
         vault: !!t.vault,
+        instagramSession: !!t.instagram_session,
         spendUsd: Number(t.llm_spend_usd || 0),
         spendCapUsd: Number(t.llm_spend_cap_usd || 0),
         activeReservations: Number(t.llm_active_reservations || 0),
