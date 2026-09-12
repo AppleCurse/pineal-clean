@@ -80,3 +80,16 @@ def _isolate_gateway_contextvars():
     yield
     for var in vars_:
         var.set(None)
+
+@pytest.fixture(autouse=True)
+def _isolate_security_redact_cache():
+    try:
+        from agent_core.utils import security
+    except Exception:
+        yield
+        return
+    if hasattr(security, '_environment_secret_values') and hasattr(security._environment_secret_values, 'cache_clear'):
+        security._environment_secret_values.cache_clear()
+    yield
+    if hasattr(security, '_environment_secret_values') and hasattr(security._environment_secret_values, 'cache_clear'):
+        security._environment_secret_values.cache_clear()
