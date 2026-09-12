@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import functools
 import re
 import secrets
 import socket
@@ -273,11 +274,16 @@ async def safe_get(
     raise UnsafeURLError("TOO_MANY_REDIRECTS")
 
 
-def _environment_secret_values() -> tuple[str, ...]:
+# [OPT] Caching the parsed secret list drastically reduces CPU overhead during
+# heavy text redaction operations. To prevent security regressions when environment
+# variables mutate at runtime, we pass `tuple(os.environ.items())` as the argument
+# which acts as a dynamic cache key that safely invalidates if changes occur.
+@functools.lru_cache(maxsize=1)
+def _environment_secret_values(env_items: tuple) -> tuple[str, ...]:
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "COOKIE")
     return tuple(
         value
-        for name, value in os.environ.items()
+        for name, value in env_items
         if value and len(value) >= 6 and any(marker in name.upper() for marker in markers)
     )
 
@@ -372,7 +378,7 @@ def _apply_redaction(text: str, secrets: tuple[str, ...]) -> str:
 
 
 def redact_text(value: object, *, extra_secrets: Iterable[str] = ()) -> str:
-    secrets = _environment_secret_values()
+    secrets = _environment_secret_values(tuple(os.environ.items()))
     extra = tuple(extra_secrets)
     if extra:
         secrets = secrets + extra
@@ -393,7 +399,7 @@ def _redact_with(value: object, secrets: tuple[str, ...]) -> object:
 
 
 def redact_structure(value: object, *, extra_secrets: Iterable[str] = ()) -> object:
-    secrets = _environment_secret_values()
+    secrets = _environment_secret_values(tuple(os.environ.items()))
     extra = tuple(extra_secrets)
     if extra:
         secrets = secrets + extra
