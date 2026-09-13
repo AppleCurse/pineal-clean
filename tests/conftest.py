@@ -80,3 +80,32 @@ def _isolate_gateway_contextvars():
     yield
     for var in vars_:
         var.set(None)
+
+@pytest.fixture(autouse=True)
+def _clear_security_env_cache():
+    """Clear _environment_secret_values LRU cache for test isolation."""
+    try:
+        from agent_core.utils import security
+    except Exception:
+        yield
+        return
+    if hasattr(security, "_environment_secret_values") and hasattr(security._environment_secret_values, "cache_clear"):
+        security._environment_secret_values.cache_clear()
+    yield
+    if hasattr(security, "_environment_secret_values") and hasattr(security._environment_secret_values, "cache_clear"):
+        security._environment_secret_values.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_loader_cache():
+    """Clear DecisionConfig cache for test isolation."""
+    try:
+        from agent_core.config_loader import DecisionConfig
+    except Exception:
+        yield
+        return
+    if hasattr(DecisionConfig, "load") and hasattr(DecisionConfig.load, "cache_clear"):
+        DecisionConfig.load.cache_clear()
+    yield
+    if hasattr(DecisionConfig, "load") and hasattr(DecisionConfig.load, "cache_clear"):
+        DecisionConfig.load.cache_clear()

@@ -221,6 +221,9 @@ class HindsightMemory(CanonicalMemory):
             # OPTIMIZATION: Using `executemany` inside a single connection and commit block
             # drastically reduces SQLite transaction overhead and avoids file-level locking
             # issues compared to multiple independent connections (e.g. O(1) commits instead of O(N)).
+            # OPTIMIZATION: Using `executemany` inside a single connection and commit block
+            # drastically reduces SQLite transaction overhead and avoids file-level locking
+            # issues compared to multiple independent connections (e.g. O(1) commits instead of O(N)).
             conn = self._connect()
             try:
                 conn.executemany(
