@@ -9,3 +9,7 @@
 ## 2025-02-24 - Async SQLite Concurrency
 **Learning:** When offloading synchronous SQLite operations to threads using `asyncio.to_thread()`, running multiple writes concurrently via `asyncio.gather()` triggers SQLite locking issues because it spawns a separate thread for every item, violating SQLite concurrency limitations.
 **Action:** When batch writing to SQLite in an async context, collect the writes into a single synchronous function and offload the entire sequential batch loop to a single background thread using `asyncio.to_thread()`.
+
+## 2025-02-24 - Respecting Purity Contracts
+**Learning:** Some files explicitly define a purity contract forbidding caching, like `task_routing_resolver.py` ("No caching... correctness beats µs"). Applying `lru_cache` to such modules violates architectural constraints for minimal performance gain.
+**Action:** Always read docstrings at the top of the file before applying caching optimizations to ensure it doesn't conflict with explicitly stated architectural or testing requirements.

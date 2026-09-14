@@ -80,3 +80,11 @@ def _isolate_gateway_contextvars():
     yield
     for var in vars_:
         var.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _clear_security_env_cache():
+    """Clear lru_cache on _environment_secret_values between tests to prevent test pollution."""
+    from agent_core.utils.security import _environment_secret_values
+    yield
+    _environment_secret_values.cache_clear()
