@@ -80,3 +80,15 @@ def _isolate_gateway_contextvars():
     yield
     for var in vars_:
         var.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_provider_catalog_cache():
+    """Clear provider catalog cache between tests."""
+    try:
+        from agent_core.services.provider_manager import load_builtin_catalog
+    except Exception:
+        yield
+        return
+    yield
+    load_builtin_catalog.cache_clear()
