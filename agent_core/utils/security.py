@@ -11,6 +11,7 @@ import secrets
 import socket
 import urllib.parse
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Optional
 
@@ -273,6 +274,7 @@ async def safe_get(
     raise UnsafeURLError("TOO_MANY_REDIRECTS")
 
 
+@lru_cache(maxsize=1)
 def _environment_secret_values() -> tuple[str, ...]:
     markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "COOKIE")
     return tuple(
