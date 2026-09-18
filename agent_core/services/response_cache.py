@@ -191,6 +191,10 @@ class ResponseCache:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def is_cachable(self, prompt: str, images: Optional[list]) -> bool:
+        # [FIX] Devre dışı cache "cache edilebilir" diyemez (telemetri
+        # enabled=False raporlarken kod yolunun DB'ye dokunması).
+        if not self.enabled:
+            return False
         if images:
             return False
         if not prompt:
@@ -205,6 +209,11 @@ class ResponseCache:
             self.prune()
 
     def get(self, key: str) -> Optional[str]:
+        # [FIX] Devre dışı cache okuma denemesi yapmaz: init hatasında
+        # HER çağrı exception yoluna düşüp errors+=1 + warning seli
+        # üretiyordu ("cache not cached" yalanı).
+        if not self.enabled:
+            return None
         self._maybe_prune()
         try:
             with self._lock:
@@ -243,6 +252,9 @@ class ResponseCache:
         return time.time() >= float(expires_at)
 
     def put(self, key: str, value: str) -> None:
+        # [FIX] Devre dışı cache yazım denemesi yapmaz (aynen get).
+        if not self.enabled:
+            return
         if not value:
             return
         try:

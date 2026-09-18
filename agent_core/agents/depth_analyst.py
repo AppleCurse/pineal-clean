@@ -40,6 +40,9 @@ class DepthAnalyst:
         visual = input_data.get("visual_evidence", {})
         audit = input_data.get("follower_audit", {})
         timing = input_data.get("timing_forensics", {})
+        # [FIX #1] OSINT discovery fazında yazıyor; derin analist ARTIK
+        # platform varlık bulgusunu görebilir (eski konumda hiç gelmiyordu).
+        osint = input_data.get("public_osint", {})
         
         prompt = (
             "Sen PINEAL 3.0 Baş Adli Psikoloji ve Gerçeklik Analistisin (Depth Analyst).\n"
@@ -57,6 +60,7 @@ class DepthAnalyst:
             f"GÖRSEL KANITLAR: {json.dumps(visual, ensure_ascii=False)}\n"
             f"TAKİPÇİ DENETİMİ (P9): {json.dumps(audit, ensure_ascii=False)}\n"
             f"ZAMAN FORENSİĞİ (Saatler): {json.dumps(timing, ensure_ascii=False)}\n"
+            f"OSINT PLATFORM VARLIĞI (discovery, doğrulanmamış): {json.dumps(osint, ensure_ascii=False)}\n"
             f"DERİNLİK MOTORU (4 kanal beyan/sahneleme/ritim/sosyal + capraz gerilim): "
             f"{json.dumps(input_data.get('psychodynamic_depth', {}), ensure_ascii=False)}\n"
         )

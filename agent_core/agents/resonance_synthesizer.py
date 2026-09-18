@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 from agent_core.domain.memory_models import AuthenticBridge
 from agent_core.services.llm_gateway import LLMGateway
+from agent_core.services.upstream_findings import upstream_findings_block
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,8 @@ class ResonanceSynthesizerAgent:
                 fallback_reason="user_context_unavailable",
             )
         user_context = f"Kullanıcı Biyografisi: {user_bio}\nKullanıcı Paylaşımları: {', '.join(user_posts)}"
+        # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
+        upstream_block = upstream_findings_block(payload)
 
         target_context = f"""
 Hedefin Tutkuları: {passions_data}
@@ -47,6 +50,7 @@ Hedefin İletişim Üslubu: {cognitive_data}
 
         prompt = f"""
 Aşağıda iki insanın profili verilmiştir: (1) Kullanıcı, (2) Hedef Kişi.
+{upstream_block}
 Amacımız ucuz bir manipülasyon yapmak DEĞİLDİR.
 Amacımız: İki profil arasındaki GERÇEK ortak heyecanları, birbirini tamamlayan bakış açılarını bulmak
 ve karşı tarafın sınırlarına saygı duyan, sahici ve derinlikli bir ilk sohbet başlatıcı oluşturmaktır.

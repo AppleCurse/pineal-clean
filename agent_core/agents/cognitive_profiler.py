@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 from agent_core.domain.memory_models import CognitiveStyle
 from agent_core.services.llm_gateway import LLMGateway
+from agent_core.services.upstream_findings import upstream_findings_block
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,8 @@ class CognitiveProfilerAgent:
         visual_evidence = payload.get("visual_evidence", {})
         
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
+        # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
+        upstream_block = upstream_findings_block(payload)
         visual_style = visual_evidence.get('aesthetic_style', '') if visual_evidence else ''
         visual_text = f"Fotoğraflardaki Görsel ve Estetik Dil: {visual_style}" if visual_style else ""
 
@@ -37,6 +40,7 @@ class CognitiveProfilerAgent:
 
         prompt = f"""
 Aşağıdaki metinlerin dilbilimsel üslubunu, iletişim ritmini ve fotoğrafların estetik dilini incele.
+{upstream_block}
 Kişinin nasıl bir iletişim tarzı benimsediğini analiz et.
 
 Hedef Biyografi:

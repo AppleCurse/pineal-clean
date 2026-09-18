@@ -1,0 +1,17 @@
+# Cloudflare Pages — PINEAL frontend dağıtım yapılandırması.
+#
+# Yerleşim (Cloudflare konvansiyonu):
+#   - Statik çıktı : frontend/dist  (npm --prefix frontend run build)
+#   - Functions    : functions/     (bu dosyanın YANINDA — frontend/ içinde DEĞİL)
+#
+# Deployment:
+#   npx wrangler pages deploy frontend/dist
+#   (önce: npx wrangler pages secret put BACKEND_ORIGIN)
+#
+# BACKEND_ORIGIN: FastAPI backendinin kökeni (örn. https://api.pineal.example.com).
+# SECRET olarak ayarlanır — varsayılan ortam değişkenine (vars) yazılmaz.
+# Ayarlı değilse proxy uçları dürüst 502 döndürür (aşağıya bakın).
+
+name = "pineal-frontend"
+compatibility_date = "2026-09-01"
+pages_build_output_dir = "frontend/dist"

@@ -74,7 +74,18 @@ class BrowserSession:
                 await self._launch_locked()
             assert self._page is not None
             await self._page.goto(target, wait_until="domcontentloaded", timeout=30_000)
-            return {"status": "opened", "url": self._page.url}
+            # [FIX] Açık-yönlendirme (open-redirect) deliği: izin listesi
+            # kontrolü yalnızca goto ÖNCESİ url'ye yapılıyordu; bir
+            # yönlendirme sayfayı farklı bir kökene taşıyabilirdi ve
+            # SON url doğrulanmadan raporlanıyordu. Son url yeniden
+            # kontrol edilir; izin listesi dışına taşan reddedilir.
+            final_url = self._page.url
+            if not _domain_ok(final_url):
+                raise ValueError(
+                    "Yönlendirme izin listesi dışı kökene ulaştı (reddedildi): "
+                    + final_url[:80]
+                )
+            return {"status": "opened", "url": final_url}
 
     async def _launch_locked(self) -> None:
         try:

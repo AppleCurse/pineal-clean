@@ -234,14 +234,57 @@ class CanonicalMemory:
         confidence field exists at a different nesting level. Exact duplicates
         are coalesced; conflicting claim verdicts remain visible to reviewers.
         """
-        merged = []
+        # (1) Tam kopyaları birleştir (fingerprint).
+        deduped = []
         seen = set()
         for item in old + new:
             fingerprint = json.dumps(item, sort_keys=True, default=str)
             if fingerprint not in seen:
                 seen.add(fingerprint)
-                merged.append(item)
+                deduped.append(item)
 
+        # [FIX #9] Retry kontaminasyonu: aynı (agent, evidence_type,
+        # source_agent) anahtarına sahip ESKİ kayıtlar güncel kayıt
+        # tarafından İPTAL EDİLİR (last-wins). Eski kod yalnızca TAM
+        # kopyaları birleştiriyordu; yeniden çalıştırılan bir ajanın
+        # önceki denemeden kalan eski çıktısı kanonik hafızada yeni
+        # çıktıyla yan yana kalıyor ve confidence / downstream okumaları
+        # kirliyordu. source_agent dahil edildi: verification_note
+        # kayıtları agent="deep_research" ile farklı source_agent'ları
+        # ayırt etmek ZORUNDADIR (her ajanın notu ayrı yaşar).
+        def _key(item) -> tuple:
+            if not isinstance(item, dict):
+                return ("__nondict__", id(item))
+            agent = item.get("agent")
+            etype = item.get("evidence_type")
+            if not agent or not etype:
+                # Kimlik taşımayan kayıt (düz dict / legacy): supersede
+                # UYGULANMAZ — kümülatif eski davranış korunur. Her kayıt
+                # benzersiz anahtarla temsil edilir (id), asla düşmez.
+                return ("__legacy__", id(item))
+            return (
+                str(agent),
+                str(etype),
+                str(item.get("source_agent", "")),
+            )
+
+        last_index = {}
+        for index, item in enumerate(deduped):
+            last_index[_key(item)] = index
+        merged = [
+            item for index, item in enumerate(deduped)
+            if last_index[_key(item)] == index
+        ]
+        superseded = len(deduped) - len(merged)
+        if superseded:
+            logger.info(
+                "merge_evidence: %s eski kanit kaydi (agent,evidence_type) "
+                "anahatryla guncel kayit tarafindan iptal edildi",
+                superseded,
+            )
+
+        # (2) Çelişen claim'i işaretley (mutasyon merged üzerindeki
+        # aynı dict referanslarında çalışır).
         claims = {}
         for index, item in enumerate(merged):
             result = item.get("result", {}) if isinstance(item, dict) else {}

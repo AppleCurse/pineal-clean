@@ -72,4 +72,6 @@ r = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4); \
 d = json.loads(r.read()); \
 sys.exit(0 if d.get('status') in ('ready', 'degraded') else 1)" || exit 1
 
-CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-${PINEAL_PORT:-8000}}"]
+# --limit-max-request-size: istek gövdesi 1 MiB ile sınırlı (varsayılan
+# 1 MB'a açık sınırsız büyüme yüzeyi; görsel base64 üstünden kaynak tüketimi).
+CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PORT:-${PINEAL_PORT:-8000}} --limit-max-request-size 1048576"]

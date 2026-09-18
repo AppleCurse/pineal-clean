@@ -58,6 +58,12 @@ from agent_core.utils.security import (
     validate_identifier,
 )
 from agent_core.task_executor import PinealExecutor, InsufficientEvidenceError
+# [FIX #8] Scraper'ın KENDİNE ÖZLÜ InsufficientEvidenceError'ı (başka bir
+# Exception hiyerarşisi) da yakalanmalı; ayrı sınıflar olduğundan
+# isinstance ile ayrım yapılır, str(type) kontrolü ile değil.
+from agent_core.scraper.instagram_ghost import (
+    InsufficientEvidenceError as ScraperInsufficientEvidenceError,
+)
 
 
 shadow_executor = ShadowExecutor()
@@ -482,30 +488,42 @@ def rate_limit(key: str, bucket: str) -> bool:
 
 app.state.rooms = {}  # client_id -> {"executor": PinealExecutor, "vault": {}, "websockets": set()}
 
-# W5: tarayici yetenegi probu (60sn cache). Telemetri artik import basarisi
+# W5: tarayici yetenegi probu (300sn cache). Telemetri artik import basarisi
 # degil, GERCEK capability raporlar (x_scraper / instagram_scraper / browser_installed).
+# [FIX] TTL 60sn idi: her 60sn'de bir PLAYWRIGHT SÜRÜCÜSÜ KALKIP
+# executable_path'i soruyordu (process spawn + import maliyeti). 300sn'ye
+# çakıldı; ayrıca PINEAL_CHROMIUM_PATH set edilmişse playwright'a
+# DOKUNMADAN kısa devre edilir (deploy'da yol bizde, prob gereksiz).
+_TELEMETRY_CAPABILITY_TTL_S = 300.0
 _telemetry_capability = {"ts": 0.0, "value": None}
 _telemetry_capability_lock = asyncio.Lock()
+
 
 async def _scraper_capability() -> dict:
     now = time.monotonic()
     cached = _telemetry_capability["value"]
-    if cached is not None and now - _telemetry_capability["ts"] < 60.0:
+    if cached is not None and now - _telemetry_capability["ts"] < _TELEMETRY_CAPABILITY_TTL_S:
         return cached
     async with _telemetry_capability_lock:
         cached = _telemetry_capability["value"]
-        if cached is not None and time.monotonic() - _telemetry_capability["ts"] < 60.0:
+        if cached is not None and time.monotonic() - _telemetry_capability["ts"] < _TELEMETRY_CAPABILITY_TTL_S:
             return cached
         result = {"instagram": False, "browser": False}
-        try:
-            if InstagramGhostScraper is not None:
-                from playwright.async_api import async_playwright
-                async with async_playwright() as p:
-                    exe = p.chromium.executable_path
-                    result["browser"] = bool(exe and os.path.exists(exe))
-                    result["instagram"] = result["browser"]
-        except Exception:
-            result = {"instagram": False, "browser": False}
+        pinned = os.environ.get("PINEAL_CHROMIUM_PATH", "").strip()
+        if pinned and os.path.exists(pinned):
+            # [FIX] Pinlenmiş executable: sürücü spawn etmeden doğrula.
+            result["browser"] = True
+            result["instagram"] = True
+        else:
+            try:
+                if InstagramGhostScraper is not None:
+                    from playwright.async_api import async_playwright
+                    async with async_playwright() as p:
+                        exe = p.chromium.executable_path
+                        result["browser"] = bool(exe and os.path.exists(exe))
+                        result["instagram"] = result["browser"]
+            except Exception:
+                result = {"instagram": False, "browser": False}
         _telemetry_capability["ts"] = time.monotonic()
         _telemetry_capability["value"] = result
         return result
@@ -689,14 +707,42 @@ async def room_capacity_handler(request: Request, exc: RoomCapacityExceeded):
     return JSONResponse(body, status_code=503)
 
 
+# [FIX #7] _close_room senkron bir helper (evictor/sweeper'dan await
+# edilmez). Browser kapatma async olduğundan detached task + done-callback
+# ile garanti edilir; done-callback seti büyütmekten de korur.
+_detached_tasks: set = set()
+
+
+def _detach_browser_close(sess) -> None:
+    async def _runner() -> None:
+        try:
+            await sess.close()
+        except Exception:
+            logger.warning("ODA KAPANIYOR: browser session kapatma hatası", exc_info=True)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # loop yoksa (sync context): evictor zaten loop içinden çağrılır
+    t = loop.create_task(_runner())
+    _detached_tasks.add(t)
+    t.add_done_callback(_detached_tasks.discard)
+
+
 def _close_room(client_id: str, room: dict) -> None:
-    """Bir odayı kapatır: sender task ve görev task'leri iptal edilir."""
+    """Bir odayı kapatır: sender task, görev task'leri ve browser kapanır."""
     sender = room.get("sender_task")
     if sender is not None and not sender.done():
         sender.cancel()
     for mission in (room.get("mission_tasks") or {}).values():
         if not mission.done():
             mission.cancel()
+    # [FIX #7] [026] Zombie Chromium: oda evict edilince görev cancel
+    # edilirdi ama BrowserSession KALIYORDU (Chromium process'i sızıyordu).
+    # Şimdi room'dan alınıp detached task ile kapatılır.
+    sess = room.pop("browser", None)
+    if sess is not None:
+        _detach_browser_close(sess)
     # Not: aktif WebSocket'i olan bir oda _evict_rooms tarafından zaten
     # atlanır; burada soket kapatmaya çalışmak (close() bir coroutine'dir)
     # await edilemeyeceği için yapılmaz.
@@ -991,8 +1037,9 @@ def _openai_streaming_response(
     optimization_lossy: bool,
 ) -> StreamingResponse:
     async def event_source():
+        chunks = routed_stream.stream.chunks
         try:
-            async for chunk in routed_stream.stream.chunks:
+            async for chunk in chunks:
                 data = json.dumps(
                     _stream_chunk_dict(chunk),
                     ensure_ascii=False,
@@ -1008,6 +1055,15 @@ def _openai_streaming_response(
                 "stream_interrupted",
             )
             yield "data: " + json.dumps(error, separators=(",", ":")) + "\n\n"
+        finally:
+            # [AUDIT] Üretici (HTTP connection pool / websocket) kapanmazsa
+            # her istekte bir bağlantı sızar; aclose() idiomatic kapanış.
+            aclose = getattr(chunks, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    pass
         yield "data: [DONE]\n\n"
 
     plan = routed_stream.plan
@@ -1486,20 +1542,22 @@ def _enqueue(client_id: str, item: tuple):
                 # Defensive accounting if another producer fills the slot.
                 _record_queue_drop(room, item[0])
 
-async def _send_ws(room: dict, payload: str):
+# [FIX #6] WebSocket gönderimi oda (ROOM) ile sınırlıdır. Eski kod
+# app.state.rooms'daki TÜM odaların soketlerini topluyordu: bir odanın
+# log/telemetri payload'u (profil verisi içerebilir) HER istemciye
+# sızdırılıyordu. Ayrıca send_text üzerinde bekleme süresi yoktu: yavaş/
+# ölü soketler yayını asılı bırakırdı ve asla temizlenmezdi.
+_WS_SEND_TIMEOUT_S = 5.0
+
+
+async def _send_ws(room: dict, payload: str) -> None:
     ws_set = room.get("websockets", set())
-    all_ws = set(ws_set)
-    rooms = getattr(app.state, "rooms", {})
-    if isinstance(rooms, dict):
-        for r in rooms.values():
-            if isinstance(r, dict) and "websockets" in r:
-                all_ws.update(r["websockets"])
-    for ws in list(all_ws):
+    for ws in list(ws_set):
         try:
-            await ws.send_text(payload)
+            await asyncio.wait_for(ws.send_text(payload), timeout=_WS_SEND_TIMEOUT_S)
         except Exception:
-            if ws in ws_set:
-                ws_set.discard(ws)
+            # Ölü/açık soket: odaya ait setten at; yayına diğerleriyle devam.
+            ws_set.discard(ws)
 
 async def _send_log(room: dict, payload: tuple):
     level, msg = payload
@@ -1742,22 +1800,53 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                 "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
             )
             return
+        task_id = task_id or _new_task_id()
         if req.url and effective_type == "instagram":
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [INSTAGRAM]")
-            try:
-                # [W4.2] Kazıma tek sahiplikli platform_registry'de; Rust
-                # TaskManager (run_task.py) da aynı fonksiyonu kullanır.
-                payload["target_profile"].update(await scrape_instagram(
-                    req.url, cookie,
-                    log=lambda lvl, msg: broadcast_log(client_id, lvl, msg),
-                ))
-                broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
-            except Exception as e:
-                broadcast_log(client_id, "ERROR", f"UPLINK KOPTU: {str(e)[:100]}")
-                if "InsufficientEvidenceError" in type(e).__name__ or "TargetPrivateError" in type(e).__name__:
-                    raise e
-
-        task_id = task_id or _new_task_id()
+            # [FIX #8] Eski kod: (1) tek deneme + hata yutuluyordu ve
+            # operasyon BOŞ profille sessizce devam ediyordu; (2) ISE
+            # kontrolü str(type(e).__name__) ile yapılıyordu — iki farklı
+            # ISE sınıfı (task_executor + scraper) ad eşleşmesiyle
+            # yakalanmaya çalışılıyordu, TargetPrivateError ise hiç
+            # tanımlanmayan bir sınıftı.
+            scrape_max = _bounded_env_int("PINEAL_SCRAPE_MAX_ATTEMPTS", 3, 1, 5)
+            last_err = None
+            for scrape_attempt in range(1, scrape_max + 1):
+                try:
+                    # [W4.2] Kazıma tek sahiplikli platform_registry'de; Rust
+                    # TaskManager (run_task.py) da aynı fonksiyonu kullanır.
+                    payload["target_profile"].update(await scrape_instagram(
+                        req.url, cookie,
+                        log=lambda lvl, msg: broadcast_log(client_id, lvl, msg),
+                    ))
+                    broadcast_log(client_id, "INFO", "TELEMETRİ: Veri ele geçirildi.")
+                    last_err = None
+                    break
+                except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
+                    # Kanıt yok (ör. özel profil) = altyapı hatası değil;
+                    # denemek anlamsız. Dış handler "halted_evidence"
+                    # terminal durumuna çevirir.
+                    raise
+                except Exception as e:
+                    last_err = e
+                    broadcast_log(
+                        client_id, "ERROR",
+                        f"UPLINK KOPTU (Deneme {scrape_attempt}/{scrape_max}): "
+                        f"{type(e).__name__}: {str(e)[:100]}",
+                    )
+                    if scrape_attempt < scrape_max:
+                        await asyncio.sleep(min(2 * scrape_attempt, 5))
+            if last_err is not None:
+                # [FIX #8] Altyapı tükenmesi → dürüst terminal durum.
+                # Boş profille operasyon ÇALIŞTIRILMAZ (eski kod sessizce
+                # devam edip kanıtsız "analiz" üretiyordu).
+                logger.error("HEDEF VERİSİ ALINAMADI: %s", str(last_err)[:200])
+                broadcast_result_error(
+                    client_id, "failed",
+                    "HEDEF VERİSİ ALINAMADI: kazıma altyapısı denemeleri tüketti; analiz başlatılmadı.",
+                    task_id,
+                )
+                return
         max_attempts = _bounded_env_int("PINEAL_TASK_MAX_ATTEMPTS", 3, 1, 3)
         task_timeout = _bounded_env_int("PINEAL_TASK_TIMEOUT_SECONDS", 300, 1, 1800)
         for attempt in range(1, max_attempts + 1):
@@ -1773,7 +1862,7 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                 )
                 broadcast_result(client_id, res)
                 return
-            except InsufficientEvidenceError:
+            except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
                 raise
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
@@ -1787,7 +1876,7 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                         task_id,
                     )
                     return
-    except InsufficientEvidenceError:
+    except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
         broadcast_result_error(
             client_id, "halted_evidence", "DURDURULDU: YETERSİZ KANIT", task_id
         )
@@ -1967,8 +2056,11 @@ async def api_vault(req: VaultPayload):
 
 class OverridePayload(BaseModel):
     client_id: str
-    fact: str
-    tag: str
+    # [FIX #3] Sınırsız str alanları learnings.json'a sınırsız büyütme
+    # + inject promptuna sınırsız enjeksiyon oluyordu; sınırlar hem
+    # depolamayı hem prompt maliyetini sınırlar.
+    fact: str = Field(min_length=1, max_length=2000)
+    tag: str = Field(min_length=1, max_length=64)
 
 _override_lock = asyncio.Lock()
 

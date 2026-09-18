@@ -109,11 +109,23 @@ class MemoryInjector:
         if not accepted:
             return ""
 
+        # [FIX #3] Prompt maliyet sınırlaması: en yeni 50 kural enjekte
+        # edilir; fazlası (EN ESKİLER) sessizce kaybolmaz — sayısal,
+        # dürüst not üstbilgiye yazılır.
+        max_rules = 50
+        truncated = 0
+        if len(accepted) > max_rules:
+            truncated = len(accepted) - max_rules
+            accepted = accepted[-max_rules:]
+
         rules_text = "\n".join(accepted)
+        _notes = []
+        if rejected:
+            _notes.append(f"{rejected} kural prompt-injection örüntüsü nedeniyle atıldı")
+        if truncated:
+            _notes.append(f"{truncated} eski kural prompt bütçesi (max {max_rules}) nedeniyle enjekte edilmedi")
         reject_note = (
-            f"\n(Not: {rejected} kural prompt-injection örüntüsü nedeniyle atıldı.)"
-            if rejected
-            else ""
+            f"\n(Not: {'; '.join(_notes)}.)" if _notes else ""
         )
 
         # Fence is deliberately NOT named "system" / "override" — operator
