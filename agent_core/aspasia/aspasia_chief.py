@@ -202,10 +202,25 @@ class AspasiaChief:
             "masraf veya ikame sorarsa buradan cevapla; alanda kanıt yoksa uydurma.\n"
         ) if oversight else ""
 
+        # [FIX #4] Deterministik hüküm özeti: Aspasia "bu görevde ne
+        # buldun?" sorusunu artık KANITTAN derlenmiş özetle cevaplar;
+        # LLM katılmadı, uydurma hüküm yok, kanıt yoksa dürüst satır var.
+        from agent_core.services.verdict_synthesizer import build_verdict_digest
+        verdict = build_verdict_digest(room_state)
+        verdict_block = (
+            "\nHÜKÜM BELGESİ (deterministik kanıt özetı — LLM sentezi DEĞİL):\n"
+            f"{verdict}\n"
+            "Bunu KISA / TEK CÜMLE olarak aktar. Bu bir tıbbi veya hukuki "
+            "hüküm DEĞİLDİR; yalnızca kanıt zincirinin mekanik özetidir. "
+            "Kullanıcı sonuç/kanıt sorarsa buradan cevapla; özet boşsa "
+            "'hüküm yok' de, uydurma.\n"
+        ) if verdict else ""
+
         context_prompt = f"""
 SİSTEM CANLI TELEMETRİ ÖZETİ (Event Bus):
 {telemetry_summary}
 {oversight_block}
+{verdict_block}
 
 KULLANICI MESAJI VEYA SORUSU: "{user_message}"
 {"(Not: Kullanıcı bir görsel yükledi; görsel de isteğe eklenmiştir — varsa içeriğini yorumla.)" if image_data else ""}

@@ -51,6 +51,26 @@ class TaskStatus(TaskSnapshot):
     pass
 
 
+# [FIX #3] Upstream bulgular bütçesi: downstream ajan promptlarına
+# enjekte edilecek toplam metin ≤ bu kadar karakter. Bütçe aşılırsa
+# EN ESKİ bulgu atılır (FIFO) — deterministik ve tahmin edilebilir.
+UPSTREAM_FINDINGS_BUDGET_CHARS = 2000
+
+
+def _append_upstream_finding(input_data: dict, agent: str, core: str) -> None:
+    """[FIX #3] Bulgu çekirdeğini sınırlı upstream listesine ekler.
+
+    Liste input_data içinde yaşar (kalıcı şemaya dokunulmaz — geriye
+    uyum). Bütçe aşımında en eski giriş düşer.
+    """
+    findings = input_data.setdefault("_upstream_findings", [])
+    findings.append({"agent": agent, "core": core})
+    total = sum(len(str(f.get("core", ""))) for f in findings)
+    while len(findings) > 1 and total > UPSTREAM_FINDINGS_BUDGET_CHARS:
+        dropped = findings.pop(0)
+        total -= len(str(dropped.get("core", "")))
+
+
 class PinealExecutor:
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):
         self._log = log_callback or (lambda level, msg: None)
@@ -88,6 +108,27 @@ class PinealExecutor:
         import os as _os
         if _os.getenv("ENABLE_INTERPRETER", "false").lower() == "true":
             self.agents["interpreter"] = InterpreterAgent(self.llm_gateway)
+
+    @staticmethod
+    def _finding_core(result: Any, limit: int = 280) -> str:
+        """[FIX #3] Ajan çıktısından deterministik kanıt çekirdeği üretir.
+
+        Uzun string değerler (≥12 karakter — enum/ID gibi kısa alanlar
+        gürültüdür) " | " ile birleştirilir ve `limit`'e kesilir.
+        Boşsa "" döner (enjeksiyon yapılmaz → eski davranış korunur).
+        """
+        if result is None:
+            return ""
+        dump = result.model_dump() if hasattr(result, "model_dump") else result
+        if not isinstance(dump, dict):
+            return ""
+        parts: List[str] = []
+        for v in dump.values():
+            if isinstance(v, str) and len(v) >= 12:
+                v = v.strip()
+                if v:
+                    parts.append(v)
+        return " | ".join(parts)[:limit]
 
     @staticmethod
     def _hash_evidence_result(result: BaseModel) -> str:
@@ -418,8 +459,57 @@ class PinealExecutor:
                     "vision_analyzer", visual_ev, vision_scope.records
                 )
                 self._log("INFO", f"[{task_id}] GÖRSEL KANIT: {visual_ev.visual_evidence_summary}")
+                # [FIX #3] Görsel kanıtları upstream bütçesine ekle.
+                _core = self._finding_core(visual_ev)
+                if _core:
+                    _append_upstream_finding(input_data, "vision_analyzer", _core)
             except Exception as e:
                 self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
+
+        # [FIX #1] OSINT DISCOVERY FAZINA TAŞINDI. Eski konum tüm ajan
+        # loop'unun SONUNDAydı: (a) çıktı input_data'ya yazılmadığı
+        # için hiçbir ajan onu kullanamıyordu, (b) derinlik motoru
+        # zaten bitmişti — bulgu KULLANILMADI. Şimdi discovery'de koşar;
+        # input_data["public_osint"] derinlik motorunu ve ajan
+        # promptlarını besler. Ajan username/name sürücülüdür (ilk veri
+        # gerektirmez), taşımak güvenli.
+        _tp = input_data.get("target_profile", {}) or {}
+        if _tp.get("username") or _tp.get("name"):
+            try:
+                with self._capture_llm_calls(task_id, "osint_investigator") as osint_scope:
+                    osint_result = await self.agents["osint_investigator"].execute(input_data)
+                status.osint_footprint = osint_result.model_dump() if hasattr(osint_result, "model_dump") else osint_result
+                status.osint_footprint["_provenance"] = self._provenance_for(
+                    "osint_investigator", osint_result, osint_scope.records
+                )
+                data_conf = getattr(osint_result, "data_confidence", True)
+                fallback = getattr(osint_result, "fallback_reason", None)
+                status.agent_runs["osint_investigator"] = AgentRun(
+                    task_id=task_id, agent_name="osint_investigator", status="completed",
+                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    output_summary=status.osint_footprint, call_ids=list(osint_scope.call_ids),
+                    confidence=(
+                        getattr(osint_result, "confidence", None)
+                        if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))
+                        else None
+                    ),
+                    warnings=[] if data_conf else [fallback or "data_unavailable"],
+                )
+                # [FIX #1] Çıktı ARTIK KULLANILIYOR: derinlik motoru +
+                # ajan promptları okuyabilir.
+                input_data["public_osint"] = status.osint_footprint
+                self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı (discovery)")
+                # [FIX #3] OSINT bulgusunu upstream bütçesine ekle.
+                _core = self._finding_core(osint_result)
+                if _core:
+                    _append_upstream_finding(input_data, "osint_investigator", _core)
+            except Exception as e:
+                status.agent_runs["osint_investigator"] = AgentRun(
+                    task_id=task_id, agent_name="osint_investigator", status="failed",
+                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    error_message=str(e)[:200],
+                )
+                self._log("WARNING", f"[{task_id}] OSINT taraması atlandı: {e}")
 
         # GÖREV 2.3/2.4: psikodinamik derinlik motoru (deterministik).
         # Metin yoksa agirlik otomatik gorsel+zamansala kayar; motor ASLA
@@ -719,7 +809,14 @@ class PinealExecutor:
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
-                
+
+                # [FIX #3] Sınırlı upstream bulgu: sonraki ajanlar bu
+                # ajanın çekirdeğini (≤280 karakter, "doğrulanmamış"
+                # etiketiyle) artık görebilecek — odalar sağır değil.
+                _core = self._finding_core(result)
+                if _core:
+                    _append_upstream_finding(input_data, agent_name, _core)
+
                 if agent_name == "resonance_calc":
                     status.resonance_score = getattr(result, "compatibility_score", None)
                 self._snapshot(status)
@@ -732,9 +829,15 @@ class PinealExecutor:
                 ))
 
                 if agent_name == "resonance_calc" and hasattr(result, "compatibility_score") and result.compatibility_score < 0.70:
-                    self._log("ERROR", "[" + task_id + "] FREKANS UYUSMAZLIGI: " + str(round(result.compatibility_score, 2)))
+                    # [FIX #11] Eski hata etiketi klinik/romantik bir
+                    # yargı çağrıştırıyordu; mekanik gerçek: skor EŞİĞİN
+                    # ALTINDA kaldığı için sentez ispat yüküyle REDDEDİLDİ.
+                    # Log + reason artık mekanik durumu raporlar
+                    # (status kodu DEĞİŞMEZ — "halted_frequency" 5 test
+                    # tarafından kilitli).
+                    self._log("ERROR", "[" + task_id + "] INSUFFICIENT_RESONANCE_EVIDENCE: " + str(round(result.compatibility_score, 2)) + " < 0.70 esigi; sentez reddedildi")
                     status.status = "halted_frequency"
-                    status.halted_reason = "Frekans uyusmazligi"
+                    status.halted_reason = "Resonans kaniti esigin altinda: " + str(round(result.compatibility_score, 2)) + " < 0.70; sentez reddedildi"
                     status.completed_at = datetime.now(timezone.utc)
                     await self.memory.merge_evidence(task_id, status.evidence_chain)
                     self._snapshot(status)
@@ -861,6 +964,10 @@ class PinealExecutor:
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
+                # [FIX #3] Geciken ajanlar da upstream bütçesine eklenir.
+                _core = self._finding_core(result)
+                if _core:
+                    _append_upstream_finding(input_data, agent_name, _core)
                 self._snapshot(status)
                 self._emit(StepCompletedEvent(
                     task_id=task_id,
@@ -987,34 +1094,9 @@ class PinealExecutor:
                 )
                 self._log("WARNING", f"[{task_id}] Gölge forensiği atlandı: {e}")
 
-            try:
-                with self._capture_llm_calls(task_id, "osint_investigator") as osint_scope:
-                    osint_result = await self.agents["osint_investigator"].execute(input_data)
-                status.osint_footprint = osint_result.model_dump() if hasattr(osint_result, "model_dump") else osint_result
-                status.osint_footprint["_provenance"] = self._provenance_for(
-                    "osint_investigator", osint_result, osint_scope.records
-                )
-                data_conf = getattr(osint_result, "data_confidence", True)
-                fallback = getattr(osint_result, "fallback_reason", None)
-                status.agent_runs["osint_investigator"] = AgentRun(
-                    task_id=task_id, agent_name="osint_investigator", status="completed",
-                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    output_summary=status.osint_footprint, call_ids=list(osint_scope.call_ids),
-                    confidence=(
-                        getattr(osint_result, "confidence", None)
-                        if data_conf and isinstance(getattr(osint_result, "confidence", None), (int, float))
-                        else None
-                    ),
-                    warnings=[] if data_conf else [fallback or "data_unavailable"],
-                )
-                self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı")
-            except Exception as e:
-                status.agent_runs["osint_investigator"] = AgentRun(
-                    task_id=task_id, agent_name="osint_investigator", status="failed",
-                    started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
-                    error_message=str(e)[:200],
-                )
-                self._log("WARNING", f"[{task_id}] OSINT taraması atlandı: {e}")
+            # [FIX #1] OSINT artık discovery fazında çalışıyor (derinlik
+            # motorundan ÖNCE). Eski sondaki blok KALDIRILDI: çıktı
+            # input_data'ya yazılmadığı için kullanılamıyordu.
 
             # Determine final status via DecisionEngine
             final_status = self.decision_engine.make_decision(status.agent_runs)

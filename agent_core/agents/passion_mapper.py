@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 from agent_core.domain.memory_models import PassionProfile
 from agent_core.services.llm_gateway import LLMGateway
+from agent_core.services.upstream_findings import upstream_findings_block
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,8 @@ class PassionMapperAgent:
         visual_evidence = payload.get("visual_evidence", {})
         
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
+        # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
+        upstream_block = upstream_findings_block(payload)
         visual_text = f"""
 Görsel İnceleme Kanıtları (Multimodal Vision):
 - Tespit Edilen Somut Nesneler: {visual_evidence.get('detected_objects', [])}
@@ -44,6 +47,7 @@ Görsel İnceleme Kanıtları (Multimodal Vision):
 
         prompt = f"""
 Aşağıdaki sosyal medya profil verilerini ve fotoğraflardan çıkarılan SOMUT görsel kanıtları incele.
+{upstream_block}
 Bu kişinin GERÇEKTE neye tutku duyduğunu, hangi konuların ve eylemlerin onu motive ettiğini analiz et.
 Asla genel geçer astroloji veya kişisel gelişim genellemeleri yapma. 
 Yalnızca verilen metinlerdeki ve fotoğraflarda fiilen tespit edilen somut nesne/mekan delillerine dayan.

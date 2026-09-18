@@ -164,6 +164,19 @@ class SpendCapExceeded(RuntimeError):
     """P2-MALİYET: canlı harcama üst limiti aşıldı — daha fazla çağrı reddedilir."""
 
 
+class ProviderEmptyResponseError(RuntimeError):
+    """Sağlayıcı 200 döndürdü ama `choices` BOŞTU — transport/semantic hata.
+
+    [FIX #10] Ayrı bir istisna tipi: query_json'un parse-tamir bloğu
+    ``except ValueError`` ile bu hatayı "bozuk JSON" sanıp ikinci bir
+    ÜCRETLİ repair çağrısı tetikliyordu (modülün kendi sözleşmesi: "Repair
+    is scoped to parse/schema failures only"). RuntimeError tabanlı olduğu
+    için parse-tamir bloğu onu yakalayamaz; hata doğrudan yükselir.
+    Yeniden denenebilirlik değişmedi: _is_retryable_error bilinmeyen
+    tiplerde default (True) koluna düşer, ValueError ile aynı davranış.
+    """
+
+
 # Errors that must never trigger a chain fallback: they are configuration or
 # policy rejections, not transient upstream conditions.
 _FALLBACK_GUARD_MARKERS = (
@@ -2100,7 +2113,11 @@ class LLMGateway:
                     budget_reserved = False
                 choices = getattr(response, "choices", None) or []
                 if not choices or not getattr(choices[0], "message", None):
-                    raise ValueError(f"Provider returned empty choices from model '{selected_model}'")
+                    # [FIX #10] Transport hatası: query_json bunu parse
+                    # hatası sanıp ücretli repair'a girmesin.
+                    raise ProviderEmptyResponseError(
+                        f"Provider returned empty choices from model '{selected_model}'"
+                    )
                 content = getattr(choices[0].message, "content", "") or ""
 
                 if cache_key and content:

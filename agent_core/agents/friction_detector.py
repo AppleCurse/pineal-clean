@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 from agent_core.domain.memory_models import FrictionProfile
 from agent_core.services.llm_gateway import LLMGateway
+from agent_core.services.upstream_findings import upstream_findings_block
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,8 @@ class FrictionDetectorAgent:
         visual_evidence = payload.get("visual_evidence", {})
         
         posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
+        # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
+        upstream_block = upstream_findings_block(payload)
         visual_text = f"""
 Görsel İnceleme Kanıtları (Multimodal Vision):
 - Tespit Edilen Nesneler: {visual_evidence.get('detected_objects', [])}
@@ -43,6 +46,7 @@ Görsel İnceleme Kanıtları (Multimodal Vision):
 
         prompt = f"""
 Aşağıdaki profil verilerini ve fotoğraflardan tespit edilen görsel kanıtları incele.
+{upstream_block}
 Bu kişinin iletişimde nelere mesafe koyduğunu, nelere karşı hassas veya eleştirel olduğunu,
 nelerin onu yorup rahatsız edebileceğini tespit et.
 Asla sahte derin travmalar veya klişe uydurma. Sadece metinlerdeki ve fotoğraflardaki gerçek sınırları ve hassasiyetleri bul.
