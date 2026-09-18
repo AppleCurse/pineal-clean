@@ -88,3 +88,18 @@ def _clear_security_env_cache():
     from agent_core.utils.security import _environment_secret_values
     yield
     _environment_secret_values.cache_clear()
+
+@pytest.fixture(autouse=True)
+def _clear_agent_tiers_cache():
+    """Clear lru_cache on _load_agent_tiers between tests to prevent test pollution."""
+    try:
+        from agent_core.services.llm_gateway import LLMGateway
+        LLMGateway._load_agent_tiers.cache_clear()
+    except Exception:
+        pass
+    yield
+    try:
+        from agent_core.services.llm_gateway import LLMGateway
+        LLMGateway._load_agent_tiers.cache_clear()
+    except Exception:
+        pass
