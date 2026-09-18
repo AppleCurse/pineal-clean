@@ -86,7 +86,11 @@ gerçek bir çocuk süreç (`sleep 600`) başlatan ikame ile, `PINEAL_ROOM_TTL_S
   (uvicorn 0.52.4→0.53.0, playwright 1.62→1.63, openai 3.13→3.16, invisible-playwright
   0.14→0.22, reportlab 4.5→5.0 vb.). Dockerfile lock'u kurar → prod deterministik; ama
   **CI `requirements.txt` kuruyor**, yani CI ile prod imajı farklı ağaçta test ediliyor.
-  Öneri (go-live blocker değil): CI'da da `requirements.lock` kur ya da lock'u yenile.
+  **Yapıldı (commit sonrası):** `requirements.lock` ile temiz venv → `ruff` temiz,
+  **1185 passed / 2 skipped / %85.01** (PR #91'in "2 skipped" rakamı bu ağaçtan geliyormuş;
+  crawl4ai lock'ta var). CI backend + smoke job'ları artık `requirements.lock` kuruyor
+  (`.github/workflows/ci.yml`) → CI ile prod imajı aynı ağaç. Lock içeriği değiştirilmedi
+  (yenileme = bağımlılık yükseltmesi; bu turun kapsamı değil).
 
 ---
 
@@ -113,7 +117,9 @@ Kaldırılan: `require_data_confidence`, `min_final_confidence`, `critical: true
   open-interpreter opsiyonel katman kurulu değil — CI de yalnız `requirements.txt` kurduğundan
   GitHub CI'da da skip olmaları beklenir). PR iddiası muhtemelen osint ekstraları kurulu
   yerel ortamdan; "1183 passed" CI'da **yeniden üretilemedi**.
-- Bu turun eklemeleriyle (2 yeni test): **1183 passed, 4 skipped, 85.02 %** (tesadüfen aynı sayı).
+- Bu turun eklemeleriyle (2 yeni test): requirements.txt ağacı **1183 passed, 4 skipped**;
+  requirements.lock ağacı **1185 passed, 2 skipped**, %85.01. Skip farkı = crawl4ai (lock'ta var,
+  txt'de yok) + open-interpreter (ikisinde de yok).
 - `scripts/generate_routing_shadows.py` + `git diff --exit-code` → temiz.
 - GitHub Actions @75f12c7 (run 35344288711): backend/frontend/rust-core/android/smoke **success**
   (job log detayı API'den artık indirilemiyor; yalnız sonuç görüldü).
@@ -144,7 +150,10 @@ Kaldırılan: `require_data_confidence`, `min_final_confidence`, `critical: true
 | 9 | CI | Yeşil; "1183 passed" HEAD'de 1181+4 skip olarak üretildi |
 | 10 | Cloudflare | Kod tam; dashboard doğrulanamaz |
 
+**Chromium tekrar denemesi:** 4 Playwright CDN host'u da sandbox'tan erişilemez (000/timeout;
+npm/pypi 200). Gerçek Chromium ölçümü bu ortamda yapılamaz — CI/staging'de yapılmalı.
+
 **Blocker yok.** Açık kalan tek gerçek boşluk: gerçek Chromium ile süreç-ağacı temizliğinin
 Chromium olan bir ortamda tekrar ölçülmesi (madde 4).
 
-Commit'ler: `47760b9` (config C8 + kilit test + CHANGELOG), `c61fe66` (ws_leak_probe.py).
+Commit'ler: `47760b9` (config C8 + kilit test + CHANGELOG), `c61fe66` (ws_leak_probe.py), `abac3d2` (rapor), + CI lock hizalaması.
