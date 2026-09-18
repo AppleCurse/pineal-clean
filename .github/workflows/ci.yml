@@ -22,9 +22,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install dependencies
+      - name: Install dependencies (requirements.lock = production image tree)
+        # [2026-09-18 B7] Dockerfile requirements.lock kurar; CI eskiden
+        # requirements.txt'i taze çözüyordu -> prod ile test edilen ağaç
+        # farklıydı (ölçülen: 20 paket sürüm farkı, 2 test skip/geçer farkı).
         run: |
-          pip install -r requirements.txt ruff pytest pytest-asyncio pytest-cov
+          pip install -r requirements.lock ruff pytest pytest-asyncio pytest-cov
       - name: Lint with ruff
         run: ruff check .
       - name: Run backend tests with coverage gate
@@ -81,8 +84,8 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt
+      - name: Install Python dependencies (requirements.lock)
+        run: pip install -r requirements.lock
       - name: Build frontend (so smoke tests the real dist)
         run: cd frontend && npm ci && npm run build
       - name: uvicorn smoke

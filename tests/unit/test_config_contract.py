@@ -66,3 +66,48 @@ def test_passion_mapper_weights_are_real_passions_fields():
     assert not extra, f"Modelde olmayan ağırlık alanları: {extra}"
     assert set(weights) == {"core_passions", "energizing_topics", "flow_triggers",
                             "evidence_quotes", "sentiment_polarity"}
+
+
+# ---------------------------------------------------------------------------
+# [2026-09-18 C8] Ölü config anahtarı kilidi.
+# config_loader.DecisionConfig.load YALNIZCA aşağıdaki anahtarları okur;
+# başka bir anahtar YAML'da dursa bile hiçbir davranışı yönetmez (sessiz
+# ölü config). require_data_confidence / min_final_confidence / critical /
+# fallback_enabled bu sınıftaydı ve kaldırıldı. Yeni anahtar eklemek
+# isteyen önce loader'a bağlar, sonra bu kümeyi genişletir.
+# ---------------------------------------------------------------------------
+import yaml
+from pathlib import Path
+
+_CONSUMED_DEFAULT_KEYS = {"min_data_score", "min_llm_confidence", "graceful_degradation"}
+_CONSUMED_AGENT_KEYS = _CONSUMED_DEFAULT_KEYS | {"field_weights", "empty_list_penalty"}
+_CONSUMED_PIPELINE_KEYS = {"default", "critical_agents"}
+
+
+def _raw_config() -> dict:
+    root = Path(__file__).resolve().parents[2]
+    with open(root / "config" / "decision_config.yaml", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def test_decision_config_has_no_dead_keys():
+    raw = _raw_config()
+    assert set(raw) <= {"version", "pipeline", "agents"}, f"bilinmeyen üst anahtar: {set(raw)}"
+    pipeline = raw.get("pipeline", {})
+    assert set(pipeline) <= _CONSUMED_PIPELINE_KEYS, f"pipeline ölü anahtar: {set(pipeline) - _CONSUMED_PIPELINE_KEYS}"
+    dead_default = set(pipeline.get("default", {})) - _CONSUMED_DEFAULT_KEYS
+    assert not dead_default, f"pipeline.default ölü anahtar (loader okumuyor): {dead_default}"
+    for name, agent in (raw.get("agents") or {}).items():
+        dead = set(agent) - _CONSUMED_AGENT_KEYS
+        assert not dead, f"agents.{name} ölü anahtar (loader okumuyor): {dead}"
+
+
+def test_critical_agents_single_source_is_pipeline_list():
+    """'critical: true' ajan-içi bayrağı YOK; tek kaynak pipeline.critical_agents.
+
+    mirror_truth eskiden hem listede hem 'critical: true' taşıyordu; ikinci
+    bayrak hiçbir yerde okunmuyordu. Listede olduğu sürece davranış aynı.
+    """
+    cfg = DecisionConfig.load()
+    assert "mirror_truth" in cfg.critical_agents
+    assert "passion_mapper" in cfg.critical_agents

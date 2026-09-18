@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — 2026-09-18 — C8: decision_config.yaml ÖLÜ ANAHTAR TEMİZLİĞİ
+
+- **[C8] `config/decision_config.yaml` içinden 4 ölü anahtar kaldırıldı:**
+  `pipeline.default.require_data_confidence`, `agents.mirror_truth.min_final_confidence`,
+  `agents.mirror_truth.critical`, `agents.osint_investigator.fallback_enabled`.
+  **Ölçüm:** `grep -rn` (agent_core/, backend/) → bu isimlerin hiçbiri
+  `config_loader.py` dışında hiçbir yerde okunmuyor; `config_loader.py` de
+  yalnızca `min_data_score / min_llm_confidence / graceful_degradation /
+  field_weights / empty_list_penalty` + `pipeline.critical_agents` okuyor.
+  `DecisionConfig.load()` çıktısı önce/sonra JSON-diff: tüketilen alanlarda
+  fark YOK (davranış aynı).
+  **Karar gerekçesi (kaldır, bağlama):**
+  - `require_data_confidence`: data_confidence sözleşmesi zaten KOŞULSUZ
+    uygulanıyor (`decision_engine._run_bears_evidence` + `_unavailable_reasons`);
+    bir "kapatma anahtarı" bağlamak kanıt kapısını yumuşatma yolu açar.
+  - `critical: true`: kritik ajanların TEK kaynağı `pipeline.critical_agents`
+    (decision_engine.py:82, task_executor.py ×6). İkinci bir bayrak ikili
+    kaynak = sapma riski ([009] duplication dersi).
+  - `min_final_confidence`: UncertaintyEngine tek eşik (`min_llm_confidence`)
+    kullanıyor; ikinci bir "final" eşik tasarlanmış bir katman değil.
+  - `fallback_enabled`: OSINT fallback'i `fallback_reason` alanıyla dürüst
+    raporlanıyor, kapatılabilir bir davranış değil.
+  **Kilit:** `tests/unit/test_config_contract.py::test_decision_config_has_no_dead_keys`
+  loader'ın okuduğu anahtar kümesini YAML'a karşı doğrular; mutasyon
+  (`critical: true` geri eklenince) → 1 failed, geri alınca yeşil.
+  `test_critical_agents_single_source_is_pipeline_list` mirror_truth/passion_mapper'ın
+  listede kalmasını kilitler.
+
 ## Unreleased — 2026-09-06 — S1: PROD SPEND-CAP FAIL-CLOSED + N7 DOKÜMAN
 
 Kapanış kararı (üretim onayı) ile kapatılan son açık madde.

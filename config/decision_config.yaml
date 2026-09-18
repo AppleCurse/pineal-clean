@@ -6,7 +6,6 @@ pipeline:
   default:
     min_data_score: 0.60
     min_llm_confidence: 0.65
-    require_data_confidence: true
     graceful_degradation: true
 
   # Kritik ajanlar - Bunlardan herhangi biri başarısız olursa 
@@ -36,8 +35,6 @@ agents:
   mirror_truth:
     min_llm_confidence: 0.65
     min_data_score: 0.60
-    min_final_confidence: 0.65
-    critical: true
     field_weights:
       user_core_frequency: 0.3
       surface_persona: 0.3
@@ -65,7 +62,6 @@ agents:
     min_data_score: 0.40
     min_llm_confidence: 0.55
     graceful_degradation: true
-    fallback_enabled: true
     field_weights:
       associated_platforms: 0.30
       digital_footprint_score: 0.25
