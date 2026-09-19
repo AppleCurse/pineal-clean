@@ -23,6 +23,7 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Optional
+from functools import lru_cache
 
 from agent_core.utils.security import ResolvedPublicURL, UnsafeURLError, resolve_public_url
 
@@ -620,6 +621,8 @@ class ProviderManager:
         }
 
 
+# Cache static file load to avoid repeated disk I/O and JSON parsing on every call
+@lru_cache(maxsize=1)
 def load_builtin_catalog() -> ProviderCatalog:
     path = Path(__file__).resolve().parents[2] / "config" / "provider_catalog.json"
     return ProviderCatalog.from_file(path)
