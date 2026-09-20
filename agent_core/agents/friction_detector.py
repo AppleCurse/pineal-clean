@@ -2,101 +2,17 @@ import logging
 from typing import Dict, Any, Optional
 from agent_core.domain.memory_models import FrictionProfile
 from agent_core.services.llm_gateway import LLMGateway
-from agent_core.services.upstream_findings import upstream_findings_block
+from agent_core.agents.target_psyche_profiler import TargetPsycheProfiler
 
 logger = logging.getLogger(__name__)
 
-class FrictionDetectorAgent:
+class FrictionDetectorAgent(TargetPsycheProfiler):
     """
     Hedefin sınırlarını, hassasiyetlerini, yorulma/şikayet noktalarını
     ve mesafeli durduğu durumları saygılı ve kanıta dayalı analiz eden ajan.
-    (Amaç açık aramak değil, sınırları bilip saygı duymaktır).
+    (TargetPsycheProfiler omurgasına bağlı sürtünme lensi).
     """
 
-    def __init__(self, llm_gateway: Optional[LLMGateway] = None):
-        self.llm_gateway = llm_gateway or LLMGateway()
-
     async def execute(self, payload: Dict[str, Any]) -> FrictionProfile:
-        target = payload.get("target_profile", {})
-        bio = target.get("bio", "")
-        posts = target.get("posts", [])
-        visual_evidence = payload.get("visual_evidence", {})
-        
-        posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
-        # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
-        upstream_block = upstream_findings_block(payload)
-        visual_text = f"""
-Görsel İnceleme Kanıtları (Multimodal Vision):
-- Tespit Edilen Nesneler: {visual_evidence.get('detected_objects', [])}
-- Mekanlar ve Ortam: {visual_evidence.get('environment_and_places', [])}
-- Estetik Tarz: {visual_evidence.get('aesthetic_style', '')}
-- Görsel Özeti: {visual_evidence.get('visual_evidence_summary', '')}
-""" if visual_evidence else "Görsel kanıt bulunamadı."
+        return await self.profile_frictions(payload)
 
-        if not bio and not posts and not visual_evidence:
-            return FrictionProfile(
-                sensitivities=[],
-                stress_triggers=[],
-                boundary_signals=[],
-                evidence_quotes=[],
-                confidence=0.0,
-                data_confidence=False,
-                fallback_reason="no_target_data"
-            )
-
-        prompt = f"""
-Aşağıdaki profil verilerini ve fotoğraflardan tespit edilen görsel kanıtları incele.
-{upstream_block}
-Bu kişinin iletişimde nelere mesafe koyduğunu, nelere karşı hassas veya eleştirel olduğunu,
-nelerin onu yorup rahatsız edebileceğini tespit et.
-Asla sahte derin travmalar veya klişe uydurma. Sadece metinlerdeki ve fotoğraflardaki gerçek sınırları ve hassasiyetleri bul.
-
-Hedef Biyografi:
-"{bio}"
-
-Son Paylaşımlar / Metinler:
-{posts_text}
-
-{visual_text}
-
-Confidence kuralı: confidence alanını yalnızca verilen doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
-
-Aşağıdaki JSON şemasına birebir uygun yanıt ver:
-{{
-  "sensitivities": ["Kişinin hoşlanmadığı, mesafeli durduğu veya hassas olduğu somut konular"],
-  "stress_triggers": ["Onu yoran, tepkisini çeken durumlar"],
-  "boundary_signals": ["İletişimde aşılmaması gereken kişisel sınırlar"],
-  "evidence_quotes": ["Metinden veya fotoğraflardan doğrudan alıntılanan somut kanıtlar"],
-  "confidence": 0.0
-}}
-"""
-        try:
-            result = await self.llm_gateway.query_json_chain(
-                prompt=prompt,
-                schema=FrictionProfile,
-                task="depth",
-                temperature=0.3,
-                agent_name="friction_detector"
-            )
-            has_frictions = bool(
-                result.sensitivities or result.stress_triggers or result.boundary_signals or result.evidence_quotes
-            )
-            raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
-            conf = max(raw_conf, 0.75) if has_frictions else raw_conf
-            has_valid_evidence = has_frictions and (conf > 0.0)
-            return result.model_copy(update={
-                "confidence": conf,
-                "data_confidence": has_valid_evidence,
-                "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
-            })
-        except Exception as e:
-            logger.warning(f"FrictionDetector LLM hatası: {e}")
-            return FrictionProfile(
-                sensitivities=[],
-                stress_triggers=[],
-                boundary_signals=[],
-                evidence_quotes=[],
-                confidence=0.0,
-                data_confidence=False,
-                fallback_reason="llm_unavailable"
-            )

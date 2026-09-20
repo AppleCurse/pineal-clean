@@ -346,9 +346,31 @@ class LLMGateway:
         # atandı. ROUTES'ta nous-research indirimli kanalı + OR legacy aynı
         # $0.20/$1.20'de; MODEL_PRICING legacy accounting için eklendi.
         "gpt_5_6_luna": "openai/gpt-5.6-luna",
+        # 9Router Canlı Rotaları (4 İş Koridoru + 3 Jüri Koltuğu)
+        "pineal_deep_reasoning": "pineal-deep-reasoning",
+        "pineal_general_reasoning": "pineal-general-reasoning",
+        "pineal_fast_extract": "pineal-fast-extract",
+        "pineal_vision": "pineal-vision",
+        "pineal_juror_google": "pineal-juror-google",
+        "pineal_juror_claude": "pineal-juror-claude",
+        "pineal_juror_open": "pineal-juror-open",
+        "pineal_truth_lane": "pineal-truth-lane",
+        "pineal_vision_lane": "pineal-vision-lane",
+        "pineal_intelligence_lane": "pineal-intelligence-lane",
     }
 
     MODEL_PRICING = {
+        # 9Router yerel yönlendirici hatları (yerel proxy — fatura 0 / harici kota)
+        "pineal-deep-reasoning": {"in": 0.0, "out": 0.0},
+        "pineal-general-reasoning": {"in": 0.0, "out": 0.0},
+        "pineal-fast-extract": {"in": 0.0, "out": 0.0},
+        "pineal-vision": {"in": 0.0, "out": 0.0},
+        "pineal-juror-google": {"in": 0.0, "out": 0.0},
+        "pineal-juror-claude": {"in": 0.0, "out": 0.0},
+        "pineal-juror-open": {"in": 0.0, "out": 0.0},
+        "pineal-truth-lane": {"in": 0.0, "out": 0.0},
+        "pineal-vision-lane": {"in": 0.0, "out": 0.0},
+        "pineal-intelligence-lane": {"in": 0.0, "out": 0.0},
         # Fiyatlar 2026-09-08'de OpenRouter kataloğundan doğrulandı (promo/listed,
         # cached-effective değil). Kaynak: /api/v1/models + model sayfaları.
         # Not: solar-pro4/ling-3.0-flash promo 2026-09-10'a kadar; sonrası 0.12/0.24 ve
@@ -476,6 +498,7 @@ class LLMGateway:
         MODEL_REGISTRY["gemini_3_7_flash"],
         MODEL_REGISTRY["claude_sonnet_5"],
         MODEL_REGISTRY["grok_4_6"],
+        MODEL_REGISTRY["pineal_vision_lane"],
     })
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
@@ -668,9 +691,10 @@ class LLMGateway:
         return out
 
     def __init__(self):
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        self.api_key = os.getenv("NINEROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
         self.openrouter_base_url = os.getenv(
-            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+            "NINEROUTER_BASE_URL",
+            os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         ).rstrip("/")
         self.local_base_url = self.LOCAL_DEFAULT_URL
         self.local_model = self.LOCAL_DEFAULT_MODEL
@@ -1157,9 +1181,11 @@ class LLMGateway:
 
     def _rebuild(self):
         if self.api_key:
+            default_headers = {"X-9Router-Token-Saver": "off"} if "20128" in self.openrouter_base_url else None
             self.client = AsyncOpenAI(
                 base_url=self.openrouter_base_url,
                 api_key=self.api_key,
+                default_headers=default_headers,
                 max_retries=0,
             )
         # Local client (Ollama/LM Studio/vLLM)
@@ -2127,6 +2153,12 @@ class LLMGateway:
                     except Exception as cache_error:
                         # A cache write must never retry an already billed call.
                         logging.warning("LLM response cache write failed: %s", cache_error)
+                resolved_model_str = str(actual_model) if actual_model else None
+                resolved_provider_str = (
+                    resolved_model_str.split("/")[0]
+                    if resolved_model_str and "/" in resolved_model_str
+                    else None
+                )
                 log_call(
                     attempt=attempt,
                     prompt_tokens=(
@@ -2135,7 +2167,22 @@ class LLMGateway:
                     completion_tokens=(
                         int(getattr(usage, "completion_tokens", 0) or 0) if usage is not None else None
                     ),
-                    cost_usd=logical_cost_usd,
+                    cost_usd=(
+                        None
+                        if "20128" in self.openrouter_base_url
+                        else logical_cost_usd
+                    ),
+                    extras={
+                        "resolved_model": resolved_model_str,
+                        "resolved_provider": resolved_provider_str,
+                        "requested_route": selected_model,
+                        "token_saver_mode": "off",
+                        "cost_note": (
+                            "antigravity_oauth_quota"
+                            if "20128" in self.openrouter_base_url
+                            else None
+                        ),
+                    },
                 )
                 return content
             except asyncio.CancelledError:

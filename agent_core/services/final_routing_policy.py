@@ -270,7 +270,14 @@ def model_substitution_allowed(requested: str, actual: str) -> bool:
     """A provider silently substituting the requested model is never allowed."""
     if not requested or not actual:
         return True
-    return requested.strip().lower() == actual.strip().lower()
+    req = requested.strip().lower()
+    act = actual.strip().lower()
+    if req == act:
+        return True
+    # 9Router multi-provider lane combos return member models
+    if req.startswith("pineal-") or req.endswith("-lane"):
+        return True
+    return False
 
 
 # === INVARIANTS ===

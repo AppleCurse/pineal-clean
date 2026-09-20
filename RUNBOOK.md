@@ -198,6 +198,40 @@ Reddin detayı (`requested → returned` model çifti) artık `call_log` kaydın
 içindedir (`MODEL_SUBSTITUTION_DENIED::...`) — Aspasia denetim katmanı buradan
 açıklar; ayrı bir hata kaynağı yoktur.
 
+## 9Router Yerel Yönlendirme (Local Gateway & Canlı Rotalar — 9Router v0.5.81)
+Pineal, yerel 9Router proxy'si (`http://127.0.0.1:20128/v1`, v0.5.81) ile entegredir. Tüm çağrılarda `X-9Router-Token-Saver: off` başlığı zorunludur.
+Tüm combolar ve global strateji `fallback` olarak sabitlenmiştir (`comboStrategy: fallback`, `fallbackStrategy: fallback`).
+
+### Canlı 9Router Comboları (200 OK Doğrulanmış — v0.5.81)
+| Rota | Birincil Model | Yedek 1 | Yedek 2 | Açıklama |
+|---|---|---|---|---|
+| `pineal-deep-reasoning` | `ag/claude-sonnet-4-6` | `ag/gemini-3.8-flash` | `gemini/gemini-3.8-flash` | Ağır muhakeme (Kiro kotalı olduğu için bu hattan çıkarıldı) |
+| `pineal-general-reasoning` | `ag/gemini-3.8-flash` | `gemini/gemini-3.8-flash` | `kimchi/qwen3.8-27b` | Genel davranış & bilişsel analiz (~0.72s warm) |
+| `pineal-fast-extract` | `groq/openai/gpt-oss-120b` | `ag/gpt-oss-120b-medium` | `kimchi/qwen3.8-27b` | Hızlı veri/tutku çıkarımı (~0.41s) |
+| `pineal-vision` | `ag/gemini-3.8-flash` | `gemini/gemini-3.8-flash` | `kimchi/qwen3.8-27b` | Görsel adli analiz (Cross-family Qwen Vision yedeği dahil) |
+| `pineal-juror-google` | `ag/gemini-3.8-flash` | `gemini/gemini-3.8-flash` | — | Jüri: Google ailesi |
+| `pineal-juror-claude` | `ag/claude-sonnet-4-6` | — | — | Jüri: Anthropic ailesi (Antigravity OAuth) |
+| `pineal-juror-open` | `groq/openai/gpt-oss-120b` | `kimchi/qwen3.8-27b` | — | Jüri: Açık model ailesi (Groq / Qwen) |
+| `pineal-claude-scarce` | `kr/claude-sonnet-4.5` | — | — | Yalnızca manuel eskalasyon (Kiro kotalı ~50 kredi/ay bütçeli) |
+
+### Otomasyon & Preflight Sağlık Denetimi
+Sistem sağlığı ve 7 rotanın canlılığı `scripts/preflight_9router.py` ile denetlenir. CI ortamında `.github/workflows/preflight.yml` ile her 6 saatte bir otomatik probe çalıştırılır.
+
+### Pineal Ajan & Rota Eşleşmesi (UI & Runbook SoT)
+- `mirror_truth`: `pineal-deep-reasoning` (yedek: `(combo)`)
+- `autonomous_verifier`: `pineal-verifier-panel` (yedek: `(3 jüri)`) — *Not: `pineal-verifier-panel` Pineal içi paralel 3 jüri orkestrasyonudur (`pineal-juror-google`, `pineal-juror-claude`, `pineal-juror-open`). 9Router'da tek bir combo değildir. Üretici model Claude ise jüriden Claude çıkarılır (Claude, Claude'u onaylayamaz).*
+- `human_behavior`: `pineal-general-reasoning` (yedek: `(combo)`)
+- `passion_mapper`: `pineal-fast-extract` (yedek: `(combo)`)
+- `friction_detector`: `pineal-general-reasoning` (yedek: `(combo)`)
+- `cognitive_profiler`: `pineal-general-reasoning` (yedek: `(combo)`)
+- `resonance_calc`: `local-numpy` (yedek: `—`)
+- `pattern_interrupt`: `pineal-fast-extract` (yedek: `(combo)`)
+- `resonance_synthesizer`: `pineal-deep-reasoning` (yedek: `(combo)`)
+- `vision_analyzer`: `pineal-vision` (yedek: `(combo)`)
+- `osint_investigator`: `pineal-osint-pipeline` (yedek: `(pipeline)`) — *Not: Pineal iç arama ve web kazıma orkestrasyonudur (`SearchEngine` + Tavily/SerpAPI). 9Router combo'su değildir.*
+- `authenticity_auditor`: `pineal-vision` (yedek: `(forensic)`)
+- `depth_analyst`: `pineal-deep-reasoning` (yedek: `(combo)`)
+
 ## Aspasia komut katmanı (ASPASIA-PROMOTION)
 Aspasia merkezi doğal-dil arayüzüdür; **orchestrator değildir.** Görev
 yaratma/planlama politikası değişmedi: plan = `CognitiveRouter`, yürütme =

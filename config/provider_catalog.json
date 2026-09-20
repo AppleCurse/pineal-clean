@@ -4,6 +4,119 @@
  "scope": "Authorized official APIs, operator-owned compatible endpoints, and local inference only. Catalog entries are not claims of live verification.",
  "providers": [
   {
+   "id": "9router",
+   "display_name": "9Router Local Multi-Provider Router",
+   "protocol": "openai_chat",
+   "access_method": "operator_compatible",
+   "connection_types": [
+    "api_key",
+    "no_auth"
+   ],
+   "default_tier": "api_key",
+   "base_url": "http://127.0.0.1:20128/v1",
+   "aliases": [
+    "9r",
+    "local-router"
+   ],
+   "passthrough_models": true,
+   "allow_custom_base_url": true,
+   "support": "catalog_only",
+   "models": [
+    {
+     "id": "pineal-deep-reasoning",
+     "display_name": "Pineal Deep Reasoning (Claude 4.6 / Gemini 3.8 / Kiro)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-general-reasoning",
+     "display_name": "Pineal General Reasoning (Gemini 3.8 / Qwen 3.8)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-fast-extract",
+     "display_name": "Pineal Fast Extract (Groq 120B / Qwen 3.8)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-vision",
+     "display_name": "Pineal Vision (Gemini 3.8 Flash Multimodal)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "vision",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-juror-google",
+     "display_name": "Pineal Juror Google (Gemini 3.8 Flash)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-juror-claude",
+     "display_name": "Pineal Juror Claude (Claude Sonnet 4.6)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-juror-open",
+     "display_name": "Pineal Juror Open (Groq 120B / Qwen 3.8)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-truth-lane",
+     "display_name": "Pineal Truth Lane (Deep Reasoning Alias)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-vision-lane",
+     "display_name": "Pineal Vision Lane (Vision Alias)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "vision",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-intelligence-lane",
+     "display_name": "Pineal Intelligence Lane (General Reasoning Alias)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
+    }
+   ]
+  },
+  {
    "id": "openrouter",
    "display_name": "OpenRouter",
    "protocol": "openai_chat",

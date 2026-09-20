@@ -78,8 +78,25 @@ def _replace_between(text: str, start: str, end: str, new_body: str) -> str:
     return f"{pre}{start}\n{new_body}\n{end}{post}"
 
 
+ROUTER_9_CANONICAL_MAP = {
+    "mirror_truth": ("pineal-deep-reasoning", "(combo)", "9router"),
+    "autonomous_verifier": ("pineal-verifier-panel", "(3 jüri)", "9router"),
+    "human_behavior": ("pineal-general-reasoning", "(combo)", "9router"),
+    "passion_mapper": ("pineal-fast-extract", "(combo)", "9router"),
+    "friction_detector": ("pineal-general-reasoning", "(combo)", "9router"),
+    "cognitive_profiler": ("pineal-general-reasoning", "(combo)", "9router"),
+    "resonance_calc": ("local-numpy", "—", "local"),
+    "pattern_interrupt": ("pineal-fast-extract", "(combo)", "9router"),
+    "resonance_synthesizer": ("pineal-deep-reasoning", "(combo)", "9router"),
+    "vision_analyzer": ("pineal-vision", "(combo)", "9router"),
+    "osint_investigator": ("pineal-osint-pipeline", "(pipeline)", "9router"),
+    "authenticity_auditor": ("pineal-vision", "(forensic)", "9router"),
+    "depth_analyst": ("pineal-deep-reasoning", "(combo)", "9router"),
+}
+
+
 def render_svelte_block(snapshot: dict) -> list[str]:
-    """Mevcut satırları koruyarak model alanlarını snapshot'tan yazar."""
+    """Mevcut satırları koruyarak model alanlarını 9Router kanonik rotalarından yazar."""
     current = SVELTE.read_text(encoding="utf-8")
     if current.count(SVELTE_START) != 1 or current.count(SVELTE_END) != 1:
         raise SystemExit("svelte marker hatasi: START/END 1'er kez olmali")
@@ -92,17 +109,21 @@ def render_svelte_block(snapshot: dict) -> list[str]:
             out_lines.append(raw_line)  # boşluk/yorum satırı aynen
             continue
         head, agent_id, middle = m.group(1), m.group(2), m.group(3)
-        if agent_id not in agents:
-            out_lines.append(raw_line)  # snapshot-dışı (resonance_calc vb.) aynen
+        if agent_id in ROUTER_9_CANONICAL_MAP:
+            primary, backup, via = ROUTER_9_CANONICAL_MAP[agent_id]
+        elif agent_id in agents:
+            chain = agents[agent_id]["chain"]
+            primary = _short(chain[0]) if chain else "—"
+            backup = _short(chain[1]) if len(chain) > 1 else "—"
+            via = "9router"
+        else:
+            out_lines.append(raw_line)  # snapshot-dışı aynen
             continue
-        chain = agents[agent_id]["chain"]
-        primary = _short(chain[0]) if chain else "—"
-        backup = _short(chain[1]) if len(chain) > 1 else "—"
         if 'primaryModel:' not in middle or 'backupModel:' not in middle or 'via:' not in middle:
             raise SystemExit(f"svelte satir sablonu bozulmus: {agent_id} (primaryModel/backupModel/via gerekli)")
         middle = re.sub(r'primaryModel:\s*"[^"]*"', f'primaryModel: "{primary}"', middle)
         middle = re.sub(r'backupModel:\s*"[^"]*"', f'backupModel: "{backup}"', middle)
-        middle = re.sub(r'via:\s*"[^"]*"', 'via: "openrouter"', middle)
+        middle = re.sub(r'via:\s*"[^"]*"', f'via: "{via}"', middle)
         out_lines.append(f"{head}{middle}}},")
     return out_lines
 

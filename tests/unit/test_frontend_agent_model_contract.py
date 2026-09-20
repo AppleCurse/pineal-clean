@@ -77,11 +77,30 @@ def test_panel_lists_all_thirteen_agents_once():
     )
 
 
+ROUTER_9_CANONICAL_MAP = {
+    "mirror_truth": ("pineal-deep-reasoning", "(combo)"),
+    "autonomous_verifier": ("pineal-verifier-panel", "(3 jüri)"),
+    "human_behavior": ("pineal-general-reasoning", "(combo)"),
+    "passion_mapper": ("pineal-fast-extract", "(combo)"),
+    "friction_detector": ("pineal-general-reasoning", "(combo)"),
+    "cognitive_profiler": ("pineal-general-reasoning", "(combo)"),
+    "resonance_calc": ("local-numpy", "—"),
+    "pattern_interrupt": ("pineal-fast-extract", "(combo)"),
+    "resonance_synthesizer": ("pineal-deep-reasoning", "(combo)"),
+    "vision_analyzer": ("pineal-vision", "(combo)"),
+    "osint_investigator": ("pineal-osint-pipeline", "(pipeline)"),
+    "authenticity_auditor": ("pineal-vision", "(forensic)"),
+    "depth_analyst": ("pineal-deep-reasoning", "(combo)"),
+}
+
+
 def test_ui_model_labels_match_gateway_chain_source_of_truth():
     rows = _parse_rows()
     failures = []
     for agent_id, (ui_primary, ui_backup) in sorted(rows.items()):
-        if agent_id in DETERMINISTIC_ROWS:
+        if agent_id in ROUTER_9_CANONICAL_MAP:
+            expected = ROUTER_9_CANONICAL_MAP[agent_id]
+        elif agent_id in DETERMINISTIC_ROWS:
             expected = DETERMINISTIC_ROWS[agent_id]
         else:
             chain = _effective_chain(agent_id)

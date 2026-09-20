@@ -2,101 +2,16 @@ import logging
 from typing import Dict, Any, Optional
 from agent_core.domain.memory_models import PassionProfile
 from agent_core.services.llm_gateway import LLMGateway
-from agent_core.services.upstream_findings import upstream_findings_block
+from agent_core.agents.target_psyche_profiler import TargetPsycheProfiler
 
 logger = logging.getLogger(__name__)
 
-class PassionMapperAgent:
+class PassionMapperAgent(TargetPsycheProfiler):
     """
     Hedefin neşe, yaratıcılık, tutku ve entelektüel ilgi alanlarını 
     somut paylaşımlarından ve dilinden haritalandıran ajan.
+    (TargetPsycheProfiler omurgasına bağlı tutku lensi).
     """
 
-    def __init__(self, llm_gateway: Optional[LLMGateway] = None):
-        self.llm_gateway = llm_gateway or LLMGateway()
-
     async def execute(self, payload: Dict[str, Any]) -> PassionProfile:
-        target = payload.get("target_profile", {})
-        bio = target.get("bio", "")
-        posts = target.get("posts", [])
-        visual_evidence = payload.get("visual_evidence", {})
-        
-        posts_text = "\n".join([f"- {p}" for p in posts[:10]]) if posts else "Gönderi metni bulunamadı."
-        # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
-        upstream_block = upstream_findings_block(payload)
-        visual_text = f"""
-Görsel İnceleme Kanıtları (Multimodal Vision):
-- Tespit Edilen Somut Nesneler: {visual_evidence.get('detected_objects', [])}
-- Mekanlar ve Ortam: {visual_evidence.get('environment_and_places', [])}
-- Estetik ve Görsel Dil: {visual_evidence.get('aesthetic_style', '')}
-- Yapılan Eylemler: {visual_evidence.get('activity_signals', [])}
-- Görsel Özeti: {visual_evidence.get('visual_evidence_summary', '')}
-""" if visual_evidence else "Görsel kanıt bulunamadı."
-
-        if not bio and not posts and not visual_evidence:
-            return PassionProfile(
-                core_passions=[],
-                energizing_topics=[],
-                flow_triggers=[],
-                sentiment_polarity=0.0,
-                evidence_quotes=[],
-                confidence=0.0,
-                data_confidence=False,
-                fallback_reason="no_target_data",
-            )
-
-        prompt = f"""
-Aşağıdaki sosyal medya profil verilerini ve fotoğraflardan çıkarılan SOMUT görsel kanıtları incele.
-{upstream_block}
-Bu kişinin GERÇEKTE neye tutku duyduğunu, hangi konuların ve eylemlerin onu motive ettiğini analiz et.
-Asla genel geçer astroloji veya kişisel gelişim genellemeleri yapma. 
-Yalnızca verilen metinlerdeki ve fotoğraflarda fiilen tespit edilen somut nesne/mekan delillerine dayan.
-
-Hedef Biyografi:
-"{bio}"
-
-Son Paylaşımlar / Metinler:
-{posts_text}
-
-{visual_text}
-
-Confidence kuralı: confidence alanını yalnızca verilen doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
-
-Aşağıdaki JSON şemasına birebir uygun yanıt ver:
-{{
-  "core_passions": ["Kişinin somut paylaşımlarından ve fotoğraflarından kanıtlanan 1-3 ana tutku alanı"],
-  "energizing_topics": ["Konuşmaktan, üretmekten veya görselleştirmekten keyif aldığı spesifik konular"],
-  "flow_triggers": ["Onu üretken veya coşkulu kılan somut tetikleyiciler"],
-  "sentiment_polarity": 0.6, // -1.0 (karamsar) ile +1.0 (coşkulu) arası float
-  "evidence_quotes": ["Metinden veya görsel kanıttan doğrudan alıntılanan somut detaylar"],
-  "confidence": 0.0
-}}
-"""
-        try:
-            result = await self.llm_gateway.query_json_chain(
-                prompt=prompt,
-                schema=PassionProfile,
-                task="depth",
-                temperature=0.3,
-                agent_name="passion_mapper"
-            )
-            has_passions = bool(
-                result.core_passions or result.energizing_topics or result.evidence_quotes
-            )
-            has_valid_evidence = has_passions and (getattr(result, "confidence", 0.0) > 0.0)
-            return result.model_copy(update={
-                "data_confidence": has_valid_evidence,
-                "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
-            })
-        except Exception as e:
-            logger.warning(f"PassionMapper LLM hatası: {e}")
-            return PassionProfile(
-                core_passions=[],
-                energizing_topics=[],
-                flow_triggers=[],
-                sentiment_polarity=0.0,
-                evidence_quotes=[],
-                confidence=0.0,
-                data_confidence=False,
-                fallback_reason="llm_unavailable",
-            )
+        return await self.profile_passions(payload)
