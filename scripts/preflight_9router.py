@@ -17,6 +17,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 try:
     import httpx
 except ImportError:
@@ -25,7 +28,7 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(r"c:\Users\Administrator\Desktop\pineal-heretic\.env")
+    load_dotenv(ROOT / ".env")
 except ImportError:
     pass
 
@@ -129,6 +132,10 @@ def run_preflight() -> dict[str, Any]:
 
 if __name__ == "__main__":
     report = run_preflight()
+    report_file = ROOT / "reports" / "9router_preflight_latest.json"
+    report_file.parent.mkdir(parents=True, exist_ok=True)
+    report_file.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"\nRapor kaydedildi: {report_file.relative_to(ROOT)}")
     if not report["all_ok"]:
         print("\nSONUÇ: PREFLIGHT BAŞARISIZ!")
         sys.exit(1)

@@ -1,0 +1,47 @@
+{
+  "timestamp_utc": "2026-09-20 02:14:09",
+  "base_url": "http://127.0.0.1:20128/v1",
+  "routes": {
+    "pineal-deep-reasoning": {
+      "status_code": 200,
+      "latency_s": 1.4,
+      "ok": true
+    },
+    "pineal-general-reasoning": {
+      "status_code": 200,
+      "latency_s": 1.2,
+      "ok": true
+    },
+    "pineal-fast-extract": {
+      "status_code": 200,
+      "latency_s": 0.45,
+      "ok": true
+    },
+    "pineal-vision": {
+      "status_code": 200,
+      "latency_s": 0.7,
+      "ok": true
+    },
+    "pineal-juror-google": {
+      "status_code": 200,
+      "latency_s": 0.91,
+      "ok": true
+    },
+    "pineal-juror-claude": {
+      "status_code": 200,
+      "latency_s": 0.93,
+      "ok": true
+    },
+    "pineal-juror-open": {
+      "status_code": 200,
+      "latency_s": 0.32,
+      "ok": true
+    }
+  },
+  "all_ok": true,
+  "vision_multimodal": {
+    "status_code": 200,
+    "latency_s": 2.68,
+    "ok": true
+  }
+}

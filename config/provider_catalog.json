@@ -113,6 +113,25 @@
       "streaming",
       "tools"
      ]
+    },
+    {
+     "id": "kimchi/qwen3.8-27b",
+     "display_name": "Qwen 3.8 27B (Cross-Family Vision & Open Reasoning)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "vision",
+      "tools"
+     ]
+    },
+    {
+     "id": "pineal-claude-scarce",
+     "display_name": "Pineal Claude Scarce (Kiro Manual Escalation Only)",
+     "capabilities": [
+      "chat",
+      "streaming",
+      "tools"
+     ]
     }
    ]
   },
