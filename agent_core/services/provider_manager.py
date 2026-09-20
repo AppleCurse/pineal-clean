@@ -13,6 +13,7 @@ presented as live connectivity merely because it can be parsed.
 from __future__ import annotations
 
 import ipaddress
+import functools
 import json
 import socket
 import threading
@@ -620,7 +621,9 @@ class ProviderManager:
         }
 
 
+@functools.lru_cache(maxsize=1)
 def load_builtin_catalog() -> ProviderCatalog:
+    # ⚡ Bolt: Cache static JSON parsing to avoid redundant file I/O in routing loop
     path = Path(__file__).resolve().parents[2] / "config" / "provider_catalog.json"
     return ProviderCatalog.from_file(path)
 

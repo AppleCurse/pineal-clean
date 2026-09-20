@@ -111,3 +111,10 @@ def _clear_security_env_cache():
     from agent_core.utils.security import _environment_secret_values
     yield
     _environment_secret_values.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_provider_catalog_cache():
+    from agent_core.services.provider_manager import load_builtin_catalog
+    yield
+    load_builtin_catalog.cache_clear()
