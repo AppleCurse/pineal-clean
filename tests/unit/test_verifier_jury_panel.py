@@ -22,15 +22,16 @@ class _PanelGateway:
     """Q Şemasına göre yanıt veren sahte gateway (çağrıları kaydeder)."""
 
     def __init__(self, producer_model: str = "anthropic/claude-sonnet-5", verdicts: dict | None = None,
-                 extract_claims: list | None = None):
+                 extract_claims: list | None = None, chain: list | None = None):
         self.producer_model = producer_model
         self.verdicts = verdicts or {}
         self.extract_claims = extract_claims or []
+        self.chain = chain
         self.calls: list[str] = []
 
     def get_agent_chain(self, agent_name, task):
         if agent_name == "autonomous_verifier":
-            return [self.producer_model]
+            return self.chain or [self.producer_model]
         raise KeyError(agent_name)
 
     async def query_json_chain(self, prompt, schema, task="depth", **kwargs):
@@ -83,6 +84,78 @@ async def test_producing_family_seat_is_dropped():
     assert "pineal_juror_claude" in result.dropped_juror
     assert "pineal_juror_claude" not in gw.calls, "düşürülen koltuk yine de çağrıldı"
     assert set(result.juror_votes) == {"pineal_juror_google", "pineal_juror_open"}
+
+
+@pytest.mark.asyncio
+async def test_chain_backup_family_seat_is_dropped(monkeypatch):
+    """[BOSS-4-katı] Zincir YEDEĞİ üretirse, o aileden koltuk da düşer.
+
+    Rezonans (denetçi şerhi, 2026-09-21): baş-tabanlı tespit zincirin İLK
+    modeline bakar. Zincir claude(anthropic)→grok(xai) iken yedek grok üretir
+    ve gelecekte xai ailesinden bir jüri koltuğu eklenirse, baş-tabanlı tespit
+    o koltuğu düşürmez → kendini-onaylama geri döner. Katı kural: zincirdeki
+    HERHANGİ bir modelin ailesiyle eşleşen koltuk düşer.
+    """
+    monkeypatch.setattr(
+        AutonomousVerifier, "PANEL_AGENTS",
+        ("pineal_juror_google", "pineal_juror_claude", "pineal_juror_open", "pineal_juror_grok"),
+    )
+    gw = _PanelGateway(chain=["anthropic/claude-sonnet-5", "x-ai/grok-4.6"])
+    verifier = AutonomousVerifier(search_engine=_FakeSearch())
+
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+
+    assert "pineal_juror_grok" in result.dropped_juror, "zincir yedeğinin ailesi panelde kaldı"
+    assert "pineal_juror_grok" not in gw.calls, "şüpheli aile koltuğu yine de çağrıldı"
+    # Bugünkü pratik sonuç değişmemeli: anthropic koltuğu düşer, diğer ikisi kalır.
+    assert "pineal_juror_claude" in result.dropped_juror
+    assert set(result.juror_votes) == {"pineal_juror_google", "pineal_juror_open"}
+
+
+@pytest.mark.asyncio
+async def test_producer_record_path_drops_actual_family(monkeypatch):
+    """Kayıt yolu (üretim defteri dünyası) sınanmalı: sahte gateway bu dünyayı
+    hiç açmıyordu, yalnız zincir yolu test ediliyordu (denetçi itirafı №2).
+    Kayıtta üreten model grok yazıyorsa, zincir başı claude da olsa xai
+    koltuğu düşmelidir."""
+    import agent_core.services.llm_gateway as gw_mod
+
+    monkeypatch.setattr(
+        AutonomousVerifier, "PANEL_AGENTS",
+        ("pineal_juror_google", "pineal_juror_claude", "pineal_juror_open", "pineal_juror_grok"),
+    )
+    scope = gw_mod.LLMCallScope(
+        task_id="t", agent_id="autonomous_verifier",
+        records=[{"call_id": "c1", "agent_id": "autonomous_verifier", "actual_model": "x-ai/grok-4.6"}],
+    )
+    gw = _PanelGateway()  # zincir yalnız claude der; kayıt grok diyor
+    verifier = AutonomousVerifier(search_engine=_FakeSearch())
+
+    token = gw_mod._active_call_scope.set(scope)
+    try:
+        result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    finally:
+        gw_mod._active_call_scope.reset(token)
+
+    assert "pineal_juror_grok" in result.dropped_juror
+    assert "pineal_juror_grok" not in gw.calls
+
+
+@pytest.mark.asyncio
+async def test_strict_rule_is_practically_neutral_today():
+    """Katı kural bugünkü koltuk setinde sonucu değiştirmemeli (muhafazakâr yön):
+    claude→grok zinciri yalnız anthropic koltuğu düşürür, ikili panel karar verir;
+    rapor şüpheli ailelerin TAMAMINI dürüstçe yazar."""
+    gw = _PanelGateway(chain=["anthropic/claude-sonnet-5", "x-ai/grok-4.6"],
+                       verdicts={"pineal_juror_google": "DOĞRULANDI", "pineal_juror_open": "DOĞRULANDI"},
+                       extract_claims=["Kıdemli Stratejist"])
+    verifier = AutonomousVerifier(search_engine=_FakeSearch())
+
+    report = await verifier.execute({"target_profile": {"bio": "Kıdemli Stratejist", "name": "Ada"}}, None, gw)
+
+    assert report.dropped_juror == ["pineal_juror_claude"]
+    assert report.status == "VERIFIED"
+    assert "üreten_aile=anthropic+xai" in report.decision_rule
 
 
 @pytest.mark.asyncio

@@ -53,19 +53,31 @@ class AutonomousVerifier:
         self.search_engine = search_engine
 
     @staticmethod
-    def _producing_family(llm_gateway) -> str:
-        """Doğrulamayı üreten modelin ailesi (kayıttan; yoksa zincir başından)."""
+    def _producing_families(llm_gateway) -> set:
+        """Doğrulamayı üretebilecek TÜM aileler (kayıt + zincirin tamamı).
+
+        [BOSS-4-katı] Üretim zincirin başında görünmeyebilir: birincil düşer,
+        zincir yedeği üretir (claude→grok düzeyinde grok/xai üretebilir). Kayıt
+        varsa fiilen üreten model oradan okunur; kayıt yoksa zincirin her
+        halkası şüphelidir. Şüpheli tüm aileler döndürülür; 'unknown' asil
+        düşürme gerekçesi olamaz.
+        """
         from agent_core.services.llm_gateway import _active_call_scope, model_family
 
+        families: set = set()
         scope = _active_call_scope.get()
         for record in reversed(list(getattr(scope, "records", []) or [])):
             if record.get("agent_id") == "autonomous_verifier":
-                return model_family(record.get("actual_model") or record.get("model"))
+                families.add(model_family(record.get("actual_model") or record.get("model")))
+                break
         try:
             chain = llm_gateway.get_agent_chain("autonomous_verifier", "depth")
         except Exception:
             chain = []
-        return model_family(chain[0] if chain else None)
+        for model in chain:
+            families.add(model_family(model))
+        families.discard("unknown")
+        return families
 
     @staticmethod
     def _seat_family(llm_gateway, seat: str) -> str:
@@ -83,11 +95,11 @@ class AutonomousVerifier:
         """
         import asyncio
 
-        producer = self._producing_family(llm_gateway)
+        producer_families = self._producing_families(llm_gateway)
         seats, dropped = [], []
         for seat in self.PANEL_AGENTS:
             seat_family = self._seat_family(llm_gateway, seat)
-            if producer != "unknown" and seat_family == producer:
+            if seat_family in producer_families:
                 dropped.append(seat)
                 continue
             seats.append(seat)
@@ -258,8 +270,8 @@ class AutonomousVerifier:
                 f"<UNTRUSTED_CLAIM>\n{claim.claim_text}\n</UNTRUSTED_CLAIM>\n\n"
                 f"<UNTRUSTED_SEARCH_RESULTS>\n{search_context}\n</UNTRUSTED_SEARCH_RESULTS>\n"
             )
-            # [BOSS-4] Tek model onayı yerine çapraz jüri paneli: üreten aile
-            # panelden düşürülür, karar oylarla verilir (kanıt: juror_votes).
+            # [BOSS-4] Tek model onayı yerine çapraz jüri paneli: üreten zincirin
+            # tüm aileleri panelden düşürülür, karar oylarla verilir (kanıt: juror_votes).
             panel_verdict = await self._verify_with_panel(verify_prompt, claim.claim_text, llm_gateway)
             verifications.append(panel_verdict)
             panel_seats.update(panel_verdict.juror_votes)
@@ -291,7 +303,7 @@ class AutonomousVerifier:
         else:
             verdict_status = "UNVERIFIED"
 
-        producer_family = self._producing_family(llm_gateway)
+        producer_families = sorted(self._producing_families(llm_gateway))
         return VerifierReport(
             verifications=verifications,
             overall_authenticity_score=score,
@@ -300,7 +312,7 @@ class AutonomousVerifier:
             jurors=sorted(panel_seats),
             dropped_juror=sorted(dropped_seats),
             decision_rule=(
-                f"panel:{'+'.join(sorted(rules))} | üreten_aile={producer_family} | düşürülen="
+                f"panel:{'+'.join(sorted(rules))} | üreten_aile={'+'.join(producer_families) or 'unknown'} | düşürülen="
                 f"{','.join(sorted(dropped_seats)) or 'yok'}"
             ),
         )
