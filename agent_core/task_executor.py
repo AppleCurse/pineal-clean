@@ -153,6 +153,30 @@ class PinealExecutor:
             return
         yield SimpleNamespace(records=[], call_ids=[])
 
+    @staticmethod
+    def _attach_vector_calls(run: Any, records: list[dict[str, Any]] | None) -> None:
+        """[BOSS-6] Authentic-vector LLM çağrılarını koşu kaydına bağlar.
+
+        Bu çağrılar (tier=1, "asla kibar olma" promptu) görev başına 2 adettir ve
+        önceden hiçbir telemetride görünmüyordu: harcama vardı, iz yoktu. Kayıtlar
+        `run.output_summary["_aux_llm_calls"]` altında tutulur; böylece kanıt
+        zinciri, `call_ids` ve UI provens alanı aynı gerçeği okur.
+        """
+        if not records:
+            return
+        summary = getattr(run, "output_summary", None)
+        if not isinstance(summary, dict):
+            summary = {}
+            run.output_summary = summary
+        bucket = summary.setdefault("_aux_llm_calls", [])
+        bucket.extend(record.copy() for record in records)
+        existing = list(getattr(run, "call_ids", []) or [])
+        for record in records:
+            call_id = record.get("call_id")
+            if call_id and call_id not in existing:
+                existing.append(call_id)
+        run.call_ids = existing
+
     def _provenance_for(
         self,
         agent_name: str,
@@ -784,14 +808,24 @@ class PinealExecutor:
                             self._log("WARNING", f"[{task_id}] Non-critical agent {agent_name} deep research failed. Continuing.")
                             continue
 
+                # [BOSS-6] Authentic vector çağrıları ayrı bir yakalama kapsamında
+                # koşar: aksi hâlde LLM harcaması HİÇBİR kayıtta görünmüyordu
+                # (ne runs[*].llm_calls ne kanıt zinciri). Kayıtlar burada
+                # toplanır, koşu raporuna output_summary YAZILDIKTAN SONRA eklenir
+                # — aksi hâlde run.output_summary ataması izi ezer.
+                aux_call_records: list[dict[str, Any]] = []
                 if agent_name == "mirror_truth":
                     input_data["user_mirror"] = result.model_dump()
-                    user_vector = await self._calculate_authentic_vector(input_data["user_mirror"])
+                    with self._capture_llm_calls(task_id, "authentic_vector:user") as vector_scope:
+                        user_vector = await self._calculate_authentic_vector(input_data["user_mirror"])
                     self._store_authentic_vector(input_data, "user", user_vector)
+                    aux_call_records = list(vector_scope.records)
                 elif agent_name == "human_behavior":
                     input_data["target_analysis"] = result.model_dump()
-                    target_vector = await self._calculate_authentic_vector(input_data["target_analysis"])
+                    with self._capture_llm_calls(task_id, "authentic_vector:target") as vector_scope:
+                        target_vector = await self._calculate_authentic_vector(input_data["target_analysis"])
                     self._store_authentic_vector(input_data, "target", target_vector)
+                    aux_call_records = list(vector_scope.records)
                 elif agent_name == "passion_mapper":
                     input_data["passions"] = result.model_dump()
                 elif agent_name == "friction_detector":
@@ -822,6 +856,7 @@ class PinealExecutor:
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
                 run.output_summary["_provenance"] = self._provenance_for(agent_name, result, agent_llm_calls)
+                self._attach_vector_calls(run, aux_call_records)
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)

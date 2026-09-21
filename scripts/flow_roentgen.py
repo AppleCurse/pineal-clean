@@ -171,26 +171,52 @@ def _fill_schema(model, depth: int = 0):
 
 @contextmanager
 def _stub_llm(trace: list | None = None, hang_seconds: float = 0.0):
-    """Gateway'i stub'lar. hang_seconds > 0 ise çağrılar askıda bırakılır."""
+    """Gateway'i stub'lar. hang_seconds > 0 ise çağrılar askıda bırakılır.
+
+    Stub, GERÇEK gateway'in aktivite sözleşmesini taklit eder: eğer bir
+    `capture_calls` kapsamı açıksa kaydı o kapsama yazar (`agent_id` ile). Böylece
+    "hangi ajan hangi çağrıyı yaptı" sorusu stub modunda da doğru yanıtlanır —
+    aksi hâlde kapsam içindeki çağrılar (ör. authentic vector) görünmez kalır.
+    """
+    from agent_core.services.llm_gateway import _active_call_scope
+
     log = trace if trace is not None else []
     originals = {name: getattr(LLMGateway, name) for name in ("query", "query_json", "query_json_chain")}
 
+    def _record(fn_name: str, schema, kwargs) -> dict:
+        scope = _active_call_scope.get()
+        entry = {
+            "fn": fn_name,
+            "schema": getattr(schema, "__name__", None),
+            "agent": kwargs.get("agent_name") or (getattr(scope, "agent_id", None) if scope else None),
+            "task": kwargs.get("task") or (getattr(scope, "task_id", None) if scope else None),
+        }
+        log.append(entry)
+        if scope is not None and hasattr(scope, "records"):
+            scope.records.append({
+                "call_id": str(uuid.uuid4()),
+                "kind": fn_name,
+                "model": "stub",
+                "provider": "stub",
+                "agent_id": getattr(scope, "agent_id", None),
+                "task_id": getattr(scope, "task_id", None),
+            })
+        return entry
+
     async def _query(self, prompt, *a, **k):
-        log.append({"fn": "query", "schema": None, "agent": k.get("agent_name"), "task": k.get("task")})
+        _record("query", None, k)
         if hang_seconds:
             await asyncio.sleep(hang_seconds)
         return "Rontgen dogrulama notu: iddia veriyle uyumlu."
 
     async def _query_json(self, prompt, schema=None, *a, **k):
-        log.append({"fn": "query_json", "schema": getattr(schema, "__name__", None),
-                    "agent": k.get("agent_name"), "task": k.get("task")})
+        _record("query_json", schema, k)
         if hang_seconds:
             await asyncio.sleep(hang_seconds)
         return _fill_schema(schema) if schema is not None else {}
 
     async def _query_json_chain(self, prompt, schema=None, *a, **k):
-        log.append({"fn": "query_json_chain", "schema": getattr(schema, "__name__", None),
-                    "agent": k.get("agent_name"), "task": k.get("task")})
+        _record("query_json_chain", schema, k)
         if hang_seconds:
             await asyncio.sleep(hang_seconds)
         return _fill_schema(schema) if schema is not None else {}
@@ -305,6 +331,7 @@ def run_stub_mode() -> dict:
             }
             for name, run in runs.items()
         },
+        "run_call_ids": {name: len(run.get("call_ids") or []) for name, run in runs.items()},
         "snapshot_field_gap": {
             field: {
                 "in_snapshot": field in {
