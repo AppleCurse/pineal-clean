@@ -134,7 +134,7 @@
   // <ROUTING-GENERATED-START do-not-edit>
   const agentList = [
     { id: "mirror_truth",          name: "MIRROR TRUTH",          color: "#10b981", primaryModel: "pineal-deep-reasoning",     backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "🪞" },
-    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "pineal-verifier-panel",     backupModel: "(3 jüri)",          via: "9router", capability: "extract+judgment", glyph: "⚖️" },
+    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "pineal-verifier-panel",     backupModel: "(3 jüri: google+claude+open)",          via: "9router", capability: "extract+judgment", glyph: "⚖️" },
     { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "pineal-general-reasoning",  backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "👤" },
     { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "pineal-fast-extract",       backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "✨" },
     { id: "friction_detector",     name: "FRICTION & BOUNDS",     color: "#ef4444", primaryModel: "pineal-general-reasoning",  backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "🛡️" },

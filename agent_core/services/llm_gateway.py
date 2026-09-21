@@ -65,6 +65,48 @@ def provider_label_for_endpoint(base_url: str, *, explicit_local: bool = False) 
     return "9router" if host in _LOOPBACK_HOSTS else "openrouter"
 
 
+# [BOSS-4] Model ailesi çözümü: "hiçbir model kendi ürettiği çıktıyı
+# onaylayamaz" kuralı bu eşlemeyle uygulanır (jüri koltuğu düşürme).
+_FAMILY_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("anthropic", ("claude", "anthropic")),
+    ("google", ("gemini", "google", "palm")),
+    ("xai", ("grok", "x-ai")),
+    ("openai", ("gpt", "openai", "o1", "o3", "oss")),
+    ("deepseek", ("deepseek",)),
+    ("zhipu", ("glm", "z-ai")),
+    ("poolside", ("laguna", "poolside")),
+    ("upstage", ("solar", "upstage")),
+    ("inclusion", ("ling", "inclusion")),
+    ("qwen", ("qwen", "alibaba")),
+    ("nvidia", ("nemotron", "nvidia")),
+    ("meta", ("llama", "meta")),
+    ("mistral", ("mistral", "mixtral")),
+)
+
+
+# Jüri koltuklarının aile kimliği: rota adı tek başına yetmez ("open" hangi
+# üretici?). Açıkça yazılır; "open_weights" bilinçli olarak nötr gruptur —
+# hiçbir frontier üreticinin kendi çıktısını onaylamasına izin vermez.
+_ROUTE_FAMILY_HINTS: dict[str, str] = {
+    "pineal-juror-google": "google",
+    "pineal-juror-claude": "anthropic",
+    "pineal-juror-open": "open_weights",
+}
+
+
+def model_family(model: str | None) -> str:
+    """Model/rota adından üretici ailesini çıkarır (bilinmiyorsa 'unknown')."""
+    token = (model or "").strip().lower()
+    if not token:
+        return "unknown"
+    if token in _ROUTE_FAMILY_HINTS:
+        return _ROUTE_FAMILY_HINTS[token]
+    for family, needles in _FAMILY_TOKENS:
+        if any(needle in token for needle in needles):
+            return family
+    return "unknown"
+
+
 def resolve_legacy_endpoint() -> tuple[str, Optional[str], str]:
     """(base_url, api_key, provider_label) — ilk tanımlı kanal kazanır."""
     ninerouter_url = os.getenv("NINEROUTER_BASE_URL")
@@ -208,7 +250,7 @@ _active_agent_hint: contextvars.ContextVar[Optional[str]] = contextvars.ContextV
 # - effective_routing_snapshot kendi döngüsü için save/restore yapar (kalıntı
 #   bırakmaz; M-C3); _log_call tier'ı chain_source yanına yazar (stale olursa
 #   GÖRÜNÜR olur — sessiz yanlışlık yasak).
-_AGENT_TIER_VALUES: frozenset[str] = frozenset({"heavy", "vision", "simple", "verify"})
+_AGENT_TIER_VALUES: frozenset[str] = frozenset({"heavy", "vision", "simple", "verify", "jury"})
 _active_agent_tier: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "llm_agent_tier", default=None
 )
@@ -379,6 +421,14 @@ def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
 
 
 class LLMGateway:
+    # [BOSS-4] Çapraz jüri paneli: bu koltuklar bağımsız hakemdir; üreten
+    # ajanın ailesiyle aynı olan koltuk karar anında düşürülür.
+    JURY_PANEL_AGENTS: tuple[str, ...] = (
+        "pineal_juror_google",
+        "pineal_juror_claude",
+        "pineal_juror_open",
+    )
+
     MODEL_REGISTRY = {
         "solar_pro4": "upstage/solar-pro4",
         "ling_3_flash": "inclusionai/ling-3.0-flash",
@@ -496,6 +546,11 @@ class LLMGateway:
         ],
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
         "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["grok_4_6"]],
+        # [BOSS-4] Jüri koltukları: her biri TEK rotaya bağlanır, böylece
+        # çapraz jüri kuralı (üreten aile panelden düşer) deterministik kalır.
+        "pineal_juror_google": [MODEL_REGISTRY["pineal_juror_google"]],
+        "pineal_juror_claude": [MODEL_REGISTRY["pineal_juror_claude"]],
+        "pineal_juror_open": [MODEL_REGISTRY["pineal_juror_open"]],
         "autonomous_verifier_extract": [
             MODEL_REGISTRY["gpt_oss_120b"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
@@ -725,7 +780,7 @@ class LLMGateway:
         out: list[dict[str, str]] = []
         for agent, row in agent_rows.items():
             entry = tiers.get(agent)
-            if not isinstance(entry, dict) or entry.get("tier") not in ("heavy", "vision", "simple", "verify"):
+            if not isinstance(entry, dict) or entry.get("tier") not in _AGENT_TIER_VALUES:
                 out.append({"agent": agent, "rule": "untiered", "detail": "tiers dosyasında karşılığı yok"})
                 continue
             tier, chain, keys = entry["tier"], row["chain"], row["chain_keys"] or []
