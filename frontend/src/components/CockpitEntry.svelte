@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import PinealEye from './PinealEye.svelte';
+  import defaultEye from '../assets/eye.jpg';
   import { playClick, playRunning, playToggle } from '../lib/consoleAudio';
 
   // KOKPİT GİRİŞİ — görseldeki izometrik plakalar süzülür, tam ortada göz durur.
@@ -222,7 +223,7 @@
             }
           }}
         >
-          <PinealEye bind:this={eyeComp} size={232} scanning={entering} customImage={customEye} interactive={!warping} />
+          <PinealEye bind:this={eyeComp} size={232} scanning={entering} customImage={customEye ?? defaultEye} interactive={!warping} />
         </div>
       </div>
     </div>
@@ -245,9 +246,9 @@
         </button>
       </div>
       <div class="btn-row ghost-row">
-        <button class="btn-dark" on:click={openUpload}>👁 GÖZÜNÜ YÜKLE</button>
+        <button class="btn-dark" on:click={openUpload}>👁 GÖZÜ DEĞİŞTİR</button>
         {#if customEye}
-          <button class="btn-dark" on:click={resetEye}>↺ VARSAYILAN GÖZ</button>
+          <button class="btn-dark" on:click={resetEye}>↺ GÖZÜMÜ GERİ GETİR</button>
         {/if}
       </div>
       <input type="file" accept="image/*" bind:this={fileInput} on:change={onFile} hidden aria-hidden="true" tabindex="-1" />
