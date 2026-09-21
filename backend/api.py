@@ -1355,6 +1355,76 @@ def _snapshot_status(snap) -> str:
     return str(value).lower()
 
 
+def _close_active_task(room: dict, task_id: Optional[str], status: str) -> bool:
+    """[BOSS-2] Oda kaydını TERMİNAL duruma çevirir (hayalet görev yasağı).
+
+    Röntgen bulgusu: ``active_tasks`` kaydı yalnız ``_send_snapshot`` ile
+    yazılır. Görev zaman aşımına uğrar, iptal edilir veya beklenmeyen bir
+    istisnayla düşerse görevin SON snapshot'ı "processing" olarak kalır ve
+    hiçbir kod yolu onu güncellemez. ``_prune_room_stale_state`` terminal
+    olmayan kaydı bilinçli olarak SİLMEZ (bkz. [AUDIT N1]); sonuç: kayıt
+    sonsuza kadar "aktif" sayılır, ``_active_tasks_full`` odayı doygun görür
+    ve oda KALICI 503 verir (ölçüldü: tavan 2, 3 askıda görev → kalıcı kilit).
+
+    Bu fonksiyon kaydı öldürmez, ÖLDÜĞÜNÜ İŞARETLER: durum terminal kümesine
+    yazılır (snapshot nesnesi paylaşıldığı için UI son durumu görebilir),
+    retention sweep de kaydı normal yoldan düşürebilir.
+
+    Dönüş: durum gerçekten değiştirildiyse True.
+    """
+    if not task_id:
+        return False
+    active = room.get("active_tasks")
+    if not isinstance(active, dict):
+        return False
+    snapshot = active.get(task_id)
+    if snapshot is None:
+        return False
+    if _snapshot_status(snapshot) in _TERMINAL_PIPELINE_STATES:
+        return False
+    normalized = str(status or "").lower()
+    if normalized not in _TERMINAL_PIPELINE_STATES:
+        # Bilinmeyen durum asla terminal sayılmaz; dürüst varsayılan "failed".
+        normalized = "failed"
+    try:
+        from agent_core.domain.pipeline_status import PipelineStatus
+
+        setattr(snapshot, "status", PipelineStatus(normalized))
+    except Exception:
+        try:
+            setattr(snapshot, "status", normalized)
+        except Exception:
+            return False
+    # Not: kayıt zamanı SIFIRLANMAZ — kapalı kayıt retention penceresini
+    # hak etmek için bekletilmez; [AUDIT R1] sözleşmesi "oda belleği =
+    # retention x görev hızı" ile sınırlı kalır ve hayalet hiç birikmez.
+    room.setdefault("_active_tasks_ts", {}).setdefault(task_id, time.monotonic())
+    return True
+
+
+def _finalize_finished_missions(room: dict) -> None:
+    """Bitiş sinyali ALINMIŞ görevlerin oda kayıtlarını terminal duruma sabitler.
+
+    Kaynak yalnız ``room["_finished_missions"]`` kümesidir: mission task'inin
+    done_callback'i (normal dönüş, istisna, iptal, timeout, kapanış) oraya
+    task_id yazar. Böylece odaya snapshot basan ama ``mission_tasks``'a hiç
+    girmeyen (kaydı olmayan) bir iş akışı YANLIŞLIKLA "failed" işaretlenmez —
+    yalnız gerçekten bitmiş görevler kapatılır.
+
+    Kayıt hâlâ terminal değilse kapatılır; zaten terminal ise (ör.
+    "partially_completed") gerçek durum ASLA ezilmez.
+    """
+    finished = room.get("_finished_missions")
+    if not isinstance(finished, set) or not finished:
+        return
+    active = room.get("active_tasks")
+    for task_id in list(finished):
+        _close_active_task(room, task_id, "failed")
+        snapshot = (active or {}).get(task_id)
+        if snapshot is None or _snapshot_status(snapshot) in _TERMINAL_PIPELINE_STATES:
+            finished.discard(task_id)
+
+
 def _run_display_fields(run) -> dict:
     """(Şeffaflık düzeltmesi, F2) AgentRun'dan CANLI model/provider gösterimi türetir.
 
@@ -1434,6 +1504,7 @@ def _prune_room_stale_state(room: dict) -> None:
     # tavan aşımında EN ESKİ terminal (hepsi terminal değilse en eski kayıt)
     # düşer. Girdi zamanı paralel ts sözlüğünde izlenir (snapshot'ta
     # güvenilir zaman damgası yok).
+    _finalize_finished_missions(room)
     active = room.get("active_tasks")
     if isinstance(active, dict) and active:
         ts = room.setdefault("_active_tasks_ts", {})
@@ -1490,6 +1561,9 @@ def _active_tasks_full(room: dict) -> bool:
     active = room.get("active_tasks")
     if not isinstance(active, dict):
         return False
+    # [BOSS-2] Biten görevler terminal işaretlenmeden doygunluk kararı verilmez:
+    # aksi hâlde hayalet kayıt odayı kalıcı 503'e kilitler.
+    _finalize_finished_missions(room)
     full = 0
     for snap in active.values():
         if _snapshot_status(snap) not in _TERMINAL_PIPELINE_STATES:
@@ -1887,6 +1961,11 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
 
 def broadcast_result_error(client_id, status, msg, task_id: Optional[str] = None):
     broadcast_log(client_id, "ERROR", msg)
+    # [BOSS-2] Terminal hata bildirimi oda kaydını da kapatır; aksi hâlde
+    # snapshot "processing" kalıp odayı kalıcı 503'e kilitliyordu.
+    room = app.state.rooms.get(client_id)
+    if room is not None:
+        _close_active_task(room, task_id, status)
     payload = {"type": "result", "status": status}
     if task_id:
         payload["task_id"] = task_id
@@ -1903,6 +1982,9 @@ def broadcast_result(client_id, res):
     decision = _lifecycle(room).transition(res.task_id, res.status)
     if not decision.accepted:
         return
+    # [BOSS-2] Snapshot nesnesi terminal duruma geçmemişse (ör. iptal/istisna
+    # sonrası geç gelen sonuç) oda kaydı burada kapatılır.
+    _close_active_task(room, getattr(res, "task_id", None), getattr(res, "status", None))
 
     def find(chain, name):
         for e in chain:
@@ -1978,7 +2060,14 @@ async def api_initiate(req: InitiatePayload, request: Request):
     _lifecycle(room).transition(task_id, "processing")
     mission = asyncio.create_task(run_mission(req, task_id))
     room["mission_tasks"][task_id] = mission
-    mission.add_done_callback(lambda _task: room["mission_tasks"].pop(task_id, None))
+
+    def _on_mission_done(_task, _room=room):
+        # [BOSS-2] Görev bitti/iptal edildi: terminal olmayan oda kaydı kalmasın.
+        _room["mission_tasks"].pop(task_id, None)
+        _room.setdefault("_finished_missions", set()).add(task_id)
+        _finalize_finished_missions(_room)
+
+    mission.add_done_callback(_on_mission_done)
     return {"status": "started", "task_id": task_id}
 
 class VaultPayload(BaseModel):
@@ -2359,7 +2448,14 @@ def _aspasia_command_dispatch(spec: dict) -> "str | None":
     _lifecycle(room).transition(task_id, "processing")
     mission = asyncio.create_task(run_mission(req, task_id))
     room["mission_tasks"][task_id] = mission
-    mission.add_done_callback(lambda _task: room["mission_tasks"].pop(task_id, None))
+
+    def _on_mission_done(_task, _room=room):
+        # [BOSS-2] Görev bitti/iptal edildi: terminal olmayan oda kaydı kalmasın.
+        _room["mission_tasks"].pop(task_id, None)
+        _room.setdefault("_finished_missions", set()).add(task_id)
+        _finalize_finished_missions(_room)
+
+    mission.add_done_callback(_on_mission_done)
     return task_id
 
 
