@@ -586,6 +586,11 @@ class PinealExecutor:
             input_data["pillar_bundle"] = pillar_fields.get("pillar_bundle")
             pillar_end = datetime.now(timezone.utc)
             elapsed_ms = int((pillar_end - pillar_start).total_seconds() * 1000)
+            # [BOSS-5] Özet 7 anahtar mühürde yeterli değildir: motorların ham
+            # çıktısı (7 rapor) hesaplanıp SÜREÇ BELLEĞİNDE kayboluyordu —
+            # "adli mühür" iddiası kapsam dışı kalıyordu. Tam kayıt (raporlar +
+            # bundle sürümü) kanıt zincirine eklenir; mühür yalnız zinciri
+            # yazdığı için veri artık diske de iner.
             status.evidence_chain.append({
                 "agent": "pineal_7pillar",
                 "result": {
@@ -596,6 +601,17 @@ class PinealExecutor:
                     "pulse_rhythm": (status.pulse_map or {}).get("rhythm_signature"),
                     "key_confidence": (status.key_matrix or {}).get("confidence", 0),
                     "elapsed_ms": elapsed_ms,
+                    "pillars": {
+                        "frequency_map": status.frequency_map,
+                        "seismos_events": status.seismos_events,
+                        "void_map": status.void_map,
+                        "strata_map": status.strata_map,
+                        "gravity_map": status.gravity_map,
+                        "pulse_map": status.pulse_map,
+                        "key_matrix": status.key_matrix,
+                        "version": (status.pillar_bundle or {}).get("version"),
+                        "computed_at": (status.pillar_bundle or {}).get("computed_at"),
+                    },
                 },
                 "timestamp": pillar_end.isoformat(),
             })

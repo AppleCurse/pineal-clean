@@ -12,6 +12,7 @@
     health, sysTelemetry, uplinkState, throttleIdx, THROTTLE_DETENTS,
     ttsRate, TTS_DETENTS, startHealthPoll, stopHealthPoll
   } from '../lib/telemetry';
+  import PillarFeed from './PillarFeed.svelte';
   import AnalogGauge from './diesel/AnalogGauge.svelte';
   import ToggleSwitch from './diesel/ToggleSwitch.svelte';
   import KeyLock from './diesel/KeyLock.svelte';
@@ -204,8 +205,25 @@
   // Active Tab: ASPASIA, VISION, OSINT, FRICTION, VERIFY
   let activeTab = 'ASPASIA';
 
-  // Active Forensic Drawer / Modal: FOLLOWER, TIMING, DEPTH, VISUAL, SHADOW, OSINT
+  // Active Forensic Drawer / Modal: FOLLOWER, TIMING, DEPTH, VISUAL, SHADOW, OSINT,
+  // RESONANCE, PILLARS
   let activeForensicModal: string | null = null;
+
+  // [BOSS-5] Deterministik motor çıktıları: 7-sütun raporları + psikodinamik
+  // derinlik. Bu alanlar backend'de hesaplanıyordu ama WS payload'ına hiç
+  // girmiyordu; artık snapshot_update/result çerçeveleriyle geliyor.
+  let frequencyMap: any = null;
+  let seismosEvents: any = null;
+  let voidMap: any = null;
+  let strataMap: any = null;
+  let gravityMap: any = null;
+  let pulseMap: any = null;
+  let keyMatrix: any = null;
+  let psychodynamicDepth: any = null;
+
+  function depthChannels(depth: any): Array<{ name: string; ch: any }> {
+    return Object.entries(depth?.channels || {}).map(([name, ch]) => ({ name, ch: ch as any }));
+  }
 
   function toggleForensic(name: string) {
     playClick(350, 40);
@@ -241,6 +259,15 @@
       if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
       if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
       if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
+      // [BOSS-5] 7-sütun + psikodinamik derinlik (backend artık taşıyor).
+      if ($taskStatus.frequency_map) frequencyMap = $taskStatus.frequency_map;
+      if ($taskStatus.seismos_events) seismosEvents = $taskStatus.seismos_events;
+      if ($taskStatus.void_map) voidMap = $taskStatus.void_map;
+      if ($taskStatus.strata_map) strataMap = $taskStatus.strata_map;
+      if ($taskStatus.gravity_map) gravityMap = $taskStatus.gravity_map;
+      if ($taskStatus.pulse_map) pulseMap = $taskStatus.pulse_map;
+      if ($taskStatus.key_matrix) keyMatrix = $taskStatus.key_matrix;
+      if ($taskStatus.psychodynamic_depth) psychodynamicDepth = $taskStatus.psychodynamic_depth;
       // resonance_calc sonucu runs.output_summary altında taşınır (gerçek anahtarlar).
       resonanceCalc = $taskStatus.runs?.resonance_calc?.output_summary || null;
       overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
@@ -704,7 +731,7 @@
 
   </div>
 
-  <!-- ==================== ALT SIRA: 6 ADLİ DAMGA YUVARLAK BUTONU ==================== -->
+  <!-- ==================== ALT SIRA: 8 ADLİ DAMGA YUVARLAK BUTONU ==================== -->
   <footer class="bottom-forensic-bar">
     <div class="forensic-buttons-track">
       <button class="round-brass-btn {activeForensicModal === 'follower' ? 'btn-active' : ''}" on:click={() => toggleForensic('follower')}>
@@ -761,6 +788,14 @@
         </div>
         <span class="forensic-name">RESONANCE</span>
         <span class="forensic-tr">REZONANS</span>
+      </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'pillars' ? 'btn-active' : ''}" on:click={() => toggleForensic('pillars')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">◈</span>
+        </div>
+        <span class="forensic-name">7 PILLARS</span>
+        <span class="forensic-tr">7 SÜTUN</span>
       </button>
     </div>
   </footer>
@@ -824,6 +859,22 @@
               <h4>OSINT Dijital Ayak İzi</h4>
               <p>Platform Eşleşmesi: {(osintFootprint.associated_platforms || []).join(', ') || 'Temiz'}</p>
             </div>
+          {:else if activeForensicModal === 'pillars' && (frequencyMap || seismosEvents || voidMap || strataMap || gravityMap || pulseMap || keyMatrix)}
+            <!-- [BOSS-5] Deterministik 7-sütun raporları. Her rapor kendi
+                 EvidenceStatus'unu taşır (OBSERVED dışındakiler rozetlenir) —
+                 "veri yok" ile "ölçüldü" ayrımı kullanıcıdan gizlenmez. -->
+            <PillarFeed {frequencyMap} {seismosEvents} {voidMap} {strataMap} {gravityMap} {pulseMap} {keyMatrix} />
+            {#if psychodynamicDepth}
+              <div class="report-box" style="margin-top:10px;">
+                <h4>Psikodinamik Derinlik (4 Kanal)</h4>
+                <p>Hüküm: {psychodynamicDepth.verdict || 'bilinmiyor'} · Güven: %{((psychodynamicDepth.confidence ?? 0) * 100).toFixed(0)}</p>
+                {#each depthChannels(psychodynamicDepth) as row}
+                  <p>{row.name.toUpperCase()}: yoğunluk {((row.ch?.intensity ?? 0)).toFixed(2)} · tutarlılık {((row.ch?.coherence ?? 0)).toFixed(2)} · tamlık {((row.ch?.completeness ?? 0)).toFixed(2)}</p>
+                {/each}
+                <p>Telafi Endeksi: {(psychodynamicDepth.compensation_index ?? 0).toFixed(2)} · Reaksiyon Oluşumu: {(psychodynamicDepth.reaction_formation_index ?? 0).toFixed(2)}</p>
+                {#if psychodynamicDepth.reason}<p style="opacity:0.75;">Gerekçe: {psychodynamicDepth.reason}</p>{/if}
+              </div>
+            {/if}
           {:else}
             <div class="report-box">
               <p style="color: var(--text-dim);">Bu modül için henüz analiz çalıştırılmadı veya hedef veri bekleniyor.</p>

@@ -1456,6 +1456,37 @@ def _run_display_fields(run) -> dict:
     return {"model": None, "via": None, "run_source": source or None}
 
 
+# [BOSS-5] Deterministik 7-sütun ve psikodinamik derinlik çıktıları hesaplanıyordu
+# ama hiçbir WS payload'ına girmiyordu (ne snapshot ne result): UI'de o veriyi
+# gösterecek bileşen (PillarFeed) hiçbir zaman veri alamıyordu. `pillar_bundle`
+# yedi raporun TAM kopyası olduğu için yayında TEKRAR EDİLMEZ; kanonik tam kayıt
+# mühürde (evidence_chain) tutulur.
+_PILLAR_SNAPSHOT_FIELDS = (
+    "frequency_map", "seismos_events", "void_map", "strata_map",
+    "gravity_map", "pulse_map", "key_matrix",
+)
+
+
+def _pillar_payload_fields(source: Any) -> dict:
+    fields = {
+        name: _json_field(getattr(source, name, None))
+        for name in _PILLAR_SNAPSHOT_FIELDS
+    }
+    fields["psychodynamic_depth"] = _json_field(
+        getattr(source, "psychodynamic_depth", None)
+    )
+    return fields
+
+
+def _json_field(val: Any) -> Any:
+    """Pydantic modeli → JSON modu; aksi hâlde değeri olduğu gibi döndürür."""
+    if val is None:
+        return None
+    if hasattr(val, "model_dump"):
+        return val.model_dump(mode="json")
+    return val
+
+
 def _serialize_run_entry(run, *, with_timestamps: bool) -> dict:
     """AgentRun serileştirmesi — tek SoT (iki broadcast noktası da bunu çağırır)."""
     entry = {
@@ -1702,6 +1733,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
         "visual_evidence": _dump_field(getattr(snapshot, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(snapshot, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(snapshot, "osint_footprint", None)),
+        **_pillar_payload_fields(snapshot),
         "telemetry": snapshot_telemetry,
         "runs": {
             name: _serialize_run_entry(r, with_timestamps=True)
@@ -2018,6 +2050,7 @@ def broadcast_result(client_id, res):
         "visual_evidence": _dump_field(getattr(res, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(res, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(res, "osint_footprint", None)),
+        **_pillar_payload_fields(res),
         "telemetry": getattr(res, "telemetry", None)
     }))
 

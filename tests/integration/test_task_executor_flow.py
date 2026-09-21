@@ -95,6 +95,14 @@ async def test_execute_task_full_flow(executor):
     assert len(chain_agents) == 5, chain_agents
     assert chain_agents.count("psychodynamic_depth") == 1
     assert chain_agents.count("pineal_7pillar") == 1
+    # [BOSS-5] Mühür yalnız kanıt zincirini saklar: 7-sütun motorlarının HAM
+    # çıktısı bu kaydın içinde olmalı, yoksa "adli mühür" iddiası kapsamsız kalır.
+    pillar_record = next(r for r in status.evidence_chain if r["agent"] == "pineal_7pillar")
+    pillars = pillar_record["result"]["pillars"]
+    for name in ("frequency_map", "seismos_events", "void_map", "strata_map",
+                 "gravity_map", "pulse_map", "key_matrix"):
+        assert pillars[name] is not None, f"{name} mühürde yok"
+    assert pillars["version"] == "pillar-full-v1"
     
     # Ensure memory was updated
     executor.memory.merge_evidence.assert_called_once()
