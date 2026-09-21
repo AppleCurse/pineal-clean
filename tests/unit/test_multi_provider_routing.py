@@ -26,7 +26,10 @@ from agent_core.services.llm_gateway import (
 def _all_key_envs():
     envs = [env for _, env in _AGENT_DIRECT_PROVIDER_KEYS]
     envs += [env for _, env in _DIAGNOSTIC_ONLY_PROVIDERS]
-    envs += ["OPENROUTER_API_KEY", "PINEAL_ALLOW_PAID_ESCALATION",
+    envs += ["OPENROUTER_API_KEY", "OPENROUTER_BASE_URL",
+             "NINEROUTER_BASE_URL", "NINEROUTER_API_KEY",
+             "PINEAL_LLM_BASE_URL", "PINEAL_LLM_API_KEY",
+             "PINEAL_ALLOW_PAID_ESCALATION",
              "PINEAL_ALLOW_UNPRICED_MODELS", "OPENROUTER_MAX_SPEND_USD",
              "OPENROUTER_AGENT_CHAIN_FRICTION_DETECTOR",
              "NVIDIA_NIM_API_KEY"]  # eski ad; okunmamali (asagida kilitli)
