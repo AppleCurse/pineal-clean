@@ -511,3 +511,43 @@ grep -rn "wait_for" agent_core/task_executor.py                 # boş: ajan tim
 grep -rn "frequency_map\|psychodynamic_depth" backend/api.py     # boş: WS'ye taşınmıyor
 grep -rn "user_profile" --include=*.py agent_core/ backend/ | grep -v tests
 ```
+
+---
+
+## 9. DÜZELTME DURUMU (2026-09-21, aynı gün kapatıldı)
+
+Bu rapor bir **teşhis**tir: bulgular düzeltildikçe rapor metni eskimeye başlar.
+Aşağıdaki tablo, raporun yayımlandığı andan sonra yapılan düzeltmeleri ve
+her birinin durumunu gösterir. Kural: **her düzeltme kendi sözleşme testiyle**
+geldi; "düzeltildi" demek için test + ölçüm şarttır.
+
+| Bulgu | Durum | Kanıt (commit / test / ölçüm) |
+|---|---|---|
+| **B1** 9Router sözleşmesi + dürüst provider etiketi | ✅ Düzeltildi | `20116f4` · `tests/unit/test_9router_config_contract.py` (9 test) |
+| **B2** Hayalet görev / kalıcı 503 kilidi | ✅ Düzeltildi | `5a47b47` · `tests/audit/test_boss2_ghost_task_lock.py` · ölçüm: 3 timeout → hepsi terminal, hayalet `[]` |
+| **B3** İlk temas mesajı üretilmiyor | ✅ Düzeltildi | `5485740` · `tests/unit/test_resonance_synthesizer.py` üretim payload'ıyla · stub: 10→11 çağrı, `completed` |
+| **B4** Çapraz jüri paneli (doküman vaadi, kod yok) | ✅ Düzeltildi | `ad45bde` · `tests/unit/test_verifier_jury_panel.py` (7 test) · UI etiketi artık `JURY_PANEL_AGENTS`'ten türetiliyor |
+| **B5** 7-sütun + derinlik taşınmıyor, PillarFeed öksüz | ✅ Düzeltildi | `78fdf83` · `tests/unit/test_pillar_transport_contract.py` (4 test) · mühürde 13.7 KB `pillars` bloğu |
+| **B6** Görünmez authentic-vector harcaması | ✅ Düzeltildi | `22932bb` · `tests/audit/test_boss6_authentic_vector_telemetry.py` (2 test) · sahipsiz çağrı: 2 → 0 |
+| **B7** `pattern_interrupt` çift LLM çağrısı | ✅ Düzeltildi | `e5653c6` · `tests/audit/test_boss7_b9_wiring.py` · ölçüm: `GeneratedMessage` 2 → 1 |
+| **B8** Ajan timeout'u yok → 3× maliyet | ✅ Düzeltildi | `0836036` · `tests/audit/test_boss8_agent_timeout.py` (6 test) · ghost: yeniden başlatma **0**, durum `timed_out`, kısmi kanıt korunuyor |
+| **B9** Ajanlar arası körlük | ✅ Düzeltildi | `e5653c6` · 6 tüketici grubu dolu (mirror_truth…depth_analyst); `autonomous_verifier` bağımsızlık gereği bilinçli istisna |
+| **B10** Arayüzde kurgu/yalan alanlar | ✅ Düzeltildi | `e602dd8` · `tests/unit/test_ui_honesty_contract.py` (6 test) |
+| **B11** İki farklı JSON sözleşmesi + sessiz çerçeve kaybı | ✅ Düzeltildi | `bddcfd2` · `tests/audit/test_boss11_frame_contract.py` (5 test) |
+| **B12** Ölü UI parçaları, hata→INFO | ✅ Düzeltildi | `e602dd8` · aynı sözleşme dosyası |
+| **BOSS-13** (raporda yoktu; düzeltme sırasında bulundu) Derinlik motoru her görevde çöküyordu | ✅ Düzeltildi | `5fb1518` · `tests/unit/test_gorev2_depth_engine.py` (+2 test) · önce: `no_evidence`/0.0, sonra: `ok`/1.0 |
+
+**Ek bulgu (raporda yok — ölçüm sırasında çıktı):** `psychodynamic_depth._analyze_depth_inner`,
+`trajectory.ruptures = None` geldiğinde `TypeError` ile çöküyordu; çağıran taraf hatayı
+yutup "kanıt yok" gibi GÖRÜNEN bir sözleşme döndürdüğü için **her gerçek görev** sessizce
+derinliksiz kalıyordu. Bu, "hata yolu sahte başarı üretir" sınıfının en tehlikeli örneğiydi;
+düzeltildi ve iki regresyon testiyle kilitlendi.
+
+**Düzeltme sonrası ölçüm (stub):** 11 LLM çağrısı, 68 WS çerçevesi, sahipsiz çağrı 0,
+7-sütun + derinlik hem snapshot hem result'ta, mühürde ham `pillars` bloğu.
+**Test durumu:** `1187 passed / 2 skipped`, `ruff` temiz, `svelte-check` 0 hata,
+üretim derlemesi OK.
+
+**Kapanmayan tek konu (bilinçli):** `followers` alanı hâlâ snapshot/result'a taşınmıyor;
+`following` `None`-korunurken `followers` `count or 0` yazıyor — bu bir veri sözleşmesi
+kararı (0 ≠ ölçülmedi) ve ürün kararı gerektiriyor, bu turda değiştirilmedi.
