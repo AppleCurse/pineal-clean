@@ -12,6 +12,7 @@
     health, sysTelemetry, uplinkState, throttleIdx, THROTTLE_DETENTS,
     ttsRate, TTS_DETENTS, startHealthPoll, stopHealthPoll
   } from '../lib/telemetry';
+  import PillarFeed from './PillarFeed.svelte';
   import AnalogGauge from './diesel/AnalogGauge.svelte';
   import ToggleSwitch from './diesel/ToggleSwitch.svelte';
   import KeyLock from './diesel/KeyLock.svelte';
@@ -133,7 +134,7 @@
   // <ROUTING-GENERATED-START do-not-edit>
   const agentList = [
     { id: "mirror_truth",          name: "MIRROR TRUTH",          color: "#10b981", primaryModel: "pineal-deep-reasoning",     backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "🪞" },
-    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "pineal-verifier-panel",     backupModel: "(3 jüri)",          via: "9router", capability: "extract+judgment", glyph: "⚖️" },
+    { id: "autonomous_verifier",   name: "AUTONOMOUS VERIFIER",   color: "#a855f7", primaryModel: "pineal-verifier-panel",     backupModel: "(3 jüri: google+claude+open)",          via: "9router", capability: "extract+judgment", glyph: "⚖️" },
     { id: "human_behavior",        name: "HUMAN BEHAVIOR",        color: "#f59e0b", primaryModel: "pineal-general-reasoning",  backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "👤" },
     { id: "passion_mapper",        name: "PASSION MAPPER",        color: "#f59e0b", primaryModel: "pineal-fast-extract",       backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "✨" },
     { id: "friction_detector",     name: "FRICTION & BOUNDS",     color: "#ef4444", primaryModel: "pineal-general-reasoning",  backupModel: "(combo)",           via: "9router", capability: "strong_reasoning", glyph: "🛡️" },
@@ -204,8 +205,25 @@
   // Active Tab: ASPASIA, VISION, OSINT, FRICTION, VERIFY
   let activeTab = 'ASPASIA';
 
-  // Active Forensic Drawer / Modal: FOLLOWER, TIMING, DEPTH, VISUAL, SHADOW, OSINT
+  // Active Forensic Drawer / Modal: FOLLOWER, TIMING, DEPTH, VISUAL, SHADOW, OSINT,
+  // RESONANCE, PILLARS
   let activeForensicModal: string | null = null;
+
+  // [BOSS-5] Deterministik motor çıktıları: 7-sütun raporları + psikodinamik
+  // derinlik. Bu alanlar backend'de hesaplanıyordu ama WS payload'ına hiç
+  // girmiyordu; artık snapshot_update/result çerçeveleriyle geliyor.
+  let frequencyMap: any = null;
+  let seismosEvents: any = null;
+  let voidMap: any = null;
+  let strataMap: any = null;
+  let gravityMap: any = null;
+  let pulseMap: any = null;
+  let keyMatrix: any = null;
+  let psychodynamicDepth: any = null;
+
+  function depthChannels(depth: any): Array<{ name: string; ch: any }> {
+    return Object.entries(depth?.channels || {}).map(([name, ch]) => ({ name, ch: ch as any }));
+  }
 
   function toggleForensic(name: string) {
     playClick(350, 40);
@@ -241,6 +259,15 @@
       if ($taskStatus.visual_evidence) visualEvidence = $taskStatus.visual_evidence;
       if ($taskStatus.shadow_profile) shadowProfile = $taskStatus.shadow_profile;
       if ($taskStatus.osint_footprint) osintFootprint = $taskStatus.osint_footprint;
+      // [BOSS-5] 7-sütun + psikodinamik derinlik (backend artık taşıyor).
+      if ($taskStatus.frequency_map) frequencyMap = $taskStatus.frequency_map;
+      if ($taskStatus.seismos_events) seismosEvents = $taskStatus.seismos_events;
+      if ($taskStatus.void_map) voidMap = $taskStatus.void_map;
+      if ($taskStatus.strata_map) strataMap = $taskStatus.strata_map;
+      if ($taskStatus.gravity_map) gravityMap = $taskStatus.gravity_map;
+      if ($taskStatus.pulse_map) pulseMap = $taskStatus.pulse_map;
+      if ($taskStatus.key_matrix) keyMatrix = $taskStatus.key_matrix;
+      if ($taskStatus.psychodynamic_depth) psychodynamicDepth = $taskStatus.psychodynamic_depth;
       // resonance_calc sonucu runs.output_summary altında taşınır (gerçek anahtarlar).
       resonanceCalc = $taskStatus.runs?.resonance_calc?.output_summary || null;
       overallConfidence = $taskStatus.holistic_profile?.overall_confidence ?? 0;
@@ -250,11 +277,11 @@
   // ==========================================
   // ASPASIA CHAT & SPEECH
   // ==========================================
+  // [BOSS-10] Sohbet kurgu mesajlarla acilmaz: eskiden uydurma bir senaryo
+  // (4 mesaj) gercek konusma gibi duruyordu. Repo doktrini "sahte veri uretme"
+  // oldugu icin baslangicta yalniz tek bir sistem satiri var.
   let messages: {sender: string, text: string, time: string}[] = [
-    { sender: 'ASPASIA', text: 'Provide a discreet OSINT sweep on recent financial flows into Aegean shell entities.', time: '14:32:11' },
-    { sender: 'ASPASIA', text: 'Sweep initialized. 7 entities flagged. Flows routed through Cyprus → Luxembourg → BVI. Risk score: 0.78. Source confidence: high.', time: '14:32:47' },
-    { sender: 'ASPASIA', text: 'Cross-reference with maritime tracking and flag-state anomalies.', time: '14:33:02' },
-    { sender: 'ASPASIA', text: 'Cross-ref complete. 3 vessels flagged under flags of convenience. AIS spoofing detected on 2. Raw packet samples attached.', time: '14:33:41' }
+    { sender: 'SİSTEM', text: 'ASPASIA hazır. Komut yazın (örn. "hedef @kullanici analiz et") — geçmiş mesajlar yalnızca gerçek yanıtlardan oluşur.', time: '' }
   ];
   let inputMessage = "";
   let chatContainer: HTMLElement;
@@ -661,7 +688,9 @@
 
       <div class="agent-cards-stack">
         {#each agentList as agent, i}
-          {@const run = runs[agent.id] || (agent.id === 'depth_analyst' ? runs['depth_forensics'] : null)}
+          {@const run = runs[agent.id]}<!-- [BOSS-10] 'depth_forensics' ölü anahtardı:
+             backend koşu kaydını 'depth_analyst' adıyla yazar; ölü anahtar
+             yüzünden derinlik ajanı HER durumda statik etiketi gösteriyordu. -->
           {@const isCompleted = run?.status === 'completed'}
           {@const isRunning = currentAgent === agent.id && ($isProcessing || taskState === 'processing')}
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
@@ -704,7 +733,7 @@
 
   </div>
 
-  <!-- ==================== ALT SIRA: 6 ADLİ DAMGA YUVARLAK BUTONU ==================== -->
+  <!-- ==================== ALT SIRA: 8 ADLİ DAMGA YUVARLAK BUTONU ==================== -->
   <footer class="bottom-forensic-bar">
     <div class="forensic-buttons-track">
       <button class="round-brass-btn {activeForensicModal === 'follower' ? 'btn-active' : ''}" on:click={() => toggleForensic('follower')}>
@@ -762,6 +791,14 @@
         <span class="forensic-name">RESONANCE</span>
         <span class="forensic-tr">REZONANS</span>
       </button>
+
+      <button class="round-brass-btn {activeForensicModal === 'pillars' ? 'btn-active' : ''}" on:click={() => toggleForensic('pillars')}>
+        <div class="btn-inner-disc">
+          <span class="forensic-icon">◈</span>
+        </div>
+        <span class="forensic-name">7 PILLARS</span>
+        <span class="forensic-tr">7 SÜTUN</span>
+      </button>
     </div>
   </footer>
 
@@ -805,25 +842,52 @@
             <div class="report-box">
               <h4>Derinlik & Alıntı Kalkanı</h4>
               <p>Gerçeklik Skoru: %{((depthReport.reality_index || 0) * 100).toFixed(0)}</p>
-              <p>Özet: {depthReport.essence_one_liner || 'Kanıtlar incelendi.'}</p>
+              <p>Özet: {depthReport.essence_one_liner || (depthReport.available === false
+                ? `ÜRETİLEMEDİ (${depthReport.reason || depthReport.error_code || 'veri yok'})`
+                : 'Özet alanı boş döndü.')}</p>
             </div>
           {:else if activeForensicModal === 'visual' && visualEvidence}
             <div class="report-box">
               <h4>Görsel & Estetik Damga</h4>
-              <p>Stil: {visualEvidence.aesthetic_style || 'Klasik'}</p>
-              <p>Özet: {visualEvidence.visual_evidence_summary || 'Fotoğraf analiz edildi.'}</p>
+              <p>Stil: {visualEvidence.aesthetic_style || '—'}</p>
+              <p>Özet: {visualEvidence.visual_evidence_summary || (visualEvidence.data_confidence === false
+                ? `GÖRSEL ANALİZ YOK (${visualEvidence.fallback_reason || 'veri yok'})`
+                : 'Özet alanı boş döndü.')}</p>
             </div>
           {:else if activeForensicModal === 'shadow' && shadowProfile}
             <div class="report-box">
               <h4>Gölge Profili (Karanlık Üçlü)</h4>
               <p>Narsisizm: {shadowProfile.dark_profile?.narcissism ?? 0}</p>
-              <p>Strateji: {shadowProfile.strategy || 'Doğal profil'}</p>
+              <p>Strateji: {shadowProfile.strategy || '—'}</p>
+              {#if shadowProfile.data_confidence === false}
+                <p class="report-warn">GÖLGE KATMANI VERİSİZ: {shadowProfile.fallback_reason || 'veri yok'}</p>
+              {/if}
             </div>
           {:else if activeForensicModal === 'osint' && osintFootprint}
             <div class="report-box">
               <h4>OSINT Dijital Ayak İzi</h4>
-              <p>Platform Eşleşmesi: {(osintFootprint.associated_platforms || []).join(', ') || 'Temiz'}</p>
+              <p>Platform Eşleşmesi: {(osintFootprint.associated_platforms || []).join(', ') || '—'}</p>
+              {#if osintFootprint.data_confidence === false}
+                <p class="report-warn">OSINT VERİSİ YOK: {osintFootprint.fallback_reason || 'ölçüm yapılamadı'}
+                  — "veri yok" ≠ "olumsuz bulgu yok".</p>
+              {/if}
             </div>
+          {:else if activeForensicModal === 'pillars' && (frequencyMap || seismosEvents || voidMap || strataMap || gravityMap || pulseMap || keyMatrix)}
+            <!-- [BOSS-5] Deterministik 7-sütun raporları. Her rapor kendi
+                 EvidenceStatus'unu taşır (OBSERVED dışındakiler rozetlenir) —
+                 "veri yok" ile "ölçüldü" ayrımı kullanıcıdan gizlenmez. -->
+            <PillarFeed {frequencyMap} {seismosEvents} {voidMap} {strataMap} {gravityMap} {pulseMap} {keyMatrix} />
+            {#if psychodynamicDepth}
+              <div class="report-box" style="margin-top:10px;">
+                <h4>Psikodinamik Derinlik (4 Kanal)</h4>
+                <p>Hüküm: {psychodynamicDepth.verdict || 'bilinmiyor'} · Güven: %{((psychodynamicDepth.confidence ?? 0) * 100).toFixed(0)}</p>
+                {#each depthChannels(psychodynamicDepth) as row}
+                  <p>{row.name.toUpperCase()}: yoğunluk {((row.ch?.intensity ?? 0)).toFixed(2)} · tutarlılık {((row.ch?.coherence ?? 0)).toFixed(2)} · tamlık {((row.ch?.completeness ?? 0)).toFixed(2)}</p>
+                {/each}
+                <p>Telafi Endeksi: {(psychodynamicDepth.compensation_index ?? 0).toFixed(2)} · Reaksiyon Oluşumu: {(psychodynamicDepth.reaction_formation_index ?? 0).toFixed(2)}</p>
+                {#if psychodynamicDepth.reason}<p style="opacity:0.75;">Gerekçe: {psychodynamicDepth.reason}</p>{/if}
+              </div>
+            {/if}
           {:else}
             <div class="report-box">
               <p style="color: var(--text-dim);">Bu modül için henüz analiz çalıştırılmadı veya hedef veri bekleniyor.</p>
@@ -1803,6 +1867,12 @@
     padding: 16px;
     color: var(--text-main);
   }
+  .report-warn {
+    color: #f59e0b;
+    font-size: 0.78rem;
+    margin: 0.25rem 0 0;
+  }
+
   .report-box h4 {
     color: var(--gold);
     margin-bottom: 8px;

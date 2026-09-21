@@ -77,21 +77,25 @@ def test_panel_lists_all_thirteen_agents_once():
     )
 
 
-ROUTER_9_CANONICAL_MAP = {
-    "mirror_truth": ("pineal-deep-reasoning", "(combo)"),
-    "autonomous_verifier": ("pineal-verifier-panel", "(3 jüri)"),
-    "human_behavior": ("pineal-general-reasoning", "(combo)"),
-    "passion_mapper": ("pineal-fast-extract", "(combo)"),
-    "friction_detector": ("pineal-general-reasoning", "(combo)"),
-    "cognitive_profiler": ("pineal-general-reasoning", "(combo)"),
-    "resonance_calc": ("local-numpy", "—"),
-    "pattern_interrupt": ("pineal-fast-extract", "(combo)"),
-    "resonance_synthesizer": ("pineal-deep-reasoning", "(combo)"),
-    "vision_analyzer": ("pineal-vision", "(combo)"),
-    "osint_investigator": ("pineal-osint-pipeline", "(pipeline)"),
-    "authenticity_auditor": ("pineal-vision", "(forensic)"),
-    "depth_analyst": ("pineal-deep-reasoning", "(combo)"),
-}
+def _canonical_map() -> dict[str, tuple[str, str]]:
+    """9Router kanonik etiketler — ÜRETİCİDEN okunur, elle kopyalanmaz.
+
+    [BOSS-4] Önceden bu tablo elle yazılmıştı ve `autonomous_verifier` için
+    "(3 jüri)" kurgusunu kilitliyordu: README/UI jüri paneli vaat ediyordu ama
+    kodda tek zincir vardı. Artık beklenen etiket `generate_routing_shadows.py`
+    içindeki türetilmiş tablodan (ki o da `LLMGateway.JURY_PANEL_AGENTS`'ten
+    türetir) okunur; kurgu koda uymazsa test kırmızı olur.
+    """
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[2] / "scripts" / "generate_routing_shadows.py"
+    spec = importlib.util.spec_from_file_location("gen_shadows_contract", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return {agent: (primary, backup) for agent, (primary, backup, _via) in module.ROUTER_9_CANONICAL_MAP.items()}
+
+
+ROUTER_9_CANONICAL_MAP = _canonical_map()
 
 
 def test_ui_model_labels_match_gateway_chain_source_of_truth():

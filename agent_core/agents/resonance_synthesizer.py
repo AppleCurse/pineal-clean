@@ -16,8 +16,56 @@ class ResonanceSynthesizerAgent:
     def __init__(self, llm_gateway: Optional[LLMGateway] = None):
         self.llm_gateway = llm_gateway or LLMGateway()
 
+    @staticmethod
+    def _as_list(value: Any) -> list:
+        """str/list/tuple → temizlenmiş liste (boş girdi ASLA doldurulmaz)."""
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
+    def _build_user_context(self, payload: Dict[str, Any]) -> str:
+        """Kullanıcı tarafı kanıt metni — TEK sözleşme.
+
+        [BUGFIX] Önceden yalnız `user_profile["bio"]/["posts"]` okunuyordu.
+        Üretim yolu (`backend.api` ve `scripts/run_task.py` → `build_user_context`)
+        ise `private_rituals` / `late_night_playlist` / `secret_envies` taşır;
+        ikisi de hiç dolu olmadığı için ajan HER görevde `user_context_unavailable`
+        ile erken dönüyordu ve `suggested_opening_message` HİÇ üretilmiyordu.
+
+        Kanonik kaynak: `agent_core.services.platform_registry.build_user_context`.
+        `bio`/`posts` yalnız ek istemciler sağlarsa kullanılır (opsiyonel zenginlik).
+        """
+        profile = payload.get("user_profile") or {}
+        ctx = payload.get("user_context") or {}
+        if not isinstance(profile, dict):
+            profile = {}
+        if not isinstance(ctx, dict):
+            ctx = {}
+
+        bio = str(profile.get("bio") or "").strip()
+        posts = self._as_list(profile.get("posts"))
+        rituals = self._as_list(profile.get("private_rituals") or ctx.get("rituals"))
+        playlist = self._as_list(profile.get("late_night_playlist") or ctx.get("playlist"))
+        envies = self._as_list(profile.get("secret_envies") or ctx.get("envies"))
+
+        lines = []
+        if bio:
+            lines.append(f"Kullanıcı Biyografisi: {bio}")
+        if posts:
+            lines.append(f"Kullanıcı Paylaşımları: {', '.join(posts)}")
+        if rituals:
+            lines.append(f"Kişisel Ritüeller: {', '.join(rituals)}")
+        if playlist:
+            lines.append(f"Gece Çalma Listesi: {', '.join(playlist)}")
+        if envies:
+            lines.append(f"Gizli İmrendikleri: {', '.join(envies)}")
+        if not lines:
+            return ""
+        return "Kullanıcı Frekansı (kullanıcının kendi beyanı):\n" + "\n".join(lines)
+
     async def execute(self, payload: Dict[str, Any]) -> AuthenticBridge:
-        user_profile = payload.get("user_profile", {})
         passions_data = payload.get("passions", {})
         friction_data = payload.get("frictions", {})
         cognitive_data = payload.get("cognitive", {})
@@ -30,15 +78,13 @@ class ResonanceSynthesizerAgent:
                 fallback_reason="target_context_unavailable",
             )
 
-        user_bio = user_profile.get("bio", "")
-        user_posts = user_profile.get("posts", [])
-        if not user_bio and not user_posts:
+        user_context = self._build_user_context(payload)
+        if not user_context:
             return AuthenticBridge(
                 confidence=0.0,
                 data_confidence=False,
                 fallback_reason="user_context_unavailable",
             )
-        user_context = f"Kullanıcı Biyografisi: {user_bio}\nKullanıcı Paylaşımları: {', '.join(user_posts)}"
         # [FIX #3] Upstream bulgular (doğrulanmamış) — prompt'a girebilir.
         upstream_block = upstream_findings_block(payload)
 

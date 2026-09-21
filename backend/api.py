@@ -177,6 +177,105 @@ _default_origins = [
 _allowed = os.getenv("PINEAL_ALLOWED_ORIGINS", "")
 ALLOWED_ORIGINS = [o.strip() for o in _allowed.split(",") if o.strip() and o.strip() != "*"] or _default_origins
 
+class BodySizeLimitExceeded(Exception):
+    pass
+
+
+class BodySizeLimitMiddleware:
+    """[P0-BOOT-FIX] İstek gövdesi tavanı middleware'i.
+
+    uvicorn 0.52.4'te --limit-max-request-size bayrağı bulunmadığından
+    tavan uygulama katmanında enforced edilir.
+    Varsayılan: 1048576 bayt (1 MiB), PINEAL_MAX_BODY_BYTES ile geçersiz kılınabilir.
+    """
+
+    def __init__(self, app, max_bytes: Optional[int] = None):
+        self.app = app
+        if max_bytes is not None:
+            self.max_bytes = max_bytes
+        else:
+            try:
+                self.max_bytes = int(os.getenv("PINEAL_MAX_BODY_BYTES", "1048576"))
+            except ValueError:
+                self.max_bytes = 1048576
+
+    def _get_max_bytes(self) -> int:
+        try:
+            return int(os.getenv("PINEAL_MAX_BODY_BYTES", str(self.max_bytes)))
+        except ValueError:
+            return self.max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        max_bytes = self._get_max_bytes()
+
+        # 1. Content-Length başlığı kontrolü (erken ret)
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"content-length":
+                try:
+                    content_length = int(value.decode("latin-1"))
+                    if content_length > max_bytes:
+                        await self._send_413(send, max_bytes)
+                        return
+                except (ValueError, UnicodeDecodeError):
+                    pass
+                break
+
+        # 2. Akış / Parçalı (chunked) gövde kontrolü
+        total_received = 0
+        body_size_exceeded = False
+
+        async def limited_receive():
+            nonlocal total_received, body_size_exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                chunk = message.get("body", b"")
+                total_received += len(chunk)
+                if total_received > max_bytes:
+                    body_size_exceeded = True
+                    raise BodySizeLimitExceeded()
+            return message
+
+        async def tracked_send(message):
+            if body_size_exceeded:
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except Exception:
+            pass
+
+        if body_size_exceeded:
+            await self._send_413(send, max_bytes)
+
+    async def _send_413(self, send, max_bytes: int):
+        body = json.dumps({
+            "code": "BODY_TOO_LARGE",
+            "error": {
+                "code": "BODY_TOO_LARGE",
+                "message": f"Request body exceeds maximum allowed size of {max_bytes} bytes",
+                "max_bytes": max_bytes,
+            },
+            "max_bytes": max_bytes,
+        }).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("latin-1")),
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": body,
+        })
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -200,6 +299,7 @@ app.add_middleware(
         "X-Pineal-Optimization-Lossy",
     ],
 )
+app.add_middleware(BodySizeLimitMiddleware)
 
 # --- Auth (FAZ 3): PINEAL_TOKEN tanimliysa /api/* ve OpenAI uyumlu /v1/*
 # kimlik doğrulaması ister. /v1 ayrıca standart Authorization: Bearer biçimini
@@ -881,6 +981,9 @@ def get_room(client_id: str) -> dict:
                 "dropped_messages_total": 0,
                 "dropped_event_count": 0,
                 "dropped_by_kind": {},
+                # [BOSS-11] Çerçeve hataları aynı sözleşmede (şema sabit kalsın).
+                "frame_errors_total": 0,
+                "frame_errors_by_kind": {},
             },
         }
         # FIFO gonderici: tum log/event/snapshot/result mesajlari sirayla iletilir.
@@ -1316,6 +1419,9 @@ async def _room_sender(room: dict):
         except asyncio.CancelledError:
             raise
         except Exception as e:  # gonderici task asla olmemeli
+            # [BOSS-11] Eskiden yalnız print ediliyordu: kaybolan çerçeve
+            # telemetride görünmüyordu. Artık oda durumu DEGRADED işaretlenir.
+            _record_frame_error(room, kind, e)
             print(f"[room_sender] hata: {type(e).__name__}: {e}")
 
 def _lifecycle(room: dict) -> TaskLifecycleRegistry:
@@ -1334,6 +1440,9 @@ _ROOM_ACTIVE_TASKS_CAP = _bounded_env_int("PINEAL_ROOM_ACTIVE_TASKS_CAP", 256, 1
 _ROOM_INTERVENTIONS_CAP = _bounded_env_int("PINEAL_ROOM_INTERVENTIONS_CAP", 512, 1, 100_000)
 _TERMINAL_PIPELINE_STATES = frozenset({
     "completed", "partially_completed", "failed",
+    # [BOSS-8] Görev bütçesi doldu → terminal. Bu kümede olmazsa terminal
+    # işaretleme yolu durumu "failed"a ezer (ölçüldü: timed_out → failed).
+    "timed_out",
     "cancelled", "canceled",
     "halted_evidence", "halted_frequency", "halted_critical", "halted_user",
 })
@@ -1353,6 +1462,76 @@ def _snapshot_status(snap) -> str:
     status = getattr(snap, "status", "")
     value = getattr(status, "value", status)
     return str(value).lower()
+
+
+def _close_active_task(room: dict, task_id: Optional[str], status: str) -> bool:
+    """[BOSS-2] Oda kaydını TERMİNAL duruma çevirir (hayalet görev yasağı).
+
+    Röntgen bulgusu: ``active_tasks`` kaydı yalnız ``_send_snapshot`` ile
+    yazılır. Görev zaman aşımına uğrar, iptal edilir veya beklenmeyen bir
+    istisnayla düşerse görevin SON snapshot'ı "processing" olarak kalır ve
+    hiçbir kod yolu onu güncellemez. ``_prune_room_stale_state`` terminal
+    olmayan kaydı bilinçli olarak SİLMEZ (bkz. [AUDIT N1]); sonuç: kayıt
+    sonsuza kadar "aktif" sayılır, ``_active_tasks_full`` odayı doygun görür
+    ve oda KALICI 503 verir (ölçüldü: tavan 2, 3 askıda görev → kalıcı kilit).
+
+    Bu fonksiyon kaydı öldürmez, ÖLDÜĞÜNÜ İŞARETLER: durum terminal kümesine
+    yazılır (snapshot nesnesi paylaşıldığı için UI son durumu görebilir),
+    retention sweep de kaydı normal yoldan düşürebilir.
+
+    Dönüş: durum gerçekten değiştirildiyse True.
+    """
+    if not task_id:
+        return False
+    active = room.get("active_tasks")
+    if not isinstance(active, dict):
+        return False
+    snapshot = active.get(task_id)
+    if snapshot is None:
+        return False
+    if _snapshot_status(snapshot) in _TERMINAL_PIPELINE_STATES:
+        return False
+    normalized = str(status or "").lower()
+    if normalized not in _TERMINAL_PIPELINE_STATES:
+        # Bilinmeyen durum asla terminal sayılmaz; dürüst varsayılan "failed".
+        normalized = "failed"
+    try:
+        from agent_core.domain.pipeline_status import PipelineStatus
+
+        setattr(snapshot, "status", PipelineStatus(normalized))
+    except Exception:
+        try:
+            setattr(snapshot, "status", normalized)
+        except Exception:
+            return False
+    # Not: kayıt zamanı SIFIRLANMAZ — kapalı kayıt retention penceresini
+    # hak etmek için bekletilmez; [AUDIT R1] sözleşmesi "oda belleği =
+    # retention x görev hızı" ile sınırlı kalır ve hayalet hiç birikmez.
+    room.setdefault("_active_tasks_ts", {}).setdefault(task_id, time.monotonic())
+    return True
+
+
+def _finalize_finished_missions(room: dict) -> None:
+    """Bitiş sinyali ALINMIŞ görevlerin oda kayıtlarını terminal duruma sabitler.
+
+    Kaynak yalnız ``room["_finished_missions"]`` kümesidir: mission task'inin
+    done_callback'i (normal dönüş, istisna, iptal, timeout, kapanış) oraya
+    task_id yazar. Böylece odaya snapshot basan ama ``mission_tasks``'a hiç
+    girmeyen (kaydı olmayan) bir iş akışı YANLIŞLIKLA "failed" işaretlenmez —
+    yalnız gerçekten bitmiş görevler kapatılır.
+
+    Kayıt hâlâ terminal değilse kapatılır; zaten terminal ise (ör.
+    "partially_completed") gerçek durum ASLA ezilmez.
+    """
+    finished = room.get("_finished_missions")
+    if not isinstance(finished, set) or not finished:
+        return
+    active = room.get("active_tasks")
+    for task_id in list(finished):
+        _close_active_task(room, task_id, "failed")
+        snapshot = (active or {}).get(task_id)
+        if snapshot is None or _snapshot_status(snapshot) in _TERMINAL_PIPELINE_STATES:
+            finished.discard(task_id)
 
 
 def _run_display_fields(run) -> dict:
@@ -1384,6 +1563,37 @@ def _run_display_fields(run) -> dict:
         suffix = f":{reason}" if reason else ""
         return {"model": None, "via": "fallback" + suffix, "run_source": source}
     return {"model": None, "via": None, "run_source": source or None}
+
+
+# [BOSS-5] Deterministik 7-sütun ve psikodinamik derinlik çıktıları hesaplanıyordu
+# ama hiçbir WS payload'ına girmiyordu (ne snapshot ne result): UI'de o veriyi
+# gösterecek bileşen (PillarFeed) hiçbir zaman veri alamıyordu. `pillar_bundle`
+# yedi raporun TAM kopyası olduğu için yayında TEKRAR EDİLMEZ; kanonik tam kayıt
+# mühürde (evidence_chain) tutulur.
+_PILLAR_SNAPSHOT_FIELDS = (
+    "frequency_map", "seismos_events", "void_map", "strata_map",
+    "gravity_map", "pulse_map", "key_matrix",
+)
+
+
+def _pillar_payload_fields(source: Any) -> dict:
+    fields = {
+        name: _json_field(getattr(source, name, None))
+        for name in _PILLAR_SNAPSHOT_FIELDS
+    }
+    fields["psychodynamic_depth"] = _json_field(
+        getattr(source, "psychodynamic_depth", None)
+    )
+    return fields
+
+
+def _json_field(val: Any) -> Any:
+    """Pydantic modeli → JSON modu; aksi hâlde değeri olduğu gibi döndürür."""
+    if val is None:
+        return None
+    if hasattr(val, "model_dump"):
+        return val.model_dump(mode="json")
+    return val
 
 
 def _serialize_run_entry(run, *, with_timestamps: bool) -> dict:
@@ -1434,6 +1644,7 @@ def _prune_room_stale_state(room: dict) -> None:
     # tavan aşımında EN ESKİ terminal (hepsi terminal değilse en eski kayıt)
     # düşer. Girdi zamanı paralel ts sözlüğünde izlenir (snapshot'ta
     # güvenilir zaman damgası yok).
+    _finalize_finished_missions(room)
     active = room.get("active_tasks")
     if isinstance(active, dict) and active:
         ts = room.setdefault("_active_tasks_ts", {})
@@ -1490,6 +1701,9 @@ def _active_tasks_full(room: dict) -> bool:
     active = room.get("active_tasks")
     if not isinstance(active, dict):
         return False
+    # [BOSS-2] Biten görevler terminal işaretlenmeden doygunluk kararı verilmez:
+    # aksi hâlde hayalet kayıt odayı kalıcı 503'e kilitler.
+    _finalize_finished_missions(room)
     full = 0
     for snap in active.values():
         if _snapshot_status(snap) not in _TERMINAL_PIPELINE_STATES:
@@ -1511,6 +1725,9 @@ def _delivery_status(room: dict) -> dict:
         "dropped_messages_total": delivery["dropped_messages_total"],
         "dropped_event_count": delivery["dropped_event_count"],
         "dropped_by_kind": dict(delivery["dropped_by_kind"]),
+        # [BOSS-11] Çerçeve hataları artık raporlanır (eskiden sessizdi).
+        "frame_errors_total": delivery.get("frame_errors_total", 0),
+        "frame_errors_by_kind": dict(delivery.get("frame_errors_by_kind", {})),
     }
 
 
@@ -1550,6 +1767,30 @@ def _enqueue(client_id: str, item: tuple):
 _WS_SEND_TIMEOUT_S = 5.0
 
 
+def _ws_json(data: dict) -> str:
+    """[BOSS-11] WS çerçeveleri için TEK serileştirme sözleşmesi.
+
+    Mühür (canonical memory) `json.dumps(..., default=str)` kullanır; WS ise
+    çıplak `json.dumps` çağırıyordu. `model_dump()` bugün JSON-uyumlu ama tek
+    bir Enum/datetime alanı eklendiğinde çerçeve sessizce kaybolurdu
+    (bkz. schemas/telemetry.py:98). İki yol aynı sözleşmeyi paylaşır.
+    """
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def _record_frame_error(room: dict, kind: str, exc: BaseException) -> None:
+    """Çerçeve üretim/gönderim hatası görünür olsun: sessiz yutma yok."""
+    _delivery_status(room)
+    delivery = room["telemetry_delivery"]
+    delivery["state"] = "DEGRADED_FRAME_ERROR"
+    delivery["frame_errors_total"] = delivery.get("frame_errors_total", 0) + 1
+    delivery.setdefault("frame_errors_by_kind", {})
+    delivery["frame_errors_by_kind"][kind] = delivery["frame_errors_by_kind"].get(kind, 0) + 1
+    room.setdefault("frame_error_samples", [])
+    room["frame_error_samples"].append(f"{kind}: {type(exc).__name__}: {exc}"[:200])
+    del room["frame_error_samples"][:-5]
+
+
 async def _send_ws(room: dict, payload: str) -> None:
     ws_set = room.get("websockets", set())
     for ws in list(ws_set):
@@ -1565,7 +1806,7 @@ async def _send_log(room: dict, payload: tuple):
     if "logs" not in room: room["logs"] = []
     room["logs"].append(f"[{ts}] [{level}] {msg}")
     if len(room["logs"]) > 50: room["logs"].pop(0)
-    await _send_ws(room, json.dumps({"type": "log", "ts": ts, "level": level, "msg": msg}))
+    await _send_ws(room, _ws_json({"type": "log", "ts": ts, "level": level, "msg": msg}))
 
 def broadcast_log(client_id: str, level: str, msg: str):
     _enqueue(client_id, ("log", (level, redact_text(msg))))
@@ -1612,7 +1853,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
     snapshot_telemetry["delivery"] = _delivery_status(room)
     snapshot_telemetry["lifecycle"] = _lifecycle(room).metrics()
 
-    payload = json.dumps({
+    payload = _ws_json({
         "type": "snapshot_update",
         "task_id": snapshot.task_id,
         "current_agent": snapshot.current_agent,
@@ -1628,6 +1869,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
         "visual_evidence": _dump_field(getattr(snapshot, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(snapshot, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(snapshot, "osint_footprint", None)),
+        **_pillar_payload_fields(snapshot),
         "telemetry": snapshot_telemetry,
         "runs": {
             name: _serialize_run_entry(r, with_timestamps=True)
@@ -1713,6 +1955,7 @@ class InitiatePayload(BaseModel):
 from agent_core.services.platform_registry import (
     effective_scraper_type as _effective_scraper_type,
     scrape_instagram,
+    build_user_context,
 )
 # Geriye uyumluluk re-export'u: Dalga 1 sözleşme testleri bu adı backend.api'den
 # içe aktarıyor ([024]/[025]/[026] mapping testleri).
@@ -1742,17 +1985,12 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
         user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else []
         user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else []
 
+        # [BOSS-3] Kullanıcı bölümleri TEK kaynaktan kurulur: aynı yardımcı
+        # scripts/run_task.py (Rust/Tauri yolu) tarafından da kullanılır. Satır
+        # içi kopya, tüketici ajanlarla sözleşme ayrışmasına yol açmıştı
+        # (resonance_synthesizer bio/posts bekliyordu → her görevde erken dönüş).
         payload = {
-            "user_profile": {
-                "private_rituals": user_rituals,
-                "late_night_playlist": user_playlist,
-                "secret_envies": user_envies,
-            },
-            "user_context": {
-                "rituals": ", ".join(user_rituals),
-                "playlist": ", ".join(user_playlist),
-                "envies": ", ".join(user_envies),
-            },
+            **build_user_context(user_rituals, user_playlist, user_envies),
             "target_profile": {"bio": "", "posts": [], "post_times": [], "images": []},
             # Amaç kaybi fix: Aspasia goal'leri payload'da yasar; router yoksa
             # eski plani aynen kurar. Gecerlilik/uydurma filtresi router'da.
@@ -1864,6 +2102,13 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                 return
             except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
                 raise
+            except (asyncio.TimeoutError, TimeoutError):
+                # [BOSS-8] Zaman aşımı ARTIK yeniden başlatılmaz. Eski davranış:
+                # görev 300s'de iptal edilir, aynı ajanlar sıfırdan koşar ve
+                # LLM faturası 3'e katlanırdı — sonuç yine aynı darboğaz.
+                # Bunun yerine son kısmi durum 'timed_out' olarak yayınlanır.
+                _finalize_timed_out_mission(client_id, task_id, task_timeout)
+                return
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
                 if attempt == max_attempts:
@@ -1885,15 +2130,57 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
             client_id, "failed", f"SİSTEM PANİĞİ: {str(e)}", task_id
         )
 
+def _finalize_timed_out_mission(client_id: str, task_id: str, budget_seconds: int) -> None:
+    """[BOSS-8] Görev bütçesi dolduğunda kısmi kanıtı terminal durumla yayınlar.
+
+    Eski davranışta timeout sessizce "failed" olur ve o ana kadar üretilen tüm
+    kanıt (ajan koşuları, kanıt zinciri, 7-sütun raporları) çöpe giderdi.
+    Oda kaydındaki son snapshot terminal işaretlenip `timed_out` durumuyla
+    yayınlanır; baştan koşma yoktur.
+    """
+    from agent_core.domain.pipeline_status import PipelineStatus
+
+    room = app.state.rooms.get(client_id)
+    partial = None
+    if room is not None:
+        partial = (room.get("active_tasks") or {}).get(task_id)
+    if partial is not None:
+        try:
+            partial.status = PipelineStatus.TIMED_OUT
+            partial.halted_reason = (
+                f"Görev bütçesi doldu ({budget_seconds}s). Kısmi kanıt korundu; "
+                "aynı darboğaz tekrar tıkanmasın diye görev baştan koşulmadı."
+            )
+        except Exception:  # pragma: no cover - savunma: şema dışı snapshot
+            partial = None
+    broadcast_log(
+        client_id,
+        "ERROR",
+        f"ZAMAN AŞIMI: görev {budget_seconds}s bütçesini aştı. Görev baştan "
+        "başlatılmadı (tekrarlanan tıkanma + 3x maliyet önlenir).",
+    )
+    if partial is not None:
+        broadcast_result(client_id, partial)
+    broadcast_result_error(
+        client_id, PipelineStatus.TIMED_OUT.value,
+        f"ZAMAN AŞIMI: {budget_seconds}s bütçesi doldu; kısmi kanıt yayınlandı.", task_id,
+    )
+
+
 def broadcast_result_error(client_id, status, msg, task_id: Optional[str] = None):
     broadcast_log(client_id, "ERROR", msg)
+    # [BOSS-2] Terminal hata bildirimi oda kaydını da kapatır; aksi hâlde
+    # snapshot "processing" kalıp odayı kalıcı 503'e kilitliyordu.
+    room = app.state.rooms.get(client_id)
+    if room is not None:
+        _close_active_task(room, task_id, status)
     payload = {"type": "result", "status": status}
     if task_id:
         payload["task_id"] = task_id
     _enqueue(client_id, ("result_error", payload))
 
 async def _send_result_error(room: dict, data: dict):
-    await _send_ws(room, json.dumps(data))
+    await _send_ws(room, _ws_json(data))
 
 def broadcast_result(client_id, res):
     room = app.state.rooms.get(client_id)
@@ -1903,6 +2190,9 @@ def broadcast_result(client_id, res):
     decision = _lifecycle(room).transition(res.task_id, res.status)
     if not decision.accepted:
         return
+    # [BOSS-2] Snapshot nesnesi terminal duruma geçmemişse (ör. iptal/istisna
+    # sonrası geç gelen sonuç) oda kaydı burada kapatılır.
+    _close_active_task(room, getattr(res, "task_id", None), getattr(res, "status", None))
 
     def find(chain, name):
         for e in chain:
@@ -1940,6 +2230,7 @@ def broadcast_result(client_id, res):
         "visual_evidence": _dump_field(getattr(res, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(res, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(res, "osint_footprint", None)),
+        **_pillar_payload_fields(res),
         "telemetry": getattr(res, "telemetry", None)
     }))
 
@@ -1948,7 +2239,7 @@ async def _send_result(room: dict, data: dict):
     result_telemetry["delivery"] = _delivery_status(room)
     result_telemetry["lifecycle"] = _lifecycle(room).metrics()
     data = {**data, "telemetry": result_telemetry}
-    await _send_ws(room, json.dumps(data))
+    await _send_ws(room, _ws_json(data))
 
 @app.post("/api/initiate")
 async def api_initiate(req: InitiatePayload, request: Request):
@@ -1978,7 +2269,14 @@ async def api_initiate(req: InitiatePayload, request: Request):
     _lifecycle(room).transition(task_id, "processing")
     mission = asyncio.create_task(run_mission(req, task_id))
     room["mission_tasks"][task_id] = mission
-    mission.add_done_callback(lambda _task: room["mission_tasks"].pop(task_id, None))
+
+    def _on_mission_done(_task, _room=room):
+        # [BOSS-2] Görev bitti/iptal edildi: terminal olmayan oda kaydı kalmasın.
+        _room["mission_tasks"].pop(task_id, None)
+        _room.setdefault("_finished_missions", set()).add(task_id)
+        _finalize_finished_missions(_room)
+
+    mission.add_done_callback(_on_mission_done)
     return {"status": "started", "task_id": task_id}
 
 class VaultPayload(BaseModel):
@@ -2359,7 +2657,14 @@ def _aspasia_command_dispatch(spec: dict) -> "str | None":
     _lifecycle(room).transition(task_id, "processing")
     mission = asyncio.create_task(run_mission(req, task_id))
     room["mission_tasks"][task_id] = mission
-    mission.add_done_callback(lambda _task: room["mission_tasks"].pop(task_id, None))
+
+    def _on_mission_done(_task, _room=room):
+        # [BOSS-2] Görev bitti/iptal edildi: terminal olmayan oda kaydı kalmasın.
+        _room["mission_tasks"].pop(task_id, None)
+        _room.setdefault("_finished_missions", set()).add(task_id)
+        _finalize_finished_missions(_room)
+
+    mission.add_done_callback(_on_mission_done)
     return task_id
 
 

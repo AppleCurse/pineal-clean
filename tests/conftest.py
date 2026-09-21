@@ -10,7 +10,12 @@ Bu otomatik fixture, her test için cache'i geçici, izole bir veritabanına yö
 Cache davranışını özel olarak test edenler (tests/unit/test_response_cache.py)
 PINEAL_RESPONSE_CACHE / PINEAL_CACHE_PATH değişkenlerini kendileri ayarlayabilir.
 """
+import dotenv
 import pytest
+
+# Hermetik test garantisi: backend.api veya diğer modüller yüklendiğinde üretim .env
+# dosyasındaki anahtarların/endpoint'lerin test ortamına sızmasını engeller.
+dotenv.load_dotenv = lambda *args, **kwargs: False
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +30,7 @@ def _isolate_response_cache(tmp_path, monkeypatch):
     monkeypatch.delenv("PINEAL_ROUTER_LIVE", raising=False)
     monkeypatch.delenv("OPENROUTER_MAX_SPEND_USD", raising=False)
     monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_VISION_MODEL", raising=False)
     monkeypatch.delenv("OPENROUTER_TIER_1_MODEL", raising=False)
     monkeypatch.delenv("OPENROUTER_TIER_2_MODEL", raising=False)
@@ -47,6 +53,8 @@ def _isolate_response_cache(tmp_path, monkeypatch):
     monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
     monkeypatch.delenv("NINEROUTER_BASE_URL", raising=False)
     monkeypatch.delenv("NINEROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("PINEAL_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("PINEAL_LLM_API_KEY", raising=False)
     yield
 
 

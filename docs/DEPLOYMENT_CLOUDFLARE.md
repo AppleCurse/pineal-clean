@@ -119,5 +119,5 @@ curl -s -i https://<sub>.pages.dev/ws/abc
 - **Rate limiting / WAF**: Cloudflare dashboard'daki WAF kuralları
   proxy'lenen uçlara da uygulanır (edge, backend'in önünde).
 - **Limit**: Cloudflare'ın ücretsiz katmanında istek gövdesi 100 MB'a
-  kadar; backend `Dockerfile` CMD'sinde `--limit-max-request-size
-  1048576` (1 MiB) ile daha sıkı sınırlıdır.
+  kadar; backend uygulama katmanında (`BodySizeLimitMiddleware`)
+  1 MiB (1048576 bayt) ile daha sıkı sınırlıdır.

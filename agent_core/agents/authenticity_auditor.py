@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, ConfigDict
 from agent_core.services.llm_gateway import LLMGateway
+from agent_core.services.upstream_findings import upstream_findings_block
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,9 @@ class AuthenticityAuditorAgent:
         bio = target.get("bio", "")
         posts = target.get("posts", [])
         visual_evidence = payload.get("visual_evidence", {})
+    # [BOSS-9] Diğer ajanların doğrulanmamış bulguları prompt'a referans olarak girer
+    # (tek kaynak: agent_core.services.upstream_findings); boşsa metin boş kalır.
+        upstream_block = upstream_findings_block(payload)
 
         if not visual_evidence or not (bio or posts):
             return AuthenticityProfile(
@@ -63,6 +67,8 @@ Son Paylaşımlar / Metinler:
 
 Görsel Kanıtlar (Fotoğraflarda Görülenler):
 {visual_text}
+
+{upstream_block}
 
 JSON formatında yanıt ver:
 {{
