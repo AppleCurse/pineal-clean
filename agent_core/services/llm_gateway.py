@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Iterator, List, Mapping, Optional, Type, TypeVar
@@ -759,8 +760,13 @@ class LLMGateway:
         }
 
     @staticmethod
+    @lru_cache(maxsize=1)
     def _load_agent_tiers() -> dict[str, Any]:
-        """agent_tiers.json intent tablosu (yoksa/bozuksa {} — snapshot çökmez)."""
+        """agent_tiers.json intent tablosu (yoksa/bozuksa {} — snapshot çökmez).
+
+        ⚡ Bolt: Cached parsed static configuration file to prevent blocking the
+        event loop with synchronous file I/O operations on every call.
+        """
         override = os.getenv("PINEAL_AGENT_TIERS_PATH", "").strip()
         path = Path(override) if override else Path(__file__).resolve().parent.parent.parent / "config" / "agent_tiers.json"
         try:
