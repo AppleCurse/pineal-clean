@@ -881,6 +881,9 @@ def get_room(client_id: str) -> dict:
                 "dropped_messages_total": 0,
                 "dropped_event_count": 0,
                 "dropped_by_kind": {},
+                # [BOSS-11] Çerçeve hataları aynı sözleşmede (şema sabit kalsın).
+                "frame_errors_total": 0,
+                "frame_errors_by_kind": {},
             },
         }
         # FIFO gonderici: tum log/event/snapshot/result mesajlari sirayla iletilir.
@@ -1316,6 +1319,9 @@ async def _room_sender(room: dict):
         except asyncio.CancelledError:
             raise
         except Exception as e:  # gonderici task asla olmemeli
+            # [BOSS-11] Eskiden yalnız print ediliyordu: kaybolan çerçeve
+            # telemetride görünmüyordu. Artık oda durumu DEGRADED işaretlenir.
+            _record_frame_error(room, kind, e)
             print(f"[room_sender] hata: {type(e).__name__}: {e}")
 
 def _lifecycle(room: dict) -> TaskLifecycleRegistry:
@@ -1616,6 +1622,9 @@ def _delivery_status(room: dict) -> dict:
         "dropped_messages_total": delivery["dropped_messages_total"],
         "dropped_event_count": delivery["dropped_event_count"],
         "dropped_by_kind": dict(delivery["dropped_by_kind"]),
+        # [BOSS-11] Çerçeve hataları artık raporlanır (eskiden sessizdi).
+        "frame_errors_total": delivery.get("frame_errors_total", 0),
+        "frame_errors_by_kind": dict(delivery.get("frame_errors_by_kind", {})),
     }
 
 
@@ -1655,6 +1664,30 @@ def _enqueue(client_id: str, item: tuple):
 _WS_SEND_TIMEOUT_S = 5.0
 
 
+def _ws_json(data: dict) -> str:
+    """[BOSS-11] WS çerçeveleri için TEK serileştirme sözleşmesi.
+
+    Mühür (canonical memory) `json.dumps(..., default=str)` kullanır; WS ise
+    çıplak `json.dumps` çağırıyordu. `model_dump()` bugün JSON-uyumlu ama tek
+    bir Enum/datetime alanı eklendiğinde çerçeve sessizce kaybolurdu
+    (bkz. schemas/telemetry.py:98). İki yol aynı sözleşmeyi paylaşır.
+    """
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def _record_frame_error(room: dict, kind: str, exc: BaseException) -> None:
+    """Çerçeve üretim/gönderim hatası görünür olsun: sessiz yutma yok."""
+    _delivery_status(room)
+    delivery = room["telemetry_delivery"]
+    delivery["state"] = "DEGRADED_FRAME_ERROR"
+    delivery["frame_errors_total"] = delivery.get("frame_errors_total", 0) + 1
+    delivery.setdefault("frame_errors_by_kind", {})
+    delivery["frame_errors_by_kind"][kind] = delivery["frame_errors_by_kind"].get(kind, 0) + 1
+    room.setdefault("frame_error_samples", [])
+    room["frame_error_samples"].append(f"{kind}: {type(exc).__name__}: {exc}"[:200])
+    del room["frame_error_samples"][:-5]
+
+
 async def _send_ws(room: dict, payload: str) -> None:
     ws_set = room.get("websockets", set())
     for ws in list(ws_set):
@@ -1670,7 +1703,7 @@ async def _send_log(room: dict, payload: tuple):
     if "logs" not in room: room["logs"] = []
     room["logs"].append(f"[{ts}] [{level}] {msg}")
     if len(room["logs"]) > 50: room["logs"].pop(0)
-    await _send_ws(room, json.dumps({"type": "log", "ts": ts, "level": level, "msg": msg}))
+    await _send_ws(room, _ws_json({"type": "log", "ts": ts, "level": level, "msg": msg}))
 
 def broadcast_log(client_id: str, level: str, msg: str):
     _enqueue(client_id, ("log", (level, redact_text(msg))))
@@ -1717,7 +1750,7 @@ async def _send_snapshot(room: dict, snapshot: Any):
     snapshot_telemetry["delivery"] = _delivery_status(room)
     snapshot_telemetry["lifecycle"] = _lifecycle(room).metrics()
 
-    payload = json.dumps({
+    payload = _ws_json({
         "type": "snapshot_update",
         "task_id": snapshot.task_id,
         "current_agent": snapshot.current_agent,
@@ -2000,7 +2033,7 @@ def broadcast_result_error(client_id, status, msg, task_id: Optional[str] = None
     _enqueue(client_id, ("result_error", payload))
 
 async def _send_result_error(room: dict, data: dict):
-    await _send_ws(room, json.dumps(data))
+    await _send_ws(room, _ws_json(data))
 
 def broadcast_result(client_id, res):
     room = app.state.rooms.get(client_id)
@@ -2059,7 +2092,7 @@ async def _send_result(room: dict, data: dict):
     result_telemetry["delivery"] = _delivery_status(room)
     result_telemetry["lifecycle"] = _lifecycle(room).metrics()
     data = {**data, "telemetry": result_telemetry}
-    await _send_ws(room, json.dumps(data))
+    await _send_ws(room, _ws_json(data))
 
 @app.post("/api/initiate")
 async def api_initiate(req: InitiatePayload, request: Request):

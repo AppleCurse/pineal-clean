@@ -165,6 +165,9 @@ def test_queue_overflow_enters_visible_degraded_mode_and_counts_dropped_event(mo
         "dropped_messages_total": 1,
         "dropped_event_count": 1,
         "dropped_by_kind": {"event": 1},
+        # [BOSS-11] Çerçeve hataları da raporlanır; kuyruk taşmasında sıfırdır.
+        "frame_errors_total": 0,
+        "frame_errors_by_kind": {},
     }
 
 
