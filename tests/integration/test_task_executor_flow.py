@@ -88,7 +88,13 @@ async def test_execute_task_full_flow(executor):
     assert isinstance(status, TaskSnapshot)
     assert status.status == "completed"
     assert status.task_id == "task_1"
-    assert len(status.evidence_chain) == 4 # 3 agents in route + pillar orchestrator
+    # 3 rota ajanı + 7-sütun orkestratörü + psikodinamik derinlik özeti.
+    # [BOSS-13] Öncesinde derinlik motoru her zaman no_evidence dönüyordu ve
+    # zincire kayıt düşmüyordu (4); düzeltmeden sonra gerçek kanıt üretiyor (5).
+    chain_agents = [record["agent"] for record in status.evidence_chain]
+    assert len(chain_agents) == 5, chain_agents
+    assert chain_agents.count("psychodynamic_depth") == 1
+    assert chain_agents.count("pineal_7pillar") == 1
     
     # Ensure memory was updated
     executor.memory.merge_evidence.assert_called_once()
