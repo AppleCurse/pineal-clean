@@ -167,8 +167,14 @@ def _analyze_depth_inner(data: Dict[str, Any]) -> Dict[str, Any]:
     night_share = timing.get("night_share")
     night_share = float(night_share) if isinstance(night_share, (int, float)) else None
     traj = _as_dict(timing.get("trajectory"))
-    ruptures = traj.get("ruptures")
-    n_ruptures = len(ruptures) if isinstance(ruptures, list) else 0
+    # [BUGFIX] `ruptures` yoksa (trajectory çıkarılamadı) bu blok TypeError
+    # fırlatıyordu ve analyze_depth'in savunma hattı onu yutup TÜM raporu
+    # "no_evidence" yapıyordu — yani 4 kanallı derinlik motoru sahici
+    # girdilerin çoğunda hiç sonuç üretmiyordu. Listeye indirgenir, sonra
+    # güvenle dolaşılır.
+    raw_ruptures = traj.get("ruptures")
+    ruptures = raw_ruptures if isinstance(raw_ruptures, list) else []
+    n_ruptures = len(ruptures)
     regimes = traj.get("regimes")
     n_regimes = len(regimes) if isinstance(regimes, list) else 0
     rupture_kinds = sorted({r.get("kind") for r in ruptures

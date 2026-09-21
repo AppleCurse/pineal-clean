@@ -264,6 +264,36 @@ def test_depth_never_raises_on_adversarial_shapes():
     assert rep["confidence"] == 0.0
 
 
+def test_depth_without_trajectory_ruptures_still_produces_report():
+    """[BOSS-13] Regresyon: `trajectory.ruptures` yokken blok TypeError
+    fırlatıyordu; savunma hattı onu yutup TÜM raporu 'no_evidence' yapıyordu.
+    Sahici bir hedef profili (kırılma verisi olmadan) artık sonuç üretmeli."""
+    rep = analyze_depth({
+        "target_profile": {
+            "bio": "Mimar. Gece calisirim.",
+            "posts": ["Gece yuruyusleri iyi geliyor", "Sessizlik huzurdur"],
+            "post_times": ["2026-01-02T23:10:00+00:00", "2026-03-05T21:05:00+00:00"],
+            "post_types": ["image", "image"],
+        },
+        "timing_forensics": {"samples": 2, "night_share": 1.0, "trajectory": None},
+    })
+    assert rep["verdict"] == "ok", rep.get("reason")
+    assert rep["confidence"] > 0.0
+    rhythm = rep["channels"]["rhythm"]["signals"]
+    assert rhythm["n_ruptures"] == 0
+    assert rhythm["rupture_kinds"] == []
+
+
+def test_depth_trajectory_without_ruptures_key_is_safe():
+    """`trajectory` var ama `ruptures` anahtarı hiç yoksa da çökmemeli."""
+    rep = analyze_depth({
+        "target_profile": {"bio": "gece stüdyo", "posts": ["gece stüdyo kayıtları"]},
+        "timing_forensics": {"samples": 4, "trajectory": {"regimes": [], "span_hours": 12.0}},
+    })
+    assert rep["verdict"] == "ok", rep.get("reason")
+    assert rep["channels"]["rhythm"]["signals"]["n_ruptures"] == 0
+
+
 # ------------------------------------------------------------------ #
 # Govde: dark-triad sifirlari + esik koruma
 # ------------------------------------------------------------------ #
