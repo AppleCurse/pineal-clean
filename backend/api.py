@@ -1787,6 +1787,7 @@ class InitiatePayload(BaseModel):
 from agent_core.services.platform_registry import (
     effective_scraper_type as _effective_scraper_type,
     scrape_instagram,
+    build_user_context,
 )
 # Geriye uyumluluk re-export'u: Dalga 1 sözleşme testleri bu adı backend.api'den
 # içe aktarıyor ([024]/[025]/[026] mapping testleri).
@@ -1816,17 +1817,12 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
         user_playlist = [req.playlist.strip()] if req.playlist and req.playlist.strip() else []
         user_envies = [e.strip() for e in req.envies.split(",") if e.strip()] if req.envies else []
 
+        # [BOSS-3] Kullanıcı bölümleri TEK kaynaktan kurulur: aynı yardımcı
+        # scripts/run_task.py (Rust/Tauri yolu) tarafından da kullanılır. Satır
+        # içi kopya, tüketici ajanlarla sözleşme ayrışmasına yol açmıştı
+        # (resonance_synthesizer bio/posts bekliyordu → her görevde erken dönüş).
         payload = {
-            "user_profile": {
-                "private_rituals": user_rituals,
-                "late_night_playlist": user_playlist,
-                "secret_envies": user_envies,
-            },
-            "user_context": {
-                "rituals": ", ".join(user_rituals),
-                "playlist": ", ".join(user_playlist),
-                "envies": ", ".join(user_envies),
-            },
+            **build_user_context(user_rituals, user_playlist, user_envies),
             "target_profile": {"bio": "", "posts": [], "post_times": [], "images": []},
             # Amaç kaybi fix: Aspasia goal'leri payload'da yasar; router yoksa
             # eski plani aynen kurar. Gecerlilik/uydurma filtresi router'da.
