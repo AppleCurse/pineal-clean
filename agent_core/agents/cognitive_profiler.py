@@ -1,7 +1,6 @@
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from agent_core.domain.memory_models import CognitiveStyle
-from agent_core.services.llm_gateway import LLMGateway
 from agent_core.agents.target_psyche_profiler import TargetPsycheProfiler
 
 logger = logging.getLogger(__name__)

@@ -32,8 +32,32 @@ try:
 except ImportError:
     pass
 
-BASE_URL = os.getenv("NINEROUTER_BASE_URL", "http://127.0.0.1:20128/v1")
-API_KEY = os.getenv("PINEAL_LLM_API_KEY") or os.getenv("NINEROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+# BOSS-1: ön denetim ile çalışma zamanı AYNI çözümleyiciyi kullanır. Önceden
+# preflight PINEAL_LLM_API_KEY'i ilk sırada okuyor, gateway ise o adı hiç
+# okumuyordu; yeşil bir preflight farklı bir kanalı doğrulamış olabiliyordu.
+try:
+    from agent_core.services.llm_gateway import (  # type: ignore
+        NINEROUTER_DEFAULT_BASE_URL,
+        resolve_legacy_endpoint,
+    )
+except Exception:  # pragma: no cover - script tek başına da çalışabilsin
+    NINEROUTER_DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1"
+
+    def resolve_legacy_endpoint():  # type: ignore
+        return (
+            os.getenv("NINEROUTER_BASE_URL") or os.getenv("PINEAL_LLM_BASE_URL") or NINEROUTER_DEFAULT_BASE_URL,
+            os.getenv("NINEROUTER_API_KEY") or os.getenv("PINEAL_LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY"),
+            "9router",
+        )
+
+_configured_base_url, API_KEY, TRANSPORT_LABEL = resolve_legacy_endpoint()
+# Preflight 9Router hub'ını denetler: operatör uzak bir hub adresi verdiyse ona
+# uyar, hiçbir şey verilmemişse yerel varsayılana düşer.
+BASE_URL = (
+    _configured_base_url
+    if TRANSPORT_LABEL == "9router"
+    else os.getenv("NINEROUTER_BASE_URL") or NINEROUTER_DEFAULT_BASE_URL
+)
 
 ROUTES = [
     "pineal-deep-reasoning",
@@ -59,6 +83,13 @@ def run_preflight() -> dict[str, Any]:
     results: dict[str, Any] = {
         "timestamp_utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
         "base_url": BASE_URL,
+        "transport_label": TRANSPORT_LABEL,
+        "api_key_source": (
+            "NINEROUTER_API_KEY" if os.getenv("NINEROUTER_API_KEY")
+            else "PINEAL_LLM_API_KEY" if os.getenv("PINEAL_LLM_API_KEY")
+            else "OPENROUTER_API_KEY" if os.getenv("OPENROUTER_API_KEY")
+            else "none"
+        ),
         "routes": {},
         "all_ok": True,
     }
