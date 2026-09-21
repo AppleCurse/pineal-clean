@@ -238,6 +238,13 @@ def _watch_upstream(records: list):
     Tüketiciler bloğu ``from … import upstream_findings_block`` ile kendi
     modül ad alanına bağlar; bu yüzden TÜKETİCİ modülünü yamalarız, kaynağı değil.
     """
+    # [BOSS-9] Tüketici listesi genişletildi: kör kalan LLM ajanları da artık
+    # blok alıyor; hangisinin gerçekten okuduğu burada ölçülür.
+    import agent_core.agents.authenticity_auditor as authenticity
+    import agent_core.agents.depth_analyst as depth
+    import agent_core.agents.human_behavior as behavior
+    import agent_core.agents.mirror_truth as mirror
+    import agent_core.agents.pattern_interrupt as pattern
     import agent_core.agents.resonance_synthesizer as synth
     import agent_core.agents.target_psyche_profiler as profiler
 
@@ -258,11 +265,21 @@ def _watch_upstream(records: list):
         module.upstream_findings_block = _recorder
         return original
 
-    originals = [_wrap(profiler, "target_psyche_profiler"), _wrap(synth, "resonance_synthesizer")]
+    watched = [
+        (profiler, "target_psyche_profiler"),
+        (synth, "resonance_synthesizer"),
+        (mirror, "mirror_truth"),
+        (behavior, "human_behavior"),
+        (pattern, "pattern_interrupt"),
+        (depth, "depth_analyst"),
+        (authenticity, "authenticity_auditor"),
+    ]
+    originals = [(module, _wrap(module, label)) for module, label in watched]
     try:
         yield records
     finally:
-        profiler.upstream_findings_block, synth.upstream_findings_block = originals
+        for module, original in originals:
+            module.upstream_findings_block = original
 
 
 def _drain_ws(ws, *, limit: int = 400, stop_on_result: bool = True, budget_s: float = 30.0):

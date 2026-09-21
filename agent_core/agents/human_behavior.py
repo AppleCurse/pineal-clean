@@ -18,6 +18,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from urllib.parse import urlparse
 
+from agent_core.services.upstream_findings import upstream_findings_block
+
 
 class MicroSignal(BaseModel):
     """A single deterministic micro-observation.  Not a diagnosis."""
@@ -60,6 +62,9 @@ class HumanBehaviorAnalyzer:
     ) -> DigitalColdReading:
         profile = input_data.get("target_profile") or {}
         sacred_rules = input_data.get("sacred_rules", "")
+    # [BOSS-9] Diğer ajanların doğrulanmamış bulguları prompt'a referans olarak girer
+    # (tek kaynak: agent_core.services.upstream_findings); boşsa metin boş kalır.
+        upstream_block = upstream_findings_block(input_data)
 
         bio = self._as_text(profile.get("bio", ""))
         posts = [self._as_text(p) for p in (profile.get("posts") or [])]
@@ -169,6 +174,7 @@ class HumanBehaviorAnalyzer:
             "GERÇEK METRİKLER (OpenCV ve Linguistic Analiz Sonuçları):\n"
             f"{json.dumps(hard_data, ensure_ascii=False, indent=2)}\n\n"
             f"{sacred_rules}\n\n"
+            f"{upstream_block}\n\n"
             "Bu verileri analiz et, mikro sinyalleri yakala ve psikolojik yorumunu gözlem/hipotez şeklinde "
             "tespit et. Beklenen formata (JSON) uygun cevap ver. "
             "Bu kanıtları temkinli biçimde özetle ve beklenen JSON formatında cevap ver."

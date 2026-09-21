@@ -2,6 +2,8 @@ from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict
 import json
 
+from agent_core.services.upstream_findings import upstream_findings_block
+
 class DepthFinding(BaseModel):
     topic: str
     observation: str
@@ -43,6 +45,9 @@ class DepthAnalyst:
         # [FIX #1] OSINT discovery fazında yazıyor; derin analist ARTIK
         # platform varlık bulgusunu görebilir (eski konumda hiç gelmiyordu).
         osint = input_data.get("public_osint", {})
+    # [BOSS-9] Diğer ajanların doğrulanmamış bulguları prompt'a referans olarak girer
+    # (tek kaynak: agent_core.services.upstream_findings); boşsa metin boş kalır.
+        upstream_block = upstream_findings_block(input_data)
         
         prompt = (
             "Sen PINEAL 3.0 Baş Adli Psikoloji ve Gerçeklik Analistisin (Depth Analyst).\n"
@@ -63,6 +68,7 @@ class DepthAnalyst:
             f"OSINT PLATFORM VARLIĞI (discovery, doğrulanmamış): {json.dumps(osint, ensure_ascii=False)}\n"
             f"DERİNLİK MOTORU (4 kanal beyan/sahneleme/ritim/sosyal + capraz gerilim): "
             f"{json.dumps(input_data.get('psychodynamic_depth', {}), ensure_ascii=False)}\n"
+            f"{upstream_block}\n"
         )
 
         try:

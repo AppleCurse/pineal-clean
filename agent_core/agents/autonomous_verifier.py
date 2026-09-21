@@ -29,6 +29,9 @@ class AutonomousVerifier:
     def __init__(self, search_engine):
         self.search_engine = search_engine
 
+    # [BOSS-9] Bu ajan upstream bulgu bloğunu BİLİNÇLİ olarak okumaz: doğrulama
+    # bağımsız olmalıdır. Diğer ajanların doğrulanmamış çıkarımları prompt'a
+    # girerse "bağımsız hakem" işlevi kanıtla değil komşu iddiayla hizalanır.
     async def execute(self, input_data: Dict, memory, llm_gateway) -> VerifierReport:
         target_profile = input_data.get('target_profile', {})
         bio = target_profile.get('bio', '')

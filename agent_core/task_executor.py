@@ -1019,6 +1019,15 @@ class PinealExecutor:
                 _core = self._finding_core(result)
                 if _core:
                     _append_upstream_finding(input_data, agent_name, _core)
+                if agent_name == "pattern_interrupt":
+                    # [BOSS-7] Rota çıktısı input_data'ya yazılır: ShadowExecutor
+                    # aynı mesajı ikinci kez LLM'e soruyordu (görev başına 2×
+                    # GeneratedMessage). İkinci çağrı artık bu kaydı tüketir.
+                    input_data["_pattern_interrupt"] = {
+                        "message": str(getattr(result, "message", "") or ""),
+                        "agent": "pattern_interrupt",
+                        "source": "route",
+                    }
                 self._snapshot(status)
                 self._emit(StepCompletedEvent(
                     task_id=task_id,

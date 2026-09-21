@@ -2,6 +2,8 @@ from typing import Any, Dict, List
 from pydantic import BaseModel, ConfigDict
 import logging
 
+from agent_core.services.upstream_findings import upstream_findings_block
+
 
 class MirrorReflection(BaseModel):
     user_core_frequency: str
@@ -29,6 +31,9 @@ class MirrorOfTruth:
         user_data = input_data.get("user_profile") or {}
         user_ctx = input_data.get("user_context") or {}
         sacred_rules = input_data.get("sacred_rules", "")
+    # [BOSS-9] Diğer ajanların doğrulanmamış bulguları prompt'a referans olarak girer
+    # (tek kaynak: agent_core.services.upstream_findings); boşsa metin boş kalır.
+        upstream_block = upstream_findings_block(input_data)
 
         merged_user = {
             "private_rituals": self._as_list(
@@ -61,6 +66,7 @@ class MirrorOfTruth:
             f"Algoritmik frekans sinyali: {core_freq}\n"
             f"Anchor'lar: {anchors}\n"
             f"{sacred_rules}\n\n"
+            f"{upstream_block}\n\n"
             "Confidence kuralı: confidence alanını yalnızca verilen kullanıcı kanıtlarının tamlığına göre 0.0 ile 1.0 arasında ölç; veri yetersizse 0.0 döndür.\n"
             "Beklenen JSON formatında çıktı üret."
         )
