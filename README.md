@@ -173,8 +173,11 @@ Sistem kök dizindeki `.env` dosyasını okur. Örnek yapılandırma şablonu:
 ```env
 # === 9ROUTER YEREL HUB BAĞLANTISI ===
 PINEAL_LLM_BACKEND=unified
-PINEAL_LLM_BASE_URL=http://127.0.0.1:20128/v1
-PINEAL_LLM_API_KEY=sk-pineal-your-key-here
+NINEROUTER_BASE_URL=http://127.0.0.1:20128/v1
+NINEROUTER_API_KEY=sk-pineal-your-key-here
+# Uyumluluk takma adları: PINEAL_LLM_BASE_URL / PINEAL_LLM_API_KEY de kabul edilir.
+# Hiçbiri tanımlı değilse OPENROUTER_* (bulut) kullanılır ve telemetri
+# "provider": "openrouter" yazar — yerel hub kullanılıyorsa "9router" yazar.
 X_9ROUTER_TOKEN_SAVER=off
 
 # === ORTAM VE GÜVENLİK ===

@@ -146,7 +146,7 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 3. `agent_matrix` — `LLMGateway.AGENT_CHAINS` — varsayılan tablo.
 4. `task_chain` — `CHAINS[task]` — kayıtlı olmayan isimler için görev fallback'i.
 
-**Ajan↔zincir (çözünmüş, 18 ajan, override'sız baz):**
+**Ajan↔zincir (çözünmüş, 21 ajan, override'sız baz):**
 
 | agent | tier | chain | source |
 |---|---|---|---|
@@ -165,6 +165,9 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 | osint_investigator | heavy | grok-4.6 → deepseek-v4-pro | agent_matrix |
 | passion_mapper | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | pattern_interrupt | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
+| pineal_juror_claude | jury | pineal-juror-claude | agent_matrix |
+| pineal_juror_google | jury | pineal-juror-google | agent_matrix |
+| pineal_juror_open | jury | pineal-juror-open | agent_matrix |
 | resonance_synthesizer | heavy | gpt-5.6-luna → claude-sonnet-5 | agent_matrix |
 | shadow_executor | heavy | deepseek-v4-flash → gemini-3.7-flash | task_routing |
 | vision_analyzer | vision | gemini-3.7-flash → grok-4.6 | agent_matrix |

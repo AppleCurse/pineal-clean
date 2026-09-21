@@ -132,55 +132,60 @@ class ShadowExecutor:
         presup_chain = self.presupposition.generate_chain(beliefs)
 
         # 5. Pattern Interrupt (LLM gerektirir — fallback ile korumalı)
-        # [053] fix: PatternInterrupt._grounded_evidence için geçerli micro_signals
-        # aktarılır; böylece pattern mesajı sessizce boşluğa çökmez.
-        pattern_message = strategy.get('vector') or "unavailable"
+        # [BOSS-7] Rota zaten bir pattern mesajı ürettiyse LLM'e İKİNCİ kez
+        # sorulmaz: görev başına aynı şema (GeneratedMessage) iki kez
+        # faturalanıyordu. Kayıt yoksa eski yol (kendi LLM çağrısı) aynen sürer.
+        routed_pattern = task_input.get("_pattern_interrupt") or {}
+        routed_message = str(routed_pattern.get("message") or "").strip()
+        pattern_message = routed_message or strategy.get('vector') or "unavailable"
+        reuse_routed = bool(routed_message and routed_message != "unavailable")
         try:
-            existing_target_analysis = task_input.get("target_analysis") or {}
-            if existing_target_analysis and isinstance(existing_target_analysis, dict):
-                p_analysis = dict(existing_target_analysis)
-                if not p_analysis.get("micro_signals"):
-                    p_analysis["micro_signals"] = [
-                        {
-                            'signal_type': 'defense',
-                            'confidence': 0.85,
-                            'location': 'behavioral',
-                            'evidence': f"Strateji vektörü: {strategy.get('vector', 'direct')}",
-                            'psychological_weight': 0.7,
-                        }
-                    ]
-            else:
-                p_analysis = {
-                    'observations': [],
-                    'possible_interpretations': [strategy['vector']],
-                    'confidence': 0.85,
-                    'alternative_interpretations': [],
-                    'unsupported_claims': [],
-                    'resonance_potential': dark.exploitability,
-                    'micro_signals': [
-                        {
-                            'signal_type': 'defense',
-                            'confidence': 0.85,
-                            'location': 'behavioral',
-                            'evidence': f"Strateji vektörü: {strategy['vector']}",
-                            'psychological_weight': 0.7,
-                        }
-                    ]
-                }
+            if not reuse_routed:
+                existing_target_analysis = task_input.get("target_analysis") or {}
+                if existing_target_analysis and isinstance(existing_target_analysis, dict):
+                    p_analysis = dict(existing_target_analysis)
+                    if not p_analysis.get("micro_signals"):
+                        p_analysis["micro_signals"] = [
+                            {
+                                'signal_type': 'defense',
+                                'confidence': 0.85,
+                                'location': 'behavioral',
+                                'evidence': f"Strateji vektörü: {strategy.get('vector', 'direct')}",
+                                'psychological_weight': 0.7,
+                            }
+                        ]
+                else:
+                    p_analysis = {
+                        'observations': [],
+                        'possible_interpretations': [strategy['vector']],
+                        'confidence': 0.85,
+                        'alternative_interpretations': [],
+                        'unsupported_claims': [],
+                        'resonance_potential': dark.exploitability,
+                        'micro_signals': [
+                            {
+                                'signal_type': 'defense',
+                                'confidence': 0.85,
+                                'location': 'behavioral',
+                                'evidence': f"Strateji vektörü: {strategy['vector']}",
+                                'psychological_weight': 0.7,
+                            }
+                        ]
+                    }
 
-            p_mirror = (
-                mirror_result.model_dump()
-                if hasattr(mirror_result, "model_dump")
-                else (mirror_result if isinstance(mirror_result, dict) else {})
-            )
-            pattern_input = {
-                'target_analysis': p_analysis,
-                'user_mirror': p_mirror,
-                'sacred_rules': task_input.get("sacred_rules", "")
-            }
-            pattern_result = await self.pattern.execute(pattern_input, None, self.llm_gateway)
-            if pattern_result and getattr(pattern_result, "message", None):
-                pattern_message = pattern_result.message
+                p_mirror = (
+                    mirror_result.model_dump()
+                    if hasattr(mirror_result, "model_dump")
+                    else (mirror_result if isinstance(mirror_result, dict) else {})
+                )
+                pattern_input = {
+                    'target_analysis': p_analysis,
+                    'user_mirror': p_mirror,
+                    'sacred_rules': task_input.get("sacred_rules", "")
+                }
+                pattern_result = await self.pattern.execute(pattern_input, None, self.llm_gateway)
+                if pattern_result and getattr(pattern_result, "message", None):
+                    pattern_message = pattern_result.message
         except Exception as e:
             log.warning("ShadowExecutor: Pattern LLM atlandı: %s", e)
 

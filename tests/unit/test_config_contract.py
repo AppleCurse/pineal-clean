@@ -79,8 +79,15 @@ def test_passion_mapper_weights_are_real_passions_fields():
 import yaml
 from pathlib import Path
 
-_CONSUMED_DEFAULT_KEYS = {"min_data_score", "min_llm_confidence", "graceful_degradation"}
-_CONSUMED_AGENT_KEYS = _CONSUMED_DEFAULT_KEYS | {"field_weights", "empty_list_penalty"}
+_CONSUMED_DEFAULT_KEYS = {
+    "min_data_score", "min_llm_confidence", "graceful_degradation",
+    # [BOSS-8] Ajan başına duvar saati sınırı; config_loader.AgentThresholds
+    # .timeout_seconds'a bağlı ve executor her ajan çağrısında okuyor.
+    "agent_timeout_seconds",
+}
+_CONSUMED_AGENT_KEYS = _CONSUMED_DEFAULT_KEYS | {
+    "field_weights", "empty_list_penalty", "timeout_seconds",
+}
 _CONSUMED_PIPELINE_KEYS = {"default", "critical_agents"}
 
 
@@ -111,3 +118,36 @@ def test_critical_agents_single_source_is_pipeline_list():
     cfg = DecisionConfig.load()
     assert "mirror_truth" in cfg.critical_agents
     assert "passion_mapper" in cfg.critical_agents
+
+
+# ---------------------------------------------------------------------------
+# [BOSS-8] Zaman aşımı config'inin GERÇEKTEN tüketildiğinin kanıtı.
+# "Ölü anahtar" kilidini genişletmek yeterli değil: anahtarın davranışı
+# değiştirdiği ayrıca gösterilmelidir.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_timeout_default_is_bound_to_thresholds():
+    from agent_core.config_loader import DecisionConfig
+
+    cfg = DecisionConfig.load()
+    default_cfg = cfg.get_agent_config("bu_ajan_configte_yok")
+    assert default_cfg.timeout_seconds == 120.0
+    assert cfg.get_agent_config("pineal_7pillar").timeout_seconds == 60.0
+    assert cfg.get_agent_config("depth_analyst").timeout_seconds == 150.0
+
+
+def test_agent_timeout_stays_below_mission_budget():
+    """Ajan sınırı görev bütçesinin ALTINDA olmalı.
+
+    Aksi hâlde tek ajan görev bütçesini yiyebilir: görev iptal edilir ve
+    (eski davranışta) baştan koşardı — 3x maliyet.
+    """
+    from agent_core.config_loader import DecisionConfig
+
+    mission_budget = 300  # backend/api.py PINEAL_TASK_TIMEOUT_SECONDS varsayılanı
+    cfg = DecisionConfig.load()
+    limits = {name: cfg.get_agent_config(name).timeout_seconds for name in ("pineal_7pillar", "depth_analyst")}
+    limits["default"] = cfg.get_agent_config("bilinmeyen").timeout_seconds
+    for name, limit in limits.items():
+        assert 0 < limit < mission_budget, f"{name} sınırı {limit} görev bütçesine sığmıyor"

@@ -1,6 +1,8 @@
 from pydantic import BaseModel, ConfigDict
 from typing import Dict, List
 
+from agent_core.services.upstream_findings import upstream_findings_block
+
 class ScenarioResponse(BaseModel):
     scenario_type: str  # "agresif", "savunmaci", "ilgili"
     expected_target_reaction: str
@@ -40,6 +42,9 @@ class PatternInterrupt:
         target_analysis = input_data.get('target_analysis', {})
         user_truth = input_data.get('user_mirror', {})
         sacred_rules = input_data.get('sacred_rules', "")
+    # [BOSS-9] Diğer ajanların doğrulanmamış bulguları prompt'a referans olarak girer
+    # (tek kaynak: agent_core.services.upstream_findings); boşsa metin boş kalır.
+        upstream_block = upstream_findings_block(input_data)
         
         # A message may only use source-tagged observations, never placeholder
         # details or inferred wounds.
@@ -72,6 +77,7 @@ class PatternInterrupt:
             f"Hedef Analizi:\n{target_json}\n\n"
             f"Kullanıcı Gerçeği:\n{user_json}\n\n"
             f"{sacred_rules}\n\n"
+            f"{upstream_block}\n\n"
             f"Beklenen JSON formatında çıktını üret. 'message' alanı senin nihai açılış mesajındır.\n"
             f"'dialogue_tree' listesi içinde 3 farklı senaryo ('agresif', 'savunmaci', 'ilgili') için "
             f"beklenen tepkiyi ('expected_target_reaction') ve saygılı devam ifadesini "

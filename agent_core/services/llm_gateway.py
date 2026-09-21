@@ -30,6 +30,101 @@ _RTK_SAFE_DEFAULT: dict[str, Any] = {
 
 T = TypeVar("T", bound=BaseModel)
 
+# --------------------------------------------------------------------------- #
+# 9Router / legacy taşıma sözleşmesi (BOSS-1 dürüstlük düzeltmesi)
+#
+# Tek gerçek kaynak burasıdır. README ".env" bölümü ile kod AYNI isimleri okur:
+#   1) NINEROUTER_*           → yerel 9Router hub'ı (birincil, önerilen)
+#   2) PINEAL_LLM_*           → README'nin tarihsel adı (uyumluluk takma adı)
+#   3) OPENROUTER_*           → bulut OpenRouter (son çare)
+# Kanıt zinciri (telemetri "provider") hangi taşımanın gerçekten kullanıldığını
+# yazar: yerel hub ise "9router", bulut isim uzayı ise "openrouter". Önceden her
+# hâlükârda "openrouter" yazılıyordu; operatör trafiği yerel hub'a alsa bile
+# kanıt yanlış okuyordu.
+# --------------------------------------------------------------------------- #
+NINEROUTER_DEFAULT_BASE_URL = "http://127.0.0.1:20128/v1"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+
+
+def provider_label_for_endpoint(base_url: str, *, explicit_local: bool = False) -> str:
+    """Taşıma etiketi: operatörün kendi hub'ı → '9router', bulut isim uzayı → 'openrouter'.
+
+    Amaç yalancı telemetriyi bitirmek: ajan çağrıları legacy taşımadan geçtiğinde
+    kanıt zincirine YANLIŞ "openrouter" yazılıyordu. Kural:
+      * NINEROUTER_*/PINEAL_LLM_* açıkça tanımlıysa → operatör kendi hub'ını seçti → '9router'
+      * adres loopback ise → yerel hub → '9router'
+      * aksi hâlde → 'openrouter' (bulut)
+    """
+    if explicit_local:
+        return "9router"
+    host = ""
+    try:
+        host = (httpx.URL(base_url).host or "").lower()
+    except Exception:
+        host = ""
+    return "9router" if host in _LOOPBACK_HOSTS else "openrouter"
+
+
+# [BOSS-4] Model ailesi çözümü: "hiçbir model kendi ürettiği çıktıyı
+# onaylayamaz" kuralı bu eşlemeyle uygulanır (jüri koltuğu düşürme).
+_FAMILY_TOKENS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("anthropic", ("claude", "anthropic")),
+    ("google", ("gemini", "google", "palm")),
+    ("xai", ("grok", "x-ai")),
+    ("openai", ("gpt", "openai", "o1", "o3", "oss")),
+    ("deepseek", ("deepseek",)),
+    ("zhipu", ("glm", "z-ai")),
+    ("poolside", ("laguna", "poolside")),
+    ("upstage", ("solar", "upstage")),
+    ("inclusion", ("ling", "inclusion")),
+    ("qwen", ("qwen", "alibaba")),
+    ("nvidia", ("nemotron", "nvidia")),
+    ("meta", ("llama", "meta")),
+    ("mistral", ("mistral", "mixtral")),
+)
+
+
+# Jüri koltuklarının aile kimliği: rota adı tek başına yetmez ("open" hangi
+# üretici?). Açıkça yazılır; "open_weights" bilinçli olarak nötr gruptur —
+# hiçbir frontier üreticinin kendi çıktısını onaylamasına izin vermez.
+_ROUTE_FAMILY_HINTS: dict[str, str] = {
+    "pineal-juror-google": "google",
+    "pineal-juror-claude": "anthropic",
+    "pineal-juror-open": "open_weights",
+}
+
+
+def model_family(model: str | None) -> str:
+    """Model/rota adından üretici ailesini çıkarır (bilinmiyorsa 'unknown')."""
+    token = (model or "").strip().lower()
+    if not token:
+        return "unknown"
+    if token in _ROUTE_FAMILY_HINTS:
+        return _ROUTE_FAMILY_HINTS[token]
+    for family, needles in _FAMILY_TOKENS:
+        if any(needle in token for needle in needles):
+            return family
+    return "unknown"
+
+
+def resolve_legacy_endpoint() -> tuple[str, Optional[str], str]:
+    """(base_url, api_key, provider_label) — ilk tanımlı kanal kazanır."""
+    ninerouter_url = os.getenv("NINEROUTER_BASE_URL")
+    pineal_url = os.getenv("PINEAL_LLM_BASE_URL")
+    explicit_local = bool(ninerouter_url or pineal_url)
+    base_url = (
+        ninerouter_url
+        or pineal_url
+        or os.getenv("OPENROUTER_BASE_URL")
+        or "https://openrouter.ai/api/v1"
+    )
+    api_key = (
+        os.getenv("NINEROUTER_API_KEY")
+        or os.getenv("PINEAL_LLM_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+    )
+    return base_url.rstrip("/"), api_key, provider_label_for_endpoint(base_url, explicit_local=explicit_local)
+
 
 class _PinnedNetworkBackend:
     """Connect one verified hostname to one pre-resolved address."""
@@ -155,7 +250,7 @@ _active_agent_hint: contextvars.ContextVar[Optional[str]] = contextvars.ContextV
 # - effective_routing_snapshot kendi döngüsü için save/restore yapar (kalıntı
 #   bırakmaz; M-C3); _log_call tier'ı chain_source yanına yazar (stale olursa
 #   GÖRÜNÜR olur — sessiz yanlışlık yasak).
-_AGENT_TIER_VALUES: frozenset[str] = frozenset({"heavy", "vision", "simple", "verify"})
+_AGENT_TIER_VALUES: frozenset[str] = frozenset({"heavy", "vision", "simple", "verify", "jury"})
 _active_agent_tier: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "llm_agent_tier", default=None
 )
@@ -326,6 +421,14 @@ def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
 
 
 class LLMGateway:
+    # [BOSS-4] Çapraz jüri paneli: bu koltuklar bağımsız hakemdir; üreten
+    # ajanın ailesiyle aynı olan koltuk karar anında düşürülür.
+    JURY_PANEL_AGENTS: tuple[str, ...] = (
+        "pineal_juror_google",
+        "pineal_juror_claude",
+        "pineal_juror_open",
+    )
+
     MODEL_REGISTRY = {
         "solar_pro4": "upstage/solar-pro4",
         "ling_3_flash": "inclusionai/ling-3.0-flash",
@@ -443,6 +546,11 @@ class LLMGateway:
         ],
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
         "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["grok_4_6"]],
+        # [BOSS-4] Jüri koltukları: her biri TEK rotaya bağlanır, böylece
+        # çapraz jüri kuralı (üreten aile panelden düşer) deterministik kalır.
+        "pineal_juror_google": [MODEL_REGISTRY["pineal_juror_google"]],
+        "pineal_juror_claude": [MODEL_REGISTRY["pineal_juror_claude"]],
+        "pineal_juror_open": [MODEL_REGISTRY["pineal_juror_open"]],
         "autonomous_verifier_extract": [
             MODEL_REGISTRY["gpt_oss_120b"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
@@ -672,7 +780,7 @@ class LLMGateway:
         out: list[dict[str, str]] = []
         for agent, row in agent_rows.items():
             entry = tiers.get(agent)
-            if not isinstance(entry, dict) or entry.get("tier") not in ("heavy", "vision", "simple", "verify"):
+            if not isinstance(entry, dict) or entry.get("tier") not in _AGENT_TIER_VALUES:
                 out.append({"agent": agent, "rule": "untiered", "detail": "tiers dosyasında karşılığı yok"})
                 continue
             tier, chain, keys = entry["tier"], row["chain"], row["chain_keys"] or []
@@ -691,11 +799,8 @@ class LLMGateway:
         return out
 
     def __init__(self):
-        self.api_key = os.getenv("NINEROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-        self.openrouter_base_url = os.getenv(
-            "NINEROUTER_BASE_URL",
-            os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        ).rstrip("/")
+        # BOSS-1: tek sözleşme — NINEROUTER_* > PINEAL_LLM_* > OPENROUTER_*
+        self.openrouter_base_url, self.api_key, self.transport_provider = resolve_legacy_endpoint()
         self.local_base_url = self.LOCAL_DEFAULT_URL
         self.local_model = self.LOCAL_DEFAULT_MODEL
         self.request_timeout_seconds = min(
@@ -1407,7 +1512,7 @@ class LLMGateway:
                 )
                 decision["gate_context"] = gate_context
                 self._record_tier_decision(
-                    tier=tier, model=model, provider="openrouter", legacy=True,
+                    tier=tier, model=model, provider=self.transport_provider, legacy=True,
                     decision=decision,
                 )
                 legacy_denied = bool(decision["would_deny"])
@@ -1581,7 +1686,7 @@ class LLMGateway:
             "tier": tier,
             "model": model,
             "route_key": f"{model}@openrouter" if legacy else f"{model}@{provider}",
-            "provider": "openrouter" if legacy else provider,
+            "provider": (self.transport_provider if legacy else provider),
             "decision": decision["decision"],
             "reason": decision["reason"],
             "would_deny": bool(decision.get("would_deny")),
@@ -1637,13 +1742,17 @@ class LLMGateway:
         has_or = self.client is not None or self.use_local
         if has_or:
             offered.append({
-                "route_key": f"{model}@openrouter", "provider": "openrouter",
+                "route_key": f"{model}@{self.transport_provider}", "provider": self.transport_provider,
                 "model": model, "priced": model in self.MODEL_PRICING,
-                "via": "openrouter" if self.client is not None else "local",
+                "via": self.transport_provider if self.client is not None else "local",
             })
         else:
-            skipped["openrouter"] = {
-                "reason": "no_key", **_key_info("openrouter", "OPENROUTER_API_KEY"),
+            skipped[self.transport_provider] = {
+                "reason": "no_key",
+                **_key_info(
+                    self.transport_provider,
+                    "NINEROUTER_API_KEY" if self.transport_provider == "9router" else "OPENROUTER_API_KEY",
+                ),
             }
 
         for provider_id, key_env in _AGENT_DIRECT_PROVIDER_KEYS:
@@ -1916,7 +2025,7 @@ class LLMGateway:
                 if images and not model
                 else model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
             )
-            provider = "openrouter"
+            provider = self.transport_provider
         # Capture the model the caller actually asked for before any fallback
         # reassignment, so telemetry can always explain requested != actual.
         requested_model = selected_model if route is None else (model or route.model)
@@ -2221,7 +2330,7 @@ class LLMGateway:
                         target_client = self.client
                         selected_model = self.TIER_1_MODEL
                         is_local_request = False
-                        provider = "openrouter"
+                        provider = self.transport_provider
                         try:
                             self._pricing_guard(selected_model, kind="query")
                         except RuntimeError:
@@ -2342,7 +2451,7 @@ class LLMGateway:
         if route is None and is_local_request and selected_model == "local":
             selected_model = self.local_model
         provider = route.provider_id if route is not None else (
-            "local" if is_local_request else "openrouter"
+            "local" if is_local_request else self.transport_provider
         )
         pricing = route.pricing if route is not None else None
         effective_max_tokens = self.max_output_tokens if max_tokens is None else max_tokens

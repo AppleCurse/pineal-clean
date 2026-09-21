@@ -78,9 +78,21 @@ def _replace_between(text: str, start: str, end: str, new_body: str) -> str:
     return f"{pre}{start}\n{new_body}\n{end}{post}"
 
 
+def _jury_label() -> tuple[str, str, str]:
+    """[BOSS-4] Jüri etiketi KODDAN türetilir — elle yazılmaz.
+
+    Kaynak: `LLMGateway.JURY_PANEL_AGENTS`. Panel büyürse/koltuğu değişirse UI
+    etiketi kendiliğinden değişir; test kurguyu değil kodun kendisini kilitler.
+    """
+    from agent_core.services.llm_gateway import LLMGateway
+
+    seats = [seat.replace("pineal_juror_", "") for seat in LLMGateway.JURY_PANEL_AGENTS]
+    return ("pineal-verifier-panel", f"({len(seats)} jüri: {'+'.join(seats)})", "9router")
+
+
 ROUTER_9_CANONICAL_MAP = {
     "mirror_truth": ("pineal-deep-reasoning", "(combo)", "9router"),
-    "autonomous_verifier": ("pineal-verifier-panel", "(3 jüri)", "9router"),
+    "autonomous_verifier": _jury_label(),
     "human_behavior": ("pineal-general-reasoning", "(combo)", "9router"),
     "passion_mapper": ("pineal-fast-extract", "(combo)", "9router"),
     "friction_detector": ("pineal-general-reasoning", "(combo)", "9router"),

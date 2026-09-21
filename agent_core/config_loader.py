@@ -12,6 +12,10 @@ class AgentThresholds:
     graceful_degradation: bool = True
     field_weights: Dict[str, float] = field(default_factory=dict)
     empty_list_penalty: float = 0.1
+    # [BOSS-8] Ajan başına duvar saati sınırı (saniye). Görev sınırı 300s iken
+    # tek bir ajanın LLM zinciri (3 model x 3 taşıma x 45s = 405s) bütçenin
+    # tamamını yiyebiliyordu; görev iptal edilip BAŞTAN koşuyordu (3x maliyet).
+    timeout_seconds: float = 0.0  # 0 = sınır yok (eski davranış)
 
 @dataclass
 class DecisionConfig:
@@ -54,7 +58,12 @@ class DecisionConfig:
                 min_llm_confidence=config_data.get("min_llm_confidence", default_cfg.get("min_llm_confidence", 0.65)),
                 graceful_degradation=config_data.get("graceful_degradation", default_cfg.get("graceful_degradation", True)),
                 field_weights=config_data.get("field_weights", {}),
-                empty_list_penalty=config_data.get("empty_list_penalty", 0.1)
+                empty_list_penalty=config_data.get("empty_list_penalty", 0.1),
+                timeout_seconds=float(
+                    config_data.get(
+                        "timeout_seconds", default_cfg.get("agent_timeout_seconds", 0.0)
+                    ) or 0.0
+                ),
             )
         
         return cls(
@@ -73,5 +82,6 @@ class DecisionConfig:
         return AgentThresholds(
             min_data_score=self.global_defaults.get("min_data_score", 0.60),
             min_llm_confidence=self.global_defaults.get("min_llm_confidence", 0.65),
-            graceful_degradation=self.global_defaults.get("graceful_degradation", True)
+            graceful_degradation=self.global_defaults.get("graceful_degradation", True),
+            timeout_seconds=float(self.global_defaults.get("agent_timeout_seconds", 0.0) or 0.0),
         )
