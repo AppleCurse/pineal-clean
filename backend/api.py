@@ -1340,6 +1340,9 @@ _ROOM_ACTIVE_TASKS_CAP = _bounded_env_int("PINEAL_ROOM_ACTIVE_TASKS_CAP", 256, 1
 _ROOM_INTERVENTIONS_CAP = _bounded_env_int("PINEAL_ROOM_INTERVENTIONS_CAP", 512, 1, 100_000)
 _TERMINAL_PIPELINE_STATES = frozenset({
     "completed", "partially_completed", "failed",
+    # [BOSS-8] Görev bütçesi doldu → terminal. Bu kümede olmazsa terminal
+    # işaretleme yolu durumu "failed"a ezer (ölçüldü: timed_out → failed).
+    "timed_out",
     "cancelled", "canceled",
     "halted_evidence", "halted_frequency", "halted_critical", "halted_user",
 })
@@ -1999,6 +2002,13 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                 return
             except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
                 raise
+            except (asyncio.TimeoutError, TimeoutError):
+                # [BOSS-8] Zaman aşımı ARTIK yeniden başlatılmaz. Eski davranış:
+                # görev 300s'de iptal edilir, aynı ajanlar sıfırdan koşar ve
+                # LLM faturası 3'e katlanırdı — sonuç yine aynı darboğaz.
+                # Bunun yerine son kısmi durum 'timed_out' olarak yayınlanır.
+                _finalize_timed_out_mission(client_id, task_id, task_timeout)
+                return
             except Exception as e:
                 broadcast_log(client_id, "ERROR", f"HATA: {type(e).__name__}: {str(e)[:100]}")
                 if attempt == max_attempts:
@@ -2019,6 +2029,43 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
         broadcast_result_error(
             client_id, "failed", f"SİSTEM PANİĞİ: {str(e)}", task_id
         )
+
+def _finalize_timed_out_mission(client_id: str, task_id: str, budget_seconds: int) -> None:
+    """[BOSS-8] Görev bütçesi dolduğunda kısmi kanıtı terminal durumla yayınlar.
+
+    Eski davranışta timeout sessizce "failed" olur ve o ana kadar üretilen tüm
+    kanıt (ajan koşuları, kanıt zinciri, 7-sütun raporları) çöpe giderdi.
+    Oda kaydındaki son snapshot terminal işaretlenip `timed_out` durumuyla
+    yayınlanır; baştan koşma yoktur.
+    """
+    from agent_core.domain.pipeline_status import PipelineStatus
+
+    room = app.state.rooms.get(client_id)
+    partial = None
+    if room is not None:
+        partial = (room.get("active_tasks") or {}).get(task_id)
+    if partial is not None:
+        try:
+            partial.status = PipelineStatus.TIMED_OUT
+            partial.halted_reason = (
+                f"Görev bütçesi doldu ({budget_seconds}s). Kısmi kanıt korundu; "
+                "aynı darboğaz tekrar tıkanmasın diye görev baştan koşulmadı."
+            )
+        except Exception:  # pragma: no cover - savunma: şema dışı snapshot
+            partial = None
+    broadcast_log(
+        client_id,
+        "ERROR",
+        f"ZAMAN AŞIMI: görev {budget_seconds}s bütçesini aştı. Görev baştan "
+        "başlatılmadı (tekrarlanan tıkanma + 3x maliyet önlenir).",
+    )
+    if partial is not None:
+        broadcast_result(client_id, partial)
+    broadcast_result_error(
+        client_id, PipelineStatus.TIMED_OUT.value,
+        f"ZAMAN AŞIMI: {budget_seconds}s bütçesi doldu; kısmi kanıt yayınlandı.", task_id,
+    )
+
 
 def broadcast_result_error(client_id, status, msg, task_id: Optional[str] = None):
     broadcast_log(client_id, "ERROR", msg)

@@ -493,6 +493,9 @@ class AspasiaCommandGateway:
 FINAL_TASK_STATUSES = {
     "completed", "partially_completed", "halted_evidence", "halted_critical",
     "halted_frequency", "failed",
+    # [BOSS-8] Görev bütçesi doldu → terminal; yoksa Aspasia bayat snapshot'ı
+    # canlı sanıp sonuç satırı üretmez.
+    "timed_out",
     "cancelled", "canceled", "halted_user",
 }
 

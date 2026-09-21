@@ -47,6 +47,10 @@ class InsufficientEvidenceError(RuntimeError):
 class VerifiedNote(BaseModel):
     note: str
 
+class AgentTimeoutError(Exception):
+    """[BOSS-8] Ajan kendi duvar saati sınırını aştı (ayrı terminal durum)."""
+
+
 class TaskStatus(TaskSnapshot):
     pass
 
@@ -176,6 +180,40 @@ class PinealExecutor:
             if call_id and call_id not in existing:
                 existing.append(call_id)
         run.call_ids = existing
+
+    @staticmethod
+    async def _bounded(coro, limit: float, label: str):
+        """[BOSS-8] Herhangi bir ajan çağrısını duvar saati sınırıyla koşar."""
+        import asyncio as _asyncio
+
+        if not limit or limit <= 0:
+            return await coro
+        try:
+            return await _asyncio.wait_for(coro, timeout=limit)
+        except TimeoutError as exc:
+            raise AgentTimeoutError(f"{label} {limit:g}s sınırını aştı") from exc
+
+    @staticmethod
+    async def _execute_with_timeout(agent: Any, input_data: Dict[str, Any], memory: Any,
+                                    gateway: Any, limit: float):
+        """[BOSS-8] Ajanı ajan-başı duvar saati sınırıyla koşar.
+
+        `limit <= 0` ise sınır yoktur (eski davranış). Süre aşımı DİĞER
+        hatalardan ayrı raporlanır: hangi ajanın bütçeyi yediği görünür olur
+        ve görev, tüm emeği çöpe atan bir "baştan koş" turuna girmez.
+        """
+        import asyncio as _asyncio
+
+        async def _call():
+            try:
+                return await agent.execute(input_data, memory, gateway)
+            except TypeError:
+                return await agent.execute(input_data)
+
+        del _asyncio  # tek uygulama yeri _bounded
+        return await PinealExecutor._bounded(
+            _call(), limit, f"{getattr(agent, 'AGENT_NAME', type(agent).__name__)} ajanı"
+        )
 
     def _provenance_for(
         self,
@@ -601,7 +639,13 @@ class PinealExecutor:
         try:
             from agent_core.engines.pillar_orchestrator import PillarOrchestrator
 
-            pillar_fields = await PillarOrchestrator().run(input_data)
+            # [BOSS-8] Deterministik motor da ajan-başı sınırla koşar: takılan
+            # bir motor görev bütçesini yiyip görevi baştan başlatamaz.
+            pillar_fields = await self._bounded(
+                PillarOrchestrator().run(input_data),
+                self.config.get_agent_config("pineal_7pillar").timeout_seconds,
+                "pineal_7pillar",
+            )
             for field in (
                 "frequency_map", "seismos_events", "void_map", "strata_map",
                 "gravity_map", "pulse_map", "key_matrix", "pillar_bundle",
@@ -657,7 +701,8 @@ class PinealExecutor:
             self._snapshot(status)
         except Exception as e:
             error_time = datetime.now(timezone.utc)
-            error_code = type(e).__name__
+            # [BOSS-8] Zaman aşımı ayrı kodla raporlanır.
+            error_code = "AGENT_TIMEOUT" if isinstance(e, AgentTimeoutError) else type(e).__name__
             self._log("ERROR", f"[{task_id}] 7-PILLAR failure: {error_code}: {e}")
             status.agent_runs["pineal_7pillar"] = AgentRun(
                 task_id=task_id, agent_name="pineal_7pillar", status="failed",
@@ -734,10 +779,10 @@ class PinealExecutor:
                     agent = self.agents[agent_name]
                     with self._capture_llm_calls(task_id, agent_name) as agent_scope:
                         try:
-                            try:
-                                result = await agent.execute(input_data, self.memory, self.llm_gateway)
-                            except TypeError:
-                                result = await agent.execute(input_data)
+                            result = await self._execute_with_timeout(
+                                agent, input_data, self.memory, self.llm_gateway,
+                                agent_cfg.timeout_seconds,
+                            )
                         finally:
                             agent_llm_calls = list(agent_scope.records)
                             run.call_ids = list(agent_scope.call_ids)
@@ -746,11 +791,18 @@ class PinealExecutor:
                 except InsufficientEvidenceError:
                     raise
                 except Exception as e:
-                    run.status = "failed"
-                    run.error_code = type(e).__name__
+                    # [BOSS-8] Zaman aşımı "başarısız"dan ayrı raporlanır: hangi
+                    # ajanın bütçeyi yediği telemetride görünür olur.
+                    if isinstance(e, AgentTimeoutError):
+                        run.status = "timed_out"
+                        run.error_code = "AGENT_TIMEOUT"
+                        self._log("ERROR", f"[{task_id}] AGENT {agent_name} ZAMAN AŞIMI: {str(e)[:180]}")
+                    else:
+                        run.status = "failed"
+                        run.error_code = type(e).__name__
+                        self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
                     run.error_message = str(e)[:200]
-                    self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
-                    
+
                     if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                         status.status = "halted_critical"
                         status.completed_at = datetime.now(timezone.utc)
@@ -923,10 +975,10 @@ class PinealExecutor:
                     agent = self.agents[agent_name]
                     with self._capture_llm_calls(task_id, agent_name) as agent_scope:
                         try:
-                            try:
-                                result = await agent.execute(input_data, self.memory, self.llm_gateway)
-                            except TypeError:
-                                result = await agent.execute(input_data)
+                            result = await self._execute_with_timeout(
+                                agent, input_data, self.memory, self.llm_gateway,
+                                agent_cfg.timeout_seconds,
+                            )
                         finally:
                             agent_llm_calls = list(agent_scope.records)
                             run.call_ids = list(agent_scope.call_ids)
@@ -935,10 +987,15 @@ class PinealExecutor:
                 except InsufficientEvidenceError:
                     raise
                 except Exception as e:
-                    run.status = "failed"
-                    run.error_code = type(e).__name__
+                    if isinstance(e, AgentTimeoutError):
+                        run.status = "timed_out"
+                        run.error_code = "AGENT_TIMEOUT"
+                        self._log("ERROR", f"[{task_id}] AGENT {agent_name} ZAMAN AŞIMI: {str(e)[:180]}")
+                    else:
+                        run.status = "failed"
+                        run.error_code = type(e).__name__
+                        self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
                     run.error_message = str(e)[:200]
-                    self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
                     if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                         status.status = "halted_critical"
                         status.completed_at = datetime.now(timezone.utc)
@@ -1071,7 +1128,11 @@ class PinealExecutor:
             try:
                 depth_agent = self.agents.get("depth_analyst") or DepthAnalyst(self.llm_gateway)
                 with self._capture_llm_calls(task_id, "depth_analyst") as depth_scope:
-                    depth_rep = await depth_agent.analyze(input_data, status.evidence_chain)
+                    depth_rep = await self._bounded(
+                        depth_agent.analyze(input_data, status.evidence_chain),
+                        self.config.get_agent_config("depth_analyst").timeout_seconds,
+                        "depth_analyst",
+                    )
                 depth_end = datetime.now(timezone.utc)
                 status.depth_report = depth_rep.model_dump()
                 status.depth_report["_provenance"] = self._provenance_for(
@@ -1095,7 +1156,7 @@ class PinealExecutor:
                 self._log("INFO", f"[{task_id}] KALKAN: {kept}/{checked} bulgu kanıtla ayakta")
             except Exception as e:
                 depth_end = datetime.now(timezone.utc)
-                error_code = type(e).__name__
+                error_code = "AGENT_TIMEOUT" if isinstance(e, AgentTimeoutError) else type(e).__name__
                 status.agent_runs["depth_analyst"] = AgentRun(
                     task_id=task_id, agent_name="depth_analyst", status="failed",
                     started_at=depth_start, completed_at=depth_end,
@@ -1124,7 +1185,11 @@ class PinealExecutor:
             # onları görsün ve sessizce "COMPLETED" damgalanmasınlar.
             try:
                 with self._capture_llm_calls(task_id, "shadow_executor") as shadow_scope:
-                    shadow_result = await self.agents["shadow_executor"].execute(input_data)
+                    shadow_result = await self._bounded(
+                        self.agents["shadow_executor"].execute(input_data),
+                        self.config.get_agent_config("shadow_executor").timeout_seconds,
+                        "shadow_executor",
+                    )
                 status.shadow_profile = shadow_result.model_dump()
                 status.shadow_profile["_provenance"] = self._provenance_for(
                     "shadow_executor", shadow_result, shadow_scope.records
@@ -1148,8 +1213,10 @@ class PinealExecutor:
                 self._log("INFO", f"[{task_id}] GÖLGE FORENSİĞİ: Manipülasyon ve NLP dizisi eklendi")
             except Exception as e:
                 status.agent_runs["shadow_executor"] = AgentRun(
-                    task_id=task_id, agent_name="shadow_executor", status="failed",
+                    task_id=task_id, agent_name="shadow_executor",
+                    status="timed_out" if isinstance(e, AgentTimeoutError) else "failed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
+                    error_code="AGENT_TIMEOUT" if isinstance(e, AgentTimeoutError) else None,
                     error_message=str(e)[:200],
                 )
                 self._log("WARNING", f"[{task_id}] Gölge forensiği atlandı: {e}")

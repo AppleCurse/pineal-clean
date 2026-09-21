@@ -376,7 +376,9 @@ def _count_by(rows: list, key: str) -> dict:
 def run_ghost_mode() -> dict:
     """Timeout sonrası oda durumu: hayalet snapshot ve 503 kilidi var mı?"""
     os.environ["PINEAL_TASK_TIMEOUT_SECONDS"] = "3"
-    os.environ["PINEAL_TASK_MAX_ATTEMPTS"] = "1"
+    # [BOSS-8] Deneme hakkı 3'e çıkarıldı: timeout sonrası görevin BAŞTAN
+    # koşmadığını ölçmek için (eskiden 3x maliyet). Ölçüm: "Deneme 2/3" logu.
+    os.environ["PINEAL_TASK_MAX_ATTEMPTS"] = "3"
     os.environ["PINEAL_ROOM_ACTIVE_TASKS_CAP"] = "2"
 
     import backend.api as api
@@ -410,6 +412,11 @@ def run_ghost_mode() -> dict:
                 time.sleep(4)
 
             room = api.app.state.rooms.get(client_id) or {}
+            # [BOSS-8] Timeout sonrası yeniden başlatma sayısı (0 olmalı).
+            retry_markers = [
+                line for line in (room.get("logs") or [])
+                if "Deneme 2/" in line or "Deneme 3/" in line
+            ]
             states = {
                 key: str(getattr(getattr(snap, "status", None), "value",
                                  getattr(snap, "status", None)))
@@ -441,6 +448,8 @@ def run_ghost_mode() -> dict:
         "active_tasks_full_before_sweep": full_before,
         "active_tasks_full_after_sweep": full_after,
         "ghost_task_ids": [k for k, v in states.items() if v not in api._TERMINAL_PIPELINE_STATES],
+        "timeout_restart_logs": retry_markers,
+        "timeout_restart_count": len(retry_markers),
         "manual_cleanup": cleanup,
     }
 
@@ -482,6 +491,7 @@ def _print_ghost(report: dict) -> None:
     print()
     print("=" * 72)
     print("MOD: ghost — görev timeout'u sonrası oda durumu")
+    print(f"timeout sonrası yeniden başlatma (0 olmalı): {report['timeout_restart_count']}")
     print("=" * 72)
     for entry in report["initiate_attempts"]:
         print(f"  initiate #{entry['attempt']}: HTTP {entry['status_code']} "

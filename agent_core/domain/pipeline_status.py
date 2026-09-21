@@ -9,4 +9,7 @@ class PipelineStatus(str, Enum):
     HALTED_INSUFFICIENT_EVIDENCE = "halted_evidence"
     HALTED_CRITICAL = "halted_critical"
     HALTED_FREQUENCY = "halted_frequency"
+    # [BOSS-8] Görev bütçesi doldu: "başarısız"dan AYRI durum. Aynı darboğaz
+    # ikinci turda da aynı yerde tıkanır ama LLM faturası katlanır.
+    TIMED_OUT = "timed_out"
     FAILED = "failed"

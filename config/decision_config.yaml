@@ -7,6 +7,11 @@ pipeline:
     min_data_score: 0.60
     min_llm_confidence: 0.65
     graceful_degradation: true
+    # [BOSS-8] Ajan başına duvar saati sınırı. Görev sınırı 300s
+    # (backend/api.py PINEAL_TASK_TIMEOUT_SECONDS); tek ajanın LLM zinciri
+    # teorik en kötüde 405s sürebildiği için sınır görev bütçesinin ALTINDA
+    # olmalıdır — aksi hâlde görev iptal edilip baştan koşar (3x maliyet).
+    agent_timeout_seconds: 120
 
   # Kritik ajanlar - Bunlardan herhangi biri başarısız olursa 
   # pipeline "halted_critical" olarak bitebilir
@@ -19,6 +24,12 @@ agents:
   # Do not report a completed profile when this foundation fails.
   pineal_7pillar:
     graceful_degradation: false
+    # Deterministik motor: LLM çağrısı yok, kısa sınır yeter.
+    timeout_seconds: 60
+
+  depth_analyst:
+    # En ağır LLM ajanı (kanıt zincirinin tamamını okur).
+    timeout_seconds: 150
 
   passion_mapper:
     min_data_score: 0.57
