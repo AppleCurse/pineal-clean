@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
-  import { apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus, isProcessing, telemetryEvents, powerEngaged, recordEngaged } from './store';
+  import { onDestroy } from 'svelte';
+  // [BOSS-12] `telemetryEvents` kaldırıldı: hiç render edilmiyordu ve sınırsız büyüyordu.
+  import { apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus, isProcessing, powerEngaged, recordEngaged } from './store';
   import { uplinkState } from './lib/telemetry';
   import { currentLang, t, type Language } from './i18n';
   import UnifiedCompactPanel from './components/UnifiedCompactPanel.svelte';
@@ -13,11 +15,13 @@
   let disposed = false;
   let lastToken = currentApiToken();
 
+  // [BOSS-12] Ölü kod temizlendi: fetchTelemetry/fetchTasks/deleteTask ve
+  // tasksData hiçbir yerden çağrılmıyordu (görev geçmişi UI'de yoktu) — ölü
+  // yüzey bırakmak yerine kaldırıldı. Telemetri panosu artık CANLI beslenir.
   type TelemetryPayload = Record<string, unknown>;
-  type TasksPayload = { tasks: Array<{ task_id: string; evidence_count?: number }>; active_tasks?: string[] };
 
   let telemetryData: TelemetryPayload | null = null;
-  let tasksData: TasksPayload | null = null;
+  let telemetryPoll: ReturnType<typeof setInterval> | null = null;
 
   async function fetchTelemetry() {
     try {
@@ -25,28 +29,13 @@
       if (!res.ok) return;
       telemetryData = await res.json();
     } catch (_e) {
-      /* ignore network errors in debug panel */
+      /* ağ hatası: pano son bilinen değeri gösterir, veri uydurulmaz */
     }
   }
-  
-  async function fetchTasks() {
-    try {
-      const res = await apiFetch(`/api/tasks?client_id=${$clientId}`);
-      if (!res.ok) return;
-      tasksData = await res.json();
-    } catch (_e) {
-      /* ignore */
-    }
-  }
-  
-  async function deleteTask(taskId: string) {
-    try {
-      await apiFetch(`/api/tasks/${taskId}?client_id=${$clientId}`, { method: 'DELETE' });
-      await fetchTasks();
-    } catch (_e) {
-      /* ignore */
-    }
-  }
+
+  onDestroy(() => {
+    if (telemetryPoll) clearInterval(telemetryPoll);
+  });
 
 
   function switchLang(lang: Language) {
@@ -97,7 +86,6 @@
           });
         } else if (data.event && data.event.event_type) {
           if (recording()) {
-            telemetryEvents.update(arr => [...arr, data]);
             logs.update(l => {
               const evt = data.event;
               const msg = `[${evt.event_type}] ${evt.agent_name || ''} - ${evt.input_summary || evt.step_name || evt.error_message || ''}`;
@@ -112,7 +100,11 @@
           // W4: snapshot bilgisini (runs/planned_agents/damgalar) ezme; birleştir.
           taskStatus.update(s => ({ ...s, ...data }));
           isProcessing.set(false);
-          logLine("INFO", "OPERASYON TAMAMLANDI: " + data.status);
+          // [BOSS-12] Terminal durum INFO diye yazılamaz: başarısızlık
+          // başarı gibi görünüyordu.
+          const terminal = String(data.status || "").toLowerCase();
+          const okStates = ["completed", "partially_completed"];
+          logLine(okStates.includes(terminal) ? "INFO" : "ERROR", "OPERASYON SONUÇLANDI: " + data.status);
         }
       } catch(e) {
         console.error("WS parse error", e);
@@ -148,6 +140,10 @@
 
   onMount(() => {
     connect();
+
+    // [BOSS-12] Telemetri panosu canlı beslenir (yoksa pano kurgu moduna düşer).
+    fetchTelemetry();
+    telemetryPoll = setInterval(fetchTelemetry, 4000);
 
     // POWER şalteri: kapalı → soketi kapat + yeniden bağlanmayı durdur;
     // açık → sıfırdan bağlan. (İlk abonelikteki true değeri no-op'tur:
@@ -235,6 +231,12 @@
   <main>
     <UnifiedCompactPanel />
   </main>
+
+  <!-- [BOSS-12] NeuralTelemetryBoard import ediliyordu ama hiç basılmıyordu:
+       ölü import + görünmeyen pano. Artık gerçek telemetriyle render edilir. -->
+  <section class="telemetry-section">
+    <NeuralTelemetryBoard telemetry={telemetryData} />
+  </section>
 
 
   <!-- FOOTER -->

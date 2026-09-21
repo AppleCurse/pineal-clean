@@ -277,11 +277,11 @@
   // ==========================================
   // ASPASIA CHAT & SPEECH
   // ==========================================
+  // [BOSS-10] Sohbet kurgu mesajlarla acilmaz: eskiden uydurma bir senaryo
+  // (4 mesaj) gercek konusma gibi duruyordu. Repo doktrini "sahte veri uretme"
+  // oldugu icin baslangicta yalniz tek bir sistem satiri var.
   let messages: {sender: string, text: string, time: string}[] = [
-    { sender: 'ASPASIA', text: 'Provide a discreet OSINT sweep on recent financial flows into Aegean shell entities.', time: '14:32:11' },
-    { sender: 'ASPASIA', text: 'Sweep initialized. 7 entities flagged. Flows routed through Cyprus → Luxembourg → BVI. Risk score: 0.78. Source confidence: high.', time: '14:32:47' },
-    { sender: 'ASPASIA', text: 'Cross-reference with maritime tracking and flag-state anomalies.', time: '14:33:02' },
-    { sender: 'ASPASIA', text: 'Cross-ref complete. 3 vessels flagged under flags of convenience. AIS spoofing detected on 2. Raw packet samples attached.', time: '14:33:41' }
+    { sender: 'SİSTEM', text: 'ASPASIA hazır. Komut yazın (örn. "hedef @kullanici analiz et") — geçmiş mesajlar yalnızca gerçek yanıtlardan oluşur.', time: '' }
   ];
   let inputMessage = "";
   let chatContainer: HTMLElement;
@@ -688,7 +688,9 @@
 
       <div class="agent-cards-stack">
         {#each agentList as agent, i}
-          {@const run = runs[agent.id] || (agent.id === 'depth_analyst' ? runs['depth_forensics'] : null)}
+          {@const run = runs[agent.id]}<!-- [BOSS-10] 'depth_forensics' ölü anahtardı:
+             backend koşu kaydını 'depth_analyst' adıyla yazar; ölü anahtar
+             yüzünden derinlik ajanı HER durumda statik etiketi gösteriyordu. -->
           {@const isCompleted = run?.status === 'completed'}
           {@const isRunning = currentAgent === agent.id && ($isProcessing || taskState === 'processing')}
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
@@ -840,24 +842,35 @@
             <div class="report-box">
               <h4>Derinlik & Alıntı Kalkanı</h4>
               <p>Gerçeklik Skoru: %{((depthReport.reality_index || 0) * 100).toFixed(0)}</p>
-              <p>Özet: {depthReport.essence_one_liner || 'Kanıtlar incelendi.'}</p>
+              <p>Özet: {depthReport.essence_one_liner || (depthReport.available === false
+                ? `ÜRETİLEMEDİ (${depthReport.reason || depthReport.error_code || 'veri yok'})`
+                : 'Özet alanı boş döndü.')}</p>
             </div>
           {:else if activeForensicModal === 'visual' && visualEvidence}
             <div class="report-box">
               <h4>Görsel & Estetik Damga</h4>
-              <p>Stil: {visualEvidence.aesthetic_style || 'Klasik'}</p>
-              <p>Özet: {visualEvidence.visual_evidence_summary || 'Fotoğraf analiz edildi.'}</p>
+              <p>Stil: {visualEvidence.aesthetic_style || '—'}</p>
+              <p>Özet: {visualEvidence.visual_evidence_summary || (visualEvidence.data_confidence === false
+                ? `GÖRSEL ANALİZ YOK (${visualEvidence.fallback_reason || 'veri yok'})`
+                : 'Özet alanı boş döndü.')}</p>
             </div>
           {:else if activeForensicModal === 'shadow' && shadowProfile}
             <div class="report-box">
               <h4>Gölge Profili (Karanlık Üçlü)</h4>
               <p>Narsisizm: {shadowProfile.dark_profile?.narcissism ?? 0}</p>
-              <p>Strateji: {shadowProfile.strategy || 'Doğal profil'}</p>
+              <p>Strateji: {shadowProfile.strategy || '—'}</p>
+              {#if shadowProfile.data_confidence === false}
+                <p class="report-warn">GÖLGE KATMANI VERİSİZ: {shadowProfile.fallback_reason || 'veri yok'}</p>
+              {/if}
             </div>
           {:else if activeForensicModal === 'osint' && osintFootprint}
             <div class="report-box">
               <h4>OSINT Dijital Ayak İzi</h4>
-              <p>Platform Eşleşmesi: {(osintFootprint.associated_platforms || []).join(', ') || 'Temiz'}</p>
+              <p>Platform Eşleşmesi: {(osintFootprint.associated_platforms || []).join(', ') || '—'}</p>
+              {#if osintFootprint.data_confidence === false}
+                <p class="report-warn">OSINT VERİSİ YOK: {osintFootprint.fallback_reason || 'ölçüm yapılamadı'}
+                  — "veri yok" ≠ "olumsuz bulgu yok".</p>
+              {/if}
             </div>
           {:else if activeForensicModal === 'pillars' && (frequencyMap || seismosEvents || voidMap || strataMap || gravityMap || pulseMap || keyMatrix)}
             <!-- [BOSS-5] Deterministik 7-sütun raporları. Her rapor kendi
@@ -1854,6 +1867,12 @@
     padding: 16px;
     color: var(--text-main);
   }
+  .report-warn {
+    color: #f59e0b;
+    font-size: 0.78rem;
+    margin: 0.25rem 0 0;
+  }
+
   .report-box h4 {
     color: var(--gold);
     margin-bottom: 8px;
