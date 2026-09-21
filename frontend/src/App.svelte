@@ -7,6 +7,7 @@
   import { uplinkState } from './lib/telemetry';
   import { currentLang, t, type Language } from './i18n';
   import UnifiedCompactPanel from './components/UnifiedCompactPanel.svelte';
+  import CockpitEntry from './components/CockpitEntry.svelte';
   import NeuralTelemetryBoard from './components/visualizers/NeuralTelemetryBoard.svelte';
 
   let ws: WebSocket | null = null;
@@ -14,6 +15,16 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let lastToken = currentApiToken();
+
+  // Kokpit girişi: tam ortada göz + izometrik süzülen sahne. Her açılışta
+  // gösterilir; başlıktaki GÖZ düğmesiyle tekrar açılabilir.
+  let showEntry = true;
+  function handleCockpitEnter() {
+    showEntry = false;
+  }
+  function reopenCockpitEntry() {
+    showEntry = true;
+  }
 
   // [BOSS-12] Ölü kod temizlendi: fetchTelemetry/fetchTasks/deleteTask ve
   // tasksData hiçbir yerden çağrılmıyordu (görev geçmişi UI'de yoktu) — ölü
@@ -188,6 +199,10 @@
   });
 </script>
 
+{#if showEntry}
+  <CockpitEntry onEnter={handleCockpitEnter} />
+{/if}
+
 <div class="walnut-frame">
   <!-- HEADER & CONTROLS -->
   <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--brass-border); padding-bottom: 14px;">
@@ -206,6 +221,15 @@
         <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; {$uplinkState === 'ONLINE' ? 'background: #10b981; box-shadow: 0 0 6px #10b981;' : 'background: #ef4444; box-shadow: 0 0 6px #ef4444;'}"></span>
         <span>{$uplinkState === 'ONLINE' ? 'ONLINE (ÇEVRİMİÇİ)' : 'OFFLINE (ÇEVRİMDIŞI)'}</span>
       </div>
+
+      <button
+        class="btn-dark"
+        style="padding: 4px 10px; font-size: 11px; font-weight: 700;"
+        on:click={reopenCockpitEntry}
+        title="Kokpit girişini (göz) tekrar aç"
+      >
+        👁 GÖZ
+      </button>
 
       <!-- TR / EN Toggle -->
       <div style="display: flex; background: #0a0705; border: 1px solid var(--brass-border); border-radius: 6px; overflow: hidden; padding: 2px;">
