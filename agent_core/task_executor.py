@@ -163,8 +163,9 @@ class PinealExecutor:
 
         Bu çağrılar (tier=1, "asla kibar olma" promptu) görev başına 2 adettir ve
         önceden hiçbir telemetride görünmüyordu: harcama vardı, iz yoktu. Kayıtlar
-        `run.output_summary["_aux_llm_calls"]` altında tutulur; böylece kanıt
-        zinciri, `call_ids` ve UI provens alanı aynı gerçeği okur.
+        `run.output_summary["_aux_llm_calls"]` altında (kanıt kaydında
+        `aux_llm_calls` olarak) tutulur; `run.call_ids` yalnız ajanın kendi
+        çağrılarını taşır — sözleşme bozulmaz.
         """
         if not records:
             return
@@ -174,12 +175,10 @@ class PinealExecutor:
             run.output_summary = summary
         bucket = summary.setdefault("_aux_llm_calls", [])
         bucket.extend(record.copy() for record in records)
-        existing = list(getattr(run, "call_ids", []) or [])
-        for record in records:
-            call_id = record.get("call_id")
-            if call_id and call_id not in existing:
-                existing.append(call_id)
-        run.call_ids = existing
+        # DİKKAT: run.call_ids'e EKLENMEZ. O alan "bu ajanın kendi çağrıları"
+        # sözleşmesidir ve kanıt kaydı + mühür + provenance ile birebir eşleşir
+        # (uçtan uca kilit: tests/e2e/test_cross_stack_runtime.py). Yardımcı
+        # harcamanın izi `_aux_llm_calls` + kanıt kaydındaki `aux_llm_calls`tır.
 
     @staticmethod
     async def _bounded(coro, limit: float, label: str):
@@ -379,7 +378,8 @@ class PinealExecutor:
     @staticmethod
     def _evidence_record(agent_name: str, result: BaseModel, *, evidence_type: str,
                          uncertainty=None, source_agent: str | None = None,
-                         llm_calls: list | None = None) -> dict:
+                         llm_calls: list | None = None,
+                         aux_llm_calls: list | None = None) -> dict:
         """Build an auditable evidence entry while retaining its provenance."""
         record = {
             "agent": agent_name,
@@ -396,6 +396,13 @@ class PinealExecutor:
             # are already plain dictionaries and remain JSON serializable.
             record["call_ids"] = [call["call_id"] for call in llm_calls if call.get("call_id")]
             record["llm_calls"] = [call.copy() for call in llm_calls]
+        if aux_llm_calls:
+            # [BOSS-6] Ajanın KENDİ çağrıları (call_ids/llm_calls) ile executor'ın
+            # o ajan adına yaptığı yardımcı çağrılar (ör. authentic vector) ayrı
+            # alanda durur: `call_ids` = "bu ajan ne çağırdı" sözleşmesi korunur,
+            # yardımcı harcama ise mühürde AÇIK bir adla görünür (eskiden hiç
+            # görünmüyordu). Aynı kayıtlar run.output_summary["_aux_llm_calls"]'ta da var.
+            record["aux_llm_calls"] = [call.copy() for call in aux_llm_calls]
         return record
 
     async def execute_task(self, input_data: Dict[str, Any], task_id: str) -> TaskStatus:
@@ -893,6 +900,7 @@ class PinealExecutor:
                     evidence_type="agent_output",
                     uncertainty=check,
                     llm_calls=agent_llm_calls,
+                    aux_llm_calls=aux_call_records,
                 ))
                 if research_note is not None:
                     status.evidence_chain.append(self._evidence_record(

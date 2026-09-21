@@ -117,10 +117,20 @@ async def test_authentic_vector_calls_are_attributed_to_the_producing_agent(exec
     target = status.agent_runs["human_behavior"]
     assert [r["agent_id"] for r in mirror.output_summary["_aux_llm_calls"]] == ["authentic_vector:user"]
     assert [r["agent_id"] for r in target.output_summary["_aux_llm_calls"]] == ["authentic_vector:target"]
-    # Vektör çağrıları koşunun call_ids listesine de bağlanmalı; aksi hâlde
-    # kanıt zinciri "bu koşuda kaç çağrı yapıldı" sorusunu eksik yanıtlar.
-    assert mirror.call_ids == ["call-0"], mirror.call_ids
-    assert target.call_ids == ["call-1"], target.call_ids
+    aux_ids = [r["call_id"] for r in mirror.output_summary["_aux_llm_calls"]]
+
+    # SÖZLEŞME: `call_ids` = ajanın KENDİ çağrıları. Yardımcı çağrı oraya
+    # karışmaz (kanıt kaydı ↔ koşu ↔ mühür ↔ provenance birebir eşleşmesi;
+    # uçtan uca kilit: tests/e2e/test_cross_stack_runtime.py).
+    assert mirror.call_ids == [], mirror.call_ids
+    assert aux_ids and not set(aux_ids) & set(mirror.call_ids)
+
+    # İz KAYBOLMAZ: yardımcı harcama kanıt kaydında (dolayısıyla mühürde) kendi
+    # adıyla (`aux_llm_calls`) durur; `llm_calls`/`call_ids` semantiği bozulmaz.
+    evidence = next(item for item in status.evidence_chain if item["agent"] == "mirror_truth")
+    assert [r["agent_id"] for r in evidence["aux_llm_calls"]] == ["authentic_vector:user"]
+    assert aux_ids == [r["call_id"] for r in evidence["aux_llm_calls"]]
+    assert evidence["call_ids"] == [] and evidence["llm_calls"] == []
 
 
 def test_attach_vector_calls_is_empty_safe():
