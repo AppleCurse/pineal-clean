@@ -5,14 +5,12 @@
     apiToken, agentStatuses, vaultLocked
   } from '../store';
   import { playClick, playHalt, playRunning } from '../lib/consoleAudio';
-  import OrganikIrisCanvas from './OrganikIrisCanvas.svelte';
   import HolographicResonanceMesh from './HolographicResonanceMesh.svelte';
   import AgentRack from './AgentRack.svelte';
 
-  // Tek dokunulmaz ana şasi görseli (Kayıpsız 16:9 Master Referans)
+  // Tek dokunulmaz ana şasi görseli (Kayıpsız 16:9 Master Referans) — PINEAL-HERETIC v5.0
   import cockpitSkin from '../assets/cockpit-v10-reference.png';
   import livingPinealDisk from '../assets/living_pineal_disk.png';
-  import eyeJpg from '../assets/eye.jpg';
 
   // --- STATE ---
   let targetUrl = '';
@@ -21,13 +19,12 @@
   let activePillarModal: string | null = null;
   let activeTab = 'ASPASIA';
   let showAgentRack = true;
-  let irisSize = 340;
-  let meshSize = 460;
+  let meshSize = 180;
 
-  // Vault interlock - mandal durumu
+  // Vault interlock - mandal durumu (gözün üzerinde rozet YOK, sadece LED)
   $: isVaultLocked = $vaultLocked;
 
-  // --- YAŞAYAN PİNEAL GÖZ (ORGANİK VE YAVAŞ HAREKET) - legacy fallback için korunuyor ---
+  // --- YAŞAYAN PİNEAL GÖZ (ORGANİK VE YAVAŞ HAREKET) — ORİJİNAL %12.2 PİRİNÇ YUVA KORUNDU ---
   let eyeX = 0;
   let eyeY = 0;
   let targetEyeX = 0;
@@ -62,26 +59,18 @@
 
     animFrameId = requestAnimationFrame(animate);
 
-    // Responsive iris size
-    function updateSizes() {
+    function updateMeshSize() {
       const vw = window.innerWidth;
-      if (vw < 1200) {
-        irisSize = 240;
-        meshSize = 340;
-      } else if (vw < 1600) {
-        irisSize = 300;
-        meshSize = 400;
-      } else {
-        irisSize = 340;
-        meshSize = 460;
-      }
+      if (vw < 1200) meshSize = 120;
+      else if (vw < 1600) meshSize = 150;
+      else meshSize = 180;
     }
-    updateSizes();
-    window.addEventListener('resize', updateSizes);
+    updateMeshSize();
+    window.addEventListener('resize', updateMeshSize);
 
     return () => {
       if (animFrameId) cancelAnimationFrame(animFrameId);
-      window.removeEventListener('resize', updateSizes);
+      window.removeEventListener('resize', updateMeshSize);
     };
   });
 
@@ -220,35 +209,16 @@
 <svelte:window on:mousemove={handleMouseMove} />
 
 <div class="cockpit-viewport-frame" role="region" aria-label="Atlas Epifiz Pineal Observatory">
-  <!-- 1. TEK VE DOKUNULMAZ ANA ŞASİ GÖRSELİ (Kayıpsız 16:9) -->
+  <!-- 1. TEK VE DOKUNULMAZ ANA ŞASİ GÖRSELİ (Kayıpsız 16:9) — PINEAL-HERETIC İMZASI -->
   <img class="master-cockpit-bg" src={cockpitSkin} alt="Atlas Pineal Observatory Cockpit" />
 
-  <!-- 1.5. YÜKSEK ÇÖZÜNÜRLÜKLÜ ORGANİK İRİS + HOLOGRAFİK MESH (Tauri GPU) -->
-  <div class="living-eye-viewport-v2" aria-label="Atlas Pineal Eye - Native GPU">
-    <!-- Arkada: Holografik tel kafes rezonans ağı -->
+  <!-- 2. ORİJİNAL %12.2 YAŞAYAN PİNEAL GÖZ — PİRİNÇ HALKA İÇİNDE, TAŞMA YOK -->
+  <div class="living-eye-viewport" aria-label="Atlas Pineal Eye - Original Brass">
+    <!-- Arkada: Holografik tel kafes — pirinç halka içinde, düşük yoğunluk -->
     <div class="mesh-layer">
-      <HolographicResonanceMesh size={meshSize} active={$isProcessing} intensity={isVaultLocked ? 0.45 : 0.85} />
+      <HolographicResonanceMesh size={meshSize} active={$isProcessing} intensity={isVaultLocked ? 0.22 : 0.48} />
     </div>
-    <!-- Önde: Organik iris - fare mikro takip + nefes -->
-    <div class="iris-layer">
-      <OrganikIrisCanvas size={irisSize} irisSrc={eyeJpg} scanning={$isProcessing} />
-    </div>
-    <!-- Vault kilit göstergesi - iris üzerinde -->
-    {#if isVaultLocked}
-      <div class="vault-lock-indicator" title="VAULT KİLİTLİ: OSINT/Scraper bloklı">
-        <span class="lock-icon">🔒</span>
-        <span class="lock-text">VAULT LOCKED</span>
-      </div>
-    {:else}
-      <div class="vault-open-indicator" title="VAULT AÇIK: Dış dünya erişimi serbest">
-        <span class="lock-icon">🔓</span>
-        <span class="lock-text">VAULT OPEN</span>
-      </div>
-    {/if}
-  </div>
-
-  <!-- Legacy fallback gizli (GPU yoksa) -->
-  <div class="living-eye-viewport legacy-hidden" aria-hidden="true">
+    <!-- Önde: Orijinal living_pineal_disk.png — organik drift korunuyor -->
     <img
       class="living-eye-disk"
       src={livingPinealDisk}
@@ -263,6 +233,12 @@
     <button class="rack-toggle-btn" on:click={() => showAgentRack = !showAgentRack} title="Agent Rack Toggle">
       {showAgentRack ? '◀' : '▶'}
     </button>
+  </div>
+
+  <!-- Vault LED — gözün üzerinde DEĞİL, sol alt Aspasia konsolunda küçük nokta -->
+  <div class="vault-led" class:locked={isVaultLocked} class:open={!isVaultLocked} title={isVaultLocked ? 'VAULT KİLİTLİ: OSINT/Scraper bloklı' : 'VAULT AÇIK'}>
+    <span class="vault-dot"></span>
+    <span class="vault-label">{isVaultLocked ? 'VAULT' : 'OPEN'}</span>
   </div>
 
   <!-- 2. SADECE İŞLEVSEL ŞEFFAF HİTBOX'LAR (TIKLAMA ALANLARI) -->
@@ -426,87 +402,112 @@
   }
 
   /* =========================================================
-     YAŞAYAN PİNEAL GÖZ v2 — ORGANİK İRİS + HOLOGRAFİK MESH (Tauri GPU)
+     YAŞAYAN PİNEAL GÖZ — ORİJİNAL %12.2 PİRİNÇ HALKA, TAŞMA YOK
+     PINEAL-HERETIC imzası: living_pineal_disk.png merkezde, mesh halka içinde
      ========================================================= */
-  .living-eye-viewport-v2 {
+  .living-eye-viewport {
     position: absolute;
     left: 49.76%;
     top: 45.70%;
-    width: 18%;
+    width: 12.2%;
     aspect-ratio: 1;
     transform: translate(-50%, -50%);
     border-radius: 50%;
+    overflow: hidden;
+    pointer-events: none;
     z-index: 3;
     display: flex;
     align-items: center;
     justify-content: center;
-    pointer-events: none;
-    transform-style: preserve-3d;
-    will-change: transform;
+    box-shadow:
+      inset 0 0 10px rgba(0, 0, 0, 0.85),
+      inset 0 2px 6px rgba(0, 0, 0, 0.95),
+      0 0 0 1px rgba(212, 175, 55, 0.15);
   }
 
-  .living-eye-viewport-v2 .mesh-layer {
+  .living-eye-viewport .mesh-layer {
     position: absolute;
-    inset: -20%;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1;
     pointer-events: none;
-  }
-
-  .living-eye-viewport-v2 .iris-layer {
-    position: relative;
-    z-index: 2;
     border-radius: 50%;
     overflow: hidden;
-    box-shadow:
-      inset 0 0 20px rgba(0, 0, 0, 0.95),
-      inset 0 3px 8px rgba(0, 0, 0, 0.9),
-      0 0 0 2px #120904,
-      0 0 30px rgba(212, 175, 55, 0.25);
-    transform: translateZ(10px);
   }
 
-  .vault-lock-indicator, .vault-open-indicator {
+  .living-eye-disk {
     position: absolute;
-    bottom: -18%;
     left: 50%;
-    transform: translateX(-50%);
+    top: 50%;
+    width: 108%;
+    height: 108%;
+    border-radius: 50%;
+    object-fit: cover;
+    pointer-events: none;
+    will-change: transform;
+    filter: contrast(1.02) brightness(1.01);
+    z-index: 2;
+  }
+
+  /* Vault LED — gözün üzerinde DEĞİL, sol alt küçük nokta */
+  .vault-led {
+    position: absolute;
+    left: 2.8%;
+    top: 91.2%;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 10px;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 12px;
     font-size: 7px;
     font-weight: 800;
-    letter-spacing: 0.12em;
-    z-index: 10;
+    letter-spacing: 0.14em;
+    z-index: 15;
     pointer-events: auto;
-    white-space: nowrap;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    backdrop-filter: blur(2px);
+    transition: all 0.3s ease;
   }
 
-  .vault-lock-indicator {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.4);
+  .vault-led.locked {
     color: #fca5a5;
-    box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
-    animation: lockPulse 2s ease-in-out infinite;
+    border-color: rgba(239, 68, 68, 0.35);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.25);
   }
 
-  .vault-open-indicator {
-    background: rgba(16, 185, 129, 0.15);
-    border: 1px solid rgba(16, 185, 129, 0.4);
+  .vault-led.open {
     color: #6ee7b7;
-    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+    border-color: rgba(16, 185, 129, 0.35);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
+  }
+
+  .vault-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .vault-led.locked .vault-dot {
+    background: #ef4444;
+    box-shadow: 0 0 6px #ef4444;
+    animation: lockPulse 1.6s ease-in-out infinite;
+  }
+
+  .vault-led.open .vault-dot {
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
   }
 
   @keyframes lockPulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.85); }
   }
 
-  /* Agent Rack Dock - Sağ taraf */
+  /* Agent Rack Dock - Sağ taraf — Redis canlı köprü korundu */
   .agent-rack-dock {
     position: absolute;
     right: 0;
@@ -546,40 +547,6 @@
   .rack-toggle-btn:hover {
     background: linear-gradient(180deg, #2a2a4e 0%, #1a1e2a 100%);
     color: #fde68a;
-  }
-
-  /* Legacy fallback - gizli */
-  .living-eye-viewport.legacy-hidden {
-    display: none !important;
-  }
-
-  .living-eye-viewport {
-    position: absolute;
-    left: 49.76%;
-    top: 45.70%;
-    width: 12.2%;
-    aspect-ratio: 1;
-    transform: translate(-50%, -50%);
-    border-radius: 50%;
-    overflow: hidden;
-    pointer-events: none;
-    z-index: 2;
-    box-shadow:
-      inset 0 0 10px rgba(0, 0, 0, 0.85),
-      inset 0 2px 6px rgba(0, 0, 0, 0.95);
-  }
-
-  .living-eye-disk {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 108%;
-    height: 108%;
-    border-radius: 50%;
-    object-fit: cover;
-    pointer-events: none;
-    will-change: transform;
-    filter: contrast(1.02) brightness(1.01);
   }
 
   /* =========================================================

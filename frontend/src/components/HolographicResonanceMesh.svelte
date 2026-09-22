@@ -60,56 +60,62 @@
     }
   }
 
+  // Reactive processing flag — svelte-check için $isProcessing'i reactive statement'ta tut
+  let isProc = false;
+  $: isProc = $isProcessing || active;
+
   function render(t: number) {
     if (!ctx || !canvasEl) return;
+    // Local non-null narrowed reference — svelte-check için kritik
+    const c = ctx as CanvasRenderingContext2D;
     const elapsed = (t - startTime) * 0.001;
     const center = size / 2;
-    const processing = $isProcessing || active;
+    const processing = isProc;
     const procSpeed = processing ? 1.8 : 0.6;
     const procPulse = processing ? 0.25 : 0.08;
 
-    ctx.clearRect(0, 0, size, size);
+    c.clearRect(0, 0, size, size);
 
     // Background subtle radial
-    const bgGrad = ctx.createRadialGradient(center, center, 0, center, center, size * 0.5);
+    const bgGrad = c.createRadialGradient(center, center, 0, center, center, size * 0.5);
     bgGrad.addColorStop(0, `rgba(56, 239, 125, ${0.03 * intensity})`);
     bgGrad.addColorStop(0.5, `rgba(16, 185, 129, ${0.015 * intensity})`);
     bgGrad.addColorStop(1, 'transparent');
-    ctx.fillStyle = bgGrad;
-    ctx.beginPath();
-    ctx.arc(center, center, size * 0.5, 0, Math.PI * 2);
-    ctx.fill();
+    c.fillStyle = bgGrad;
+    c.beginPath();
+    c.arc(center, center, size * 0.5, 0, Math.PI * 2);
+    c.fill();
 
     // Outer resonance ring
-    ctx.save();
-    ctx.translate(center, center);
-    ctx.rotate(elapsed * 0.15 * procSpeed);
+    c.save();
+    c.translate(center, center);
+    c.rotate(elapsed * 0.15 * procSpeed);
 
-    ctx.strokeStyle = `rgba(56, 239, 125, ${0.35 * intensity})`;
-    ctx.lineWidth = 1.2;
-    ctx.setLineDash([8, 12]);
-    ctx.lineDashOffset = -elapsed * 20 * procSpeed;
-    ctx.beginPath();
-    ctx.arc(0, 0, size * 0.42, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    c.strokeStyle = `rgba(56, 239, 125, ${0.35 * intensity})`;
+    c.lineWidth = 1.2;
+    c.setLineDash([8, 12]);
+    c.lineDashOffset = -elapsed * 20 * procSpeed;
+    c.beginPath();
+    c.arc(0, 0, size * 0.42, 0, Math.PI * 2);
+    c.stroke();
+    c.setLineDash([]);
 
     // Inner ring
-    ctx.strokeStyle = `rgba(56, 239, 125, ${0.22 * intensity})`;
-    ctx.lineWidth = 0.8;
-    ctx.setLineDash([4, 8]);
-    ctx.lineDashOffset = elapsed * 15 * procSpeed;
-    ctx.beginPath();
-    ctx.arc(0, 0, size * 0.24, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    c.strokeStyle = `rgba(56, 239, 125, ${0.22 * intensity})`;
+    c.lineWidth = 0.8;
+    c.setLineDash([4, 8]);
+    c.lineDashOffset = elapsed * 15 * procSpeed;
+    c.beginPath();
+    c.arc(0, 0, size * 0.24, 0, Math.PI * 2);
+    c.stroke();
+    c.setLineDash([]);
 
     // Outer nodes + connections (wireframe)
     const outerRadius = size * 0.42;
     const innerRadius = size * 0.24;
 
     // Update node positions with breathing
-    nodes.forEach((node, i) => {
+    nodes.forEach((node) => {
       const breath = Math.sin(elapsed * 0.5 + node.pulseOffset) * (size * 0.01 * procPulse);
       const angle = node.baseAngle + elapsed * 0.08 * procSpeed;
       const r = outerRadius + breath;
@@ -126,32 +132,32 @@
     });
 
     // Draw wireframe - outer to inner + outer to outer
-    ctx.strokeStyle = `rgba(56, 239, 125, ${0.18 * intensity})`;
-    ctx.lineWidth = 0.6;
+    c.strokeStyle = `rgba(56, 239, 125, ${0.18 * intensity})`;
+    c.lineWidth = 0.6;
 
     // Outer ring connections (triangulated)
     for (let i = 0; i < nodes.length; i++) {
       const a = nodes[i];
       const b = nodes[(i + 1) % nodes.length];
-      const c = nodes[(i + 2) % nodes.length];
+      const cc = nodes[(i + 2) % nodes.length];
       // a-b
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+      c.beginPath();
+      c.moveTo(a.x, a.y);
+      c.lineTo(b.x, b.y);
+      c.stroke();
       // a to inner nearest
       const innerIdx = i % innerNodes.length;
       const inner = innerNodes[innerIdx];
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(inner.x, inner.y);
-      ctx.stroke();
+      c.beginPath();
+      c.moveTo(a.x, a.y);
+      c.lineTo(inner.x, inner.y);
+      c.stroke();
       // a-c skip one (web)
       if (i % 2 === 0) {
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(c.x, c.y);
-        ctx.stroke();
+        c.beginPath();
+        c.moveTo(a.x, a.y);
+        c.lineTo(cc.x, cc.y);
+        c.stroke();
       }
     }
 
@@ -159,66 +165,70 @@
     for (let i = 0; i < innerNodes.length; i++) {
       const a = innerNodes[i];
       const b = innerNodes[(i + 1) % innerNodes.length];
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+      c.beginPath();
+      c.moveTo(a.x, a.y);
+      c.lineTo(b.x, b.y);
+      c.stroke();
       // inner to center
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(0, 0);
-      ctx.globalAlpha = 0.08 * intensity;
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      c.beginPath();
+      c.moveTo(a.x, a.y);
+      c.lineTo(0, 0);
+      c.globalAlpha = 0.08 * intensity;
+      c.stroke();
+      c.globalAlpha = 1;
     }
 
     // Nodes - outer
     nodes.forEach((node) => {
       const pulse = Math.sin(elapsed * 2.2 + node.pulseOffset) * 0.5 + 0.5;
-      ctx.fillStyle = `rgba(56, 239, 125, ${0.6 + pulse * 0.4})`;
-      ctx.shadowColor = '#38ef7d';
-      ctx.shadowBlur = 8 + pulse * 6;
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, 2.5 + pulse * 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      c.fillStyle = `rgba(56, 239, 125, ${0.6 + pulse * 0.4})`;
+      c.shadowColor = '#38ef7d';
+      c.shadowBlur = 8 + pulse * 6;
+      c.beginPath();
+      c.arc(node.x, node.y, 2.5 + pulse * 1.5, 0, Math.PI * 2);
+      c.fill();
+      c.shadowBlur = 0;
     });
 
     // Nodes - inner
     innerNodes.forEach((node) => {
       const pulse = Math.sin(elapsed * 1.8 + node.pulseOffset) * 0.5 + 0.5;
-      ctx.fillStyle = `rgba(212, 175, 55, ${0.5 + pulse * 0.3})`;
-      ctx.shadowColor = '#d4af37';
-      ctx.shadowBlur = 6 + pulse * 4;
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, 2 + pulse, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      c.fillStyle = `rgba(212, 175, 55, ${0.5 + pulse * 0.3})`;
+      c.shadowColor = '#d4af37';
+      c.shadowBlur = 6 + pulse * 4;
+      c.beginPath();
+      c.arc(node.x, node.y, 2 + pulse, 0, Math.PI * 2);
+      c.fill();
+      c.shadowBlur = 0;
     });
 
     // Center core
     const corePulse = Math.sin(elapsed * 1.2) * 0.5 + 0.5;
-    ctx.fillStyle = `rgba(56, 239, 125, ${0.15 + corePulse * 0.15})`;
-    ctx.beginPath();
-    ctx.arc(0, 0, 6 + corePulse * 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = `rgba(255, 255, 255, ${0.8 + corePulse * 0.2})`;
-    ctx.beginPath();
-    ctx.arc(0, 0, 1.5, 0, Math.PI * 2);
-    ctx.fill();
+    c.fillStyle = `rgba(56, 239, 125, ${0.15 + corePulse * 0.15})`;
+    c.beginPath();
+    c.arc(0, 0, 6 + corePulse * 3, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = `rgba(255, 255, 255, ${0.8 + corePulse * 0.2})`;
+    c.beginPath();
+    c.arc(0, 0, 1.5, 0, Math.PI * 2);
+    c.fill();
 
     // Radial scan line when processing
     if (processing) {
-      ctx.strokeStyle = `rgba(56, 239, 125, ${0.12 + corePulse * 0.08})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
+      c.strokeStyle = `rgba(56, 239, 125, ${0.12 + corePulse * 0.08})`;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(0, 0);
       const scanAngle = elapsed * 2.5;
-      ctx.lineTo(Math.cos(scanAngle) * outerRadius, Math.sin(scanAngle) * outerRadius);
-      ctx.stroke();
+      c.lineTo(Math.cos(scanAngle) * outerRadius, Math.sin(scanAngle) * outerRadius);
+      c.stroke();
     }
 
-    ctx.restore();
+    c.restore();
+  }
+
+  function getProcessing(): boolean {
+    return Boolean(isProc);
   }
 
   function loop(t: number) {
@@ -229,7 +239,9 @@
 
   onMount(() => {
     if (!canvasEl) return;
-    ctx = canvasEl.getContext('2d', { alpha: true })!;
+    const context = canvasEl.getContext('2d', { alpha: true });
+    if (!context) return;
+    ctx = context;
     generateNodes();
     resizeCanvas();
     startTime = performance.now();
@@ -242,6 +254,7 @@
     if (rafId) cancelAnimationFrame(rafId);
   });
 
+  // Resize reactive — sadece size değiştiğinde
   $: if (canvasEl && size) {
     resizeCanvas();
   }

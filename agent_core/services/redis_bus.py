@@ -17,7 +17,7 @@ try:
     HAS_REDIS = True
 except ImportError:
     try:
-        import redis  # type: ignore
+        import redis  # noqa: F401  # varlık kontrolü için, kullanımı connect() içinde
         HAS_REDIS = True
         aioredis = None  # type: ignore
     except ImportError:

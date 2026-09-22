@@ -30,16 +30,14 @@ async def run_worker(agent_id: str):
         init_redis_bus = None
         init_tracker = None
 
-    bus = None
     tracker = None
 
     if init_redis_bus:
         try:
-            bus = await init_redis_bus(REDIS_URL)
+            await init_redis_bus(REDIS_URL)
             logger.info(f"[{agent_id}] Redis baglandi: {REDIS_URL}")
         except Exception as e:
             logger.warning(f"[{agent_id}] Redis baglanamadi: {e} — in-memory fallback")
-            bus = None
 
     if init_tracker:
         try:
