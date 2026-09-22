@@ -161,3 +161,5 @@ XMind==1.2.0
 xxhash==3.8.1
 yarl==1.24.5
 zipp==4.1.0
+redis==5.2.1
+hiredis==3.0.0

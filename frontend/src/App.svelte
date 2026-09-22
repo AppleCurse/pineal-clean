@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import {
     apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus,
-    isProcessing, powerEngaged, recordEngaged
+    isProcessing, powerEngaged, recordEngaged, agentStatuses, vaultLocked
   } from './store';
   import { uplinkState } from './lib/telemetry';
   import AtlasPinealCockpit from './components/AtlasPinealCockpit.svelte';
@@ -16,11 +16,34 @@
   let lastToken = currentApiToken();
   let telemetryData: any = null;
   let telemetryPoll: any = null;
+  let tauriUnlisteners: (() => void)[] = [];
 
   async function fetchTelemetry() {
     try {
       const res = await apiFetch('/api/telemetry');
-      if (res.ok) telemetryData = await res.json();
+      if (res.ok) {
+        telemetryData = await res.json();
+        // Vault kilit durumu
+        if (telemetryData.vault_locked !== undefined) {
+          vaultLocked.set(telemetryData.vault_locked);
+        }
+        // Agent statuses - backend'den gelen toplu durum
+        if (telemetryData.agent_statuses && Object.keys(telemetryData.agent_statuses).length > 0) {
+          const mapped: Record<string, any> = {};
+          for (const [k, v] of Object.entries(telemetryData.agent_statuses)) {
+            const val: any = v;
+            mapped[k] = {
+              status: val.status || val.status || 'Wait',
+              updatedAt: Date.now(),
+              metadata: val.metadata || {}
+            };
+          }
+          // Sadece gerçek veri varsa güncelle
+          if (Object.keys(mapped).length > 0) {
+            agentStatuses.update(s => ({ ...s, ...mapped }));
+          }
+        }
+      }
     } catch (_e) {}
   }
 
@@ -31,6 +54,38 @@
   function logLine(level: string, msg: string) {
     if (!recording()) return;
     logs.update(l => [...l, { ts: new Date().toLocaleTimeString(), level, msg }]);
+  }
+
+  function handleAgentStatusUpdate(payload: any) {
+    // payload: { agent_id, status, timestamp, metadata } veya JSON string
+    let data = payload;
+    if (typeof payload === 'string') {
+      try { data = JSON.parse(payload); } catch { return; }
+    }
+    // Tauri event: { payload: {...} } veya direkt
+    if (data.payload) data = data.payload;
+    // Bazı Tauri emit'leri { event_type, data } şeklinde
+    if (data.data && typeof data.data === 'string') {
+      try { data = JSON.parse(data.data); } catch { /* keep */ }
+    }
+
+    const agentId = data.agent_id || data.agent_name;
+    const status = data.status || data.step_name;
+    if (!agentId || !status) return;
+
+    agentStatuses.update(s => ({
+      ...s,
+      [agentId]: {
+        status,
+        updatedAt: Date.now(),
+        metadata: data.metadata || {}
+      }
+    }));
+
+    // Log da bas
+    if (status.toLowerCase() === 'active') {
+      logLine('INFO', `AGENT RACK: ${agentId} -> ACTIVE`);
+    }
   }
 
   function connect() {
@@ -48,7 +103,7 @@
       uplinkState.set('ONLINE');
       const token = currentApiToken();
       if (token && ws) ws.send(JSON.stringify({ type: 'auth', token }));
-      logLine("INFO", "UPLINK KURULDU (FastAPI WebSocket)");
+      logLine("INFO", "UPLINK KURULDU (FastAPI WebSocket + Agent Rack)");
     };
 
     ws.onmessage = (event) => {
@@ -57,20 +112,45 @@
         if (data.type === "log") {
           if (!recording()) return;
           logs.update(l => [...l, data].slice(-80));
+        } else if (data.type === "agent_status_update") {
+          handleAgentStatusUpdate(data);
         } else if (data.event && data.event.event_type) {
           if (recording()) {
             const evt = data.event;
             const msg = `[${evt.event_type}] ${evt.agent_name || ''} - ${evt.input_summary || evt.step_name || evt.error_message || ''}`;
             logs.update(l => [...l, { ts: new Date(data.timestamp).toLocaleTimeString(), level: evt.severity || "INFO", msg }].slice(-80));
           }
+          // EventBus fallback -> Agent Rack
+          if (data.event.agent_name) {
+            const agentName = data.event.agent_name;
+            let rackStatus = 'Wait';
+            if (data.event.event_type === 'TaskStarted') rackStatus = 'Active';
+            if (data.event.event_type === 'StepCompleted') rackStatus = 'Ready';
+            if (data.event.event_type === 'ErrorHalt') rackStatus = 'Wait';
+            handleAgentStatusUpdate({ agent_id: agentName, status: rackStatus });
+          }
         } else if (data.type === "snapshot_update") {
           taskStatus.update(s => ({ ...s, ...data }));
+          // Snapshot içinde current_agent varsa onu Active yap
+          if (data.current_agent) {
+            handleAgentStatusUpdate({ agent_id: data.current_agent, status: 'Active' });
+          }
         } else if (data.type === "result") {
           taskStatus.update(s => ({ ...s, ...data }));
           isProcessing.set(false);
           const terminal = String(data.status || "").toLowerCase();
           const okStates = ["completed", "partially_completed"];
           logLine(okStates.includes(terminal) ? "INFO" : "ERROR", "OPERASYON SONUÇLANDI: " + data.status);
+          // Tüm ajanları Ready yap (iş bitti)
+          agentStatuses.update(s => {
+            const updated: any = { ...s };
+            for (const k of Object.keys(updated)) {
+              if (updated[k].status === 'Active') {
+                updated[k] = { ...updated[k], status: 'Ready', updatedAt: Date.now() };
+              }
+            }
+            return updated;
+          });
         }
       } catch(e) {
         console.error("WS parse error", e);
@@ -95,12 +175,78 @@
     reconnectTimer = setTimeout(connect, delay);
   }
 
+  async function setupTauriListeners() {
+    try {
+      // Dinamik import - sadece Tauri ortamında var
+      const { listen } = await import('@tauri-apps/api/event');
+
+      const unlistenTelemetry = await listen('pineal-telemetry', (event: any) => {
+        // Telemetri event'i geldi
+        try {
+          let payload = event.payload;
+          if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch {}
+          }
+          if (payload?.data) {
+            let inner = payload.data;
+            if (typeof inner === 'string') {
+              try { inner = JSON.parse(inner); } catch {}
+            }
+            // Agent fallback
+            if (inner?.event?.agent_name) {
+              const agentName = inner.event.agent_name;
+              let rackStatus = 'Wait';
+              if (inner.event.event_type === 'TaskStarted') rackStatus = 'Active';
+              if (inner.event.event_type === 'StepCompleted') rackStatus = 'Ready';
+              handleAgentStatusUpdate({ agent_id: agentName, status: rackStatus });
+            }
+          }
+        } catch (e) {
+          console.debug('Tauri telemetry parse', e);
+        }
+      });
+
+      const unlistenAgent = await listen('pineal-agent-status', (event: any) => {
+        handleAgentStatusUpdate(event.payload || event);
+      });
+
+      tauriUnlisteners.push(unlistenTelemetry, unlistenAgent);
+      console.log('[Tauri] Agent Rack + Telemetry listener aktif');
+      logLine('INFO', 'TAURI NATIVE: GPU hızlandırmalı köprü aktif + Agent Rack canlı');
+    } catch (e) {
+      // Tarayıcı ortamı - Tauri API yok, sorun değil
+      console.debug('Tauri API yok (browser mod)', e);
+    }
+  }
+
   onMount(() => {
     connect();
+    setupTauriListeners();
 
-    // [BOSS-12] Telemetri panosu canlı beslenir (yoksa pano kurgu moduna düşer).
+    // Telemetri panosu canlı beslenir
     fetchTelemetry();
     telemetryPoll = setInterval(fetchTelemetry, 4000);
+
+    // Agent status polling fallback - WS yoksa bile REST'ten besle
+    const agentPoll = setInterval(async () => {
+      try {
+        const res = await apiFetch('/api/agents/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.agents && data.agents.length > 0) {
+            const mapped: Record<string, any> = {};
+            for (const agent of data.agents) {
+              mapped[agent.agent_id] = {
+                status: agent.status,
+                updatedAt: Date.now(),
+                metadata: agent.metadata || {}
+              };
+            }
+            agentStatuses.set(mapped);
+          }
+        }
+      } catch {}
+    }, 3000);
 
     const unsubPower = powerEngaged.subscribe((on) => {
       if (disposed) return;
@@ -131,8 +277,10 @@
     return () => {
       disposed = true;
       if (telemetryPoll) clearInterval(telemetryPoll);
+      clearInterval(agentPoll);
       unsubToken();
       unsubPower();
+      tauriUnlisteners.forEach(fn => { try { fn(); } catch {} });
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (ws) {
         try { ws.close(); } catch (_e) {}

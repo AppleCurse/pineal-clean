@@ -84,6 +84,8 @@ export const logs = writable<Array<{ts: string, level: string, msg: string}>>([]
 export const taskStatus = writable<any>(null);
 export const isProcessing = writable(false);
 export const telemetryEvents = writable<any[]>([]);
+export const agentStatuses = writable<Record<string, { status: string; updatedAt: number; metadata?: any }>>({});
+export const vaultLocked = writable<boolean>(true);
 
 // Scraper vb. state'ler
 export const scrapedUsername = writable('');
