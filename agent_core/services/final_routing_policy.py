@@ -121,6 +121,21 @@ ROUTES: Dict[str, RouteSpec] = {
     "gemini-3.7-flash@google-gemini": RouteSpec("gemini-3.7-flash", "google-gemini", "paid", 0.75, 3.75, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified", note="Google direkt; free-tier canlı teyit bekler"),
     "gemini-3.7-flash@google-gemini-backup": RouteSpec("gemini-3.7-flash", "google-gemini-backup", "paid", 0.75, 3.75, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified", note="429 sonrası backup key (aynı endpoint)"),
     "openai/gpt-5.6-sol-pro@openrouter": RouteSpec("openai/gpt-5.6-sol-pro", "openrouter", "frontier", 2.00, 10.00, 1_048_576, frozenset({"chat","streaming","tools","reasoning"}), "verified", note="Frontier explicit"),
+    # 9Router yerel rotaları (v0.5.81 local proxy 127.0.0.1:20128)
+    "pineal-deep-reasoning@openrouter": RouteSpec("pineal-deep-reasoning", "openrouter", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools","reasoning"}), "verified", note="9Router deep reasoning combo"),
+    "pineal-general-reasoning@openrouter": RouteSpec("pineal-general-reasoning", "openrouter", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools"}), "verified", note="9Router general reasoning combo"),
+    "pineal-fast-extract@openrouter": RouteSpec("pineal-fast-extract", "openrouter", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming","tools"}), "verified", note="9Router fast extract combo"),
+    "pineal-vision@openrouter": RouteSpec("pineal-vision", "openrouter", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified", note="9Router multimodal vision combo"),
+    "pineal-juror-google@openrouter": RouteSpec("pineal-juror-google", "openrouter", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools"}), "verified", note="9Router juror google combo"),
+    "pineal-juror-claude@openrouter": RouteSpec("pineal-juror-claude", "openrouter", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools"}), "verified", note="9Router juror claude combo"),
+    "pineal-juror-open@openrouter": RouteSpec("pineal-juror-open", "openrouter", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming","tools"}), "verified", note="9Router juror open combo"),
+    "pineal-deep-reasoning@9router": RouteSpec("pineal-deep-reasoning", "9router", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools","reasoning"}), "verified", note="9Router deep reasoning combo"),
+    "pineal-general-reasoning@9router": RouteSpec("pineal-general-reasoning", "9router", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools"}), "verified", note="9Router general reasoning combo"),
+    "pineal-fast-extract@9router": RouteSpec("pineal-fast-extract", "9router", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming","tools"}), "verified", note="9Router fast extract combo"),
+    "pineal-vision@9router": RouteSpec("pineal-vision", "9router", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","vision","tools"}), "verified", note="9Router multimodal vision combo"),
+    "pineal-juror-google@9router": RouteSpec("pineal-juror-google", "9router", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools"}), "verified", note="9Router juror google combo"),
+    "pineal-juror-claude@9router": RouteSpec("pineal-juror-claude", "9router", "free", 0.0, 0.0, 1_048_576, frozenset({"chat","streaming","tools"}), "verified", note="9Router juror claude combo"),
+    "pineal-juror-open@9router": RouteSpec("pineal-juror-open", "9router", "free", 0.0, 0.0, 131072, frozenset({"chat","streaming","tools"}), "verified", note="9Router juror open combo"),
 }
 
 FORBIDDEN_ALIASES = {"poolside/laguna:free", "laguna:free", "xs:free", "ling:free"}
@@ -276,6 +291,11 @@ def model_substitution_allowed(requested: str, actual: str) -> bool:
         return True
     # 9Router multi-provider lane combos return member models
     if req.startswith("pineal-") or req.endswith("-lane"):
+        return True
+    # Allow provider prefix differences (e.g. kr/auto -> auto, groq/x -> x)
+    if req.split("/")[-1] == act.split("/")[-1]:
+        return True
+    if act == req.split("/")[-1] or req == act.split("/")[-1]:
         return True
     return False
 

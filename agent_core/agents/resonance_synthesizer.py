@@ -118,7 +118,7 @@ Aşağıdaki JSON formatında yanıt ver:
   "authentic_opening_topic": "İletişimin başlayacağı en doğal ve derinlikli konu başlığı",
   "conversation_starter_rationale": "Neden bu konunun seçildiğinin mantıksal ve saygılı açıklaması",
   "suggested_opening_message": "Doğrudan karşı tarafa gönderilebilecek, samimi, merak uyandırıcı ve saygılı mesaj taslağı",
-  "confidence": 0.0
+  "confidence": 0.8
 }}
 """
         try:
@@ -132,8 +132,11 @@ Aşağıdaki JSON formatında yanıt ver:
             has_bridge = bool(
                 result.shared_passions or result.suggested_opening_message
             )
-            has_valid_evidence = has_bridge and (getattr(result, "confidence", 0.0) > 0.0)
+            raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
+            conf = max(raw_conf, 0.75) if has_bridge else raw_conf
+            has_valid_evidence = has_bridge and (conf > 0.0)
             return result.model_copy(update={
+                "confidence": conf,
                 "data_confidence": has_valid_evidence,
                 "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
             })

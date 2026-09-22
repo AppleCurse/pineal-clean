@@ -1,15 +1,17 @@
 {
-  "timestamp_utc": "2026-09-21 00:53:14",
+  "timestamp_utc": "2026-09-22 08:54:31",
   "base_url": "http://127.0.0.1:20128/v1",
+  "transport_label": "9router",
+  "api_key_source": "NINEROUTER_API_KEY",
   "routes": {
     "pineal-deep-reasoning": {
       "status_code": 200,
-      "latency_s": 1.13,
+      "latency_s": 1.32,
       "ok": true
     },
     "pineal-general-reasoning": {
       "status_code": 200,
-      "latency_s": 0.83,
+      "latency_s": 2.39,
       "ok": true
     },
     "pineal-fast-extract": {
@@ -19,29 +21,29 @@
     },
     "pineal-vision": {
       "status_code": 200,
-      "latency_s": 1.01,
+      "latency_s": 1.58,
       "ok": true
     },
     "pineal-juror-google": {
       "status_code": 200,
-      "latency_s": 0.86,
+      "latency_s": 1.24,
       "ok": true
     },
     "pineal-juror-claude": {
       "status_code": 200,
-      "latency_s": 1.44,
+      "latency_s": 1.97,
       "ok": true
     },
     "pineal-juror-open": {
       "status_code": 200,
-      "latency_s": 0.12,
+      "latency_s": 0.27,
       "ok": true
     }
   },
   "all_ok": true,
   "vision_multimodal": {
     "status_code": 200,
-    "latency_s": 2.74,
+    "latency_s": 1.98,
     "ok": true
   }
 }

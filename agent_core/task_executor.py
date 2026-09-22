@@ -1399,7 +1399,8 @@ class PinealExecutor:
             "Sadece belirtilen alanları içeren geçerli bir JSON döndür."
         )
         try:
-            res = await self.llm_gateway.query_json(prompt, AuthenticVectorResult, tier=1)
+            m = "pineal-deep-reasoning" if "20128" in getattr(self.llm_gateway, "openrouter_base_url", "") else None
+            res = await self.llm_gateway.query_json(prompt, AuthenticVectorResult, tier=1, model=m)
             return {
                 "depth": round(max(0.1, min(res.depth, 1.0)), 3), 
                 "energy": round(max(0.1, min(res.energy, 1.0)), 3),

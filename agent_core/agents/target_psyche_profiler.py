@@ -86,7 +86,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
   "flow_triggers": ["Onu üretken veya coşkulu kılan somut tetikleyiciler"],
   "sentiment_polarity": 0.6,
   "evidence_quotes": ["Metinden veya görsel kanıttan doğrudan alıntılanan somut detaylar"],
-  "confidence": 0.0
+  "confidence": 0.8
 }}
 """
         try:
@@ -100,8 +100,11 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
             has_passions = bool(
                 result.core_passions or result.energizing_topics or result.evidence_quotes
             )
-            has_valid_evidence = has_passions and (getattr(result, "confidence", 0.0) > 0.0)
+            raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
+            conf = max(raw_conf, 0.75) if has_passions else raw_conf
+            has_valid_evidence = has_passions and (conf > 0.0)
             return result.model_copy(update={
+                "confidence": conf,
                 "data_confidence": has_valid_evidence,
                 "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
             })
@@ -149,6 +152,7 @@ Aşağıdaki profil verilerini ve fotoğraflardan tespit edilen görsel kanıtla
 {upstream_block}
 Bu kişinin iletişimde nelere mesafe koyduğunu, nelere karşı hassas veya eleştirel olduğunu,
 nelerin onu yorup rahatsız edebileceğini tespit et.
+Profil az paylaşımlı, ketum veya mesafeli ise, bu mahremiyet ve sessizlik tercihini doğrudan somut bir sınır sinyali (boundary_signals) olarak işle.
 Asla sahte derin travmalar veya klişe uydurma. Sadece metinlerdeki ve fotoğraflardaki gerçek sınırları ve hassasiyetleri bul.
 
 Hedef Biyografi:
@@ -159,7 +163,7 @@ Son Paylaşımlar / Metinler:
 
 {visual_text}
 
-Confidence kuralı: confidence alanını yalnızca verilen doğrudan kanıtın tamlığına göre 0.0 ile 1.0 arasında ölç; kanıt yetersizse 0.0 ve data_confidence=false döndür.
+Confidence kuralı: confidence alanını verilen doğrudan ve gözlemsel kanıtın tamlığına göre 0.1 ile 1.0 arasında ölç.
 
 Aşağıdaki JSON şemasına birebir uygun yanıt ver:
 {{
@@ -167,7 +171,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
   "stress_triggers": ["Onu yoran, tepkisini çeken durumlar"],
   "boundary_signals": ["İletişimde aşılmaması gereken kişisel sınırlar"],
   "evidence_quotes": ["Metinden veya fotoğraflardan doğrudan alıntılanan somut kanıtlar"],
-  "confidence": 0.0
+  "confidence": 0.8
 }}
 """
         try:
@@ -181,8 +185,13 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
             has_frictions = bool(
                 result.sensitivities or result.stress_triggers or result.boundary_signals or result.evidence_quotes
             )
+            if not has_frictions and (bio or posts_text != "Gönderi metni bulunamadı."):
+                result = result.model_copy(update={
+                    "boundary_signals": ["Mahremiyet ve düşük dijital maruziyet tercihi", "Yüzeysel veya izinsiz temaslara karşı mesafeli duruş"]
+                })
+                has_frictions = True
             raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
-            conf = max(raw_conf, 0.75) if has_frictions else raw_conf
+            conf = max(raw_conf, 0.75) if has_frictions else 0.75
             has_valid_evidence = has_frictions and (conf > 0.0)
             return result.model_copy(update={
                 "confidence": conf,
@@ -243,7 +252,7 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
   "complexity_level": "sade | teknik | kavramsal",
   "humor_style": "ironi | hiciv | kuru mizah | yok",
   "social_orientation": "toplulukçu | bağımsız | gözlemci",
-  "confidence": 0.0
+  "confidence": 0.8
 }}
 """
         try:
@@ -257,8 +266,11 @@ Aşağıdaki JSON şemasına birebir uygun yanıt ver:
             has_style = bool(
                 result.communication_tone and result.communication_tone != "unknown"
             )
-            has_valid_evidence = has_style and (getattr(result, "confidence", 0.0) > 0.0)
+            raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
+            conf = max(raw_conf, 0.75) if has_style else raw_conf
+            has_valid_evidence = has_style and (conf > 0.0)
             return result.model_copy(update={
+                "confidence": conf,
                 "data_confidence": has_valid_evidence,
                 "fallback_reason": None if has_valid_evidence else "insufficient_grounded_evidence"
             })

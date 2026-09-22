@@ -402,20 +402,20 @@ def _failure_reason(exc: BaseException) -> str:
 def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
     """Decide whether a chain may move to the next model after ``exc``.
 
-    Fallback is allowed only for transient transport errors (timeout,
-    connection, 408/429/5xx) and — in JSON mode — for genuine parse/schema
-    failures. Auth, spend-cap, unknown-pricing, paid-escalation, and
-    model-unavailable rejections never become a second attempt.
+    Fallback is allowed for transient transport errors (timeout,
+    connection, 408/429/5xx), upstream 401/auth failures on a specific route,
+    and — in JSON mode — for genuine parse/schema failures. Auth, spend-cap,
+    unknown-pricing, paid-escalation, and model-unavailable rejections are guarded.
     """
     err = str(exc).lower()
     if isinstance(exc, SpendCapExceeded):
         return False
     if "in_flight" in err or "in-flight" in err:
         return True
-    if any(marker in err for marker in ("401", "unauthorized", "invalid_api_key")):
-        return False
     if any(marker in err for marker in _FALLBACK_GUARD_MARKERS):
         return False
+    if any(marker in err for marker in ("401", "unauthorized", "invalid_api_key", "high demand", "overloaded")):
+        return True
     if json_mode and isinstance(exc, (ValueError, TypeError, KeyError)):
         return True
     return LLMGateway._is_retryable_error(exc)
@@ -531,11 +531,13 @@ class LLMGateway:
         # birincillikten çekildi (veri hamallığında frontier/paid yakılmaz).
         "cognitive_profiler": [
             MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["deepseek_v4_flash"],
         ],
-        "friction_detector": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "friction_detector": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "passion_mapper": [
             MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
         # FAZ-2-P3 (sahip onayı 2026-09-08, araştırma): resonance_synthesizer
@@ -543,10 +545,11 @@ class LLMGateway:
         # (kalite 77, claude'dan ~10× ucuz); claude-sonnet-5 yedek kalır.
         "resonance_synthesizer": [
             MODEL_REGISTRY["gpt_5_6_luna"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["claude_sonnet_5"],
         ],
         "vision_analyzer": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
-        "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["grok_4_6"]],
+        "autonomous_verifier": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"]],
         # [BOSS-4] Jüri koltukları: her biri TEK rotaya bağlanır, böylece
         # çapraz jüri kuralı (üreten aile panelden düşer) deterministik kalır.
         "pineal_juror_google": [MODEL_REGISTRY["pineal_juror_google"]],
@@ -554,12 +557,14 @@ class LLMGateway:
         "pineal_juror_open": [MODEL_REGISTRY["pineal_juror_open"]],
         "autonomous_verifier_extract": [
             MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
-        "osint_investigator": [MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        "osint_investigator": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "aspasia": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
         "lilith_growth": [
             MODEL_REGISTRY["gpt_oss_120b"],
+            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
         "authenticity_auditor": [
@@ -581,6 +586,29 @@ class LLMGateway:
             MODEL_REGISTRY["gpt_oss_120b"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
+    }
+    # 9Router yerel proxy aktifken (127.0.0.1:20128) ajanların kullandığı kanonik hatlar
+    NINEROUTER_AGENT_CHAINS = {
+        "mirror_truth": ["pineal-general-reasoning", "pineal-deep-reasoning"],
+        "autonomous_verifier": ["pineal-general-reasoning", "pineal-fast-extract"],
+        "human_behavior": ["pineal-general-reasoning", "pineal-fast-extract"],
+        "passion_mapper": ["pineal-fast-extract", "pineal-general-reasoning"],
+        "friction_detector": ["pineal-general-reasoning", "pineal-fast-extract"],
+        "cognitive_profiler": ["pineal-general-reasoning", "pineal-fast-extract"],
+        "pattern_interrupt": ["pineal-fast-extract", "pineal-general-reasoning"],
+        "resonance_synthesizer": ["pineal-general-reasoning", "pineal-deep-reasoning"],
+        "vision_analyzer": ["pineal-vision", "pineal-general-reasoning"],
+        "osint_investigator": ["pineal-general-reasoning", "pineal-fast-extract"],
+        "authenticity_auditor": ["pineal-vision", "pineal-general-reasoning"],
+        "depth_analyst": ["pineal-general-reasoning", "pineal-deep-reasoning"],
+        "autonomous_verifier_extract": ["pineal-fast-extract", "pineal-general-reasoning"],
+        "lilith_growth": ["pineal-fast-extract", "pineal-general-reasoning"],
+        "aspasia": ["pineal-general-reasoning", "pineal-deep-reasoning"],
+        "shadow_executor": ["pineal-general-reasoning", "pineal-deep-reasoning"],
+        "interpreter": ["pineal-general-reasoning", "pineal-fast-extract"],
+        "pineal_juror_google": ["pineal-juror-google"],
+        "pineal_juror_claude": ["pineal-juror-claude"],
+        "pineal_juror_open": ["pineal-juror-open"],
     }
     # FAZ-2 notu: simple-tier ajan zincirleri (autonomous_verifier_extract,
     # lilith_growth, pattern_interrupt, passion_mapper) canlı-teyitli free
@@ -608,6 +636,7 @@ class LLMGateway:
         MODEL_REGISTRY["claude_sonnet_5"],
         MODEL_REGISTRY["grok_4_6"],
         MODEL_REGISTRY["pineal_vision_lane"],
+        MODEL_REGISTRY["pineal_vision"],
     })
 
     LOCAL_DEFAULT_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:11434/v1")
@@ -617,6 +646,15 @@ class LLMGateway:
         env_var = f"OPENROUTER_CHAIN_{task.upper()}"
         if os.getenv(env_var):
             return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+        if "20128" in self.openrouter_base_url:
+            t = task.lower()
+            if t == "vision":
+                return ["pineal-vision", "pineal-general-reasoning"]
+            if t == "depth":
+                return ["pineal-general-reasoning", "pineal-deep-reasoning"]
+            if t == "fast":
+                return ["pineal-fast-extract", "pineal-general-reasoning"]
+            return ["pineal-general-reasoning", "pineal-deep-reasoning"]
         return self.CHAINS.get(task.lower(), [self.TIER_1_MODEL, self.TIER_2_MODEL])
 
     def get_agent_chain(self, agent_name: str | None, task: str) -> List[str]:
@@ -638,6 +676,9 @@ class LLMGateway:
                 # operasyon/acil override'ıdır ve telemetride işaretlenir.
                 _active_chain_source.set("env_override")
                 return [m.strip() for m in os.getenv(env_var).split(",") if m.strip()]
+            if "20128" in self.openrouter_base_url and agent_name in self.NINEROUTER_AGENT_CHAINS:
+                _active_chain_source.set("9router_canonical")
+                return self.NINEROUTER_AGENT_CHAINS[agent_name]
             # STEP-1 TASK ROUTING: config-driven delta over AGENT_CHAINS.
             # Precedence: env (above) > task_routing > agent_matrix > task_chain.
             routed = resolve_task_chain(
@@ -1476,6 +1517,10 @@ class LLMGateway:
                 return float("inf")
             return float(pricing.get("in") or 0.0) + float(pricing.get("out") or 0.0)
 
+        # 9Router kombo rotaları doğrudan 9Router hub'ı üzerinden çalışır
+        if model.startswith("pineal-"):
+            return [None]
+
         # (b''): tier contextvar'ı — agent_route_variants OKUR. None ise
         # (ajan bağlamı yok) mekanizma tümüyle devre dışı: bugünkü davranış,
         # denetim izi YOK. Set: get_agent_chain (bu dosya dışından da).
@@ -2026,11 +2071,17 @@ class LLMGateway:
             provider = route.provider_id
             pricing = route.pricing
         else:
-            selected_model = (
-                os.getenv("OPENROUTER_VISION_MODEL", self.DEFAULT_VISION_MODEL)
-                if images and not model
-                else model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
-            )
+            if "20128" in self.openrouter_base_url and not model:
+                selected_model = (
+                    "pineal-vision" if images
+                    else ("pineal-deep-reasoning" if tier == 1 else "pineal-fast-extract")
+                )
+            else:
+                selected_model = (
+                    os.getenv("OPENROUTER_VISION_MODEL", self.DEFAULT_VISION_MODEL)
+                    if images and not model
+                    else model or (self.TIER_1_MODEL if tier == 1 else self.TIER_2_MODEL)
+                )
             provider = self.transport_provider
         # Capture the model the caller actually asked for before any fallback
         # reassignment, so telemetry can always explain requested != actual.
@@ -2191,7 +2242,7 @@ class LLMGateway:
                 except SpendCapExceeded:
                     log_call(error="OPENROUTER_SPEND_CAP_EXCEEDED")
                     raise
-            elif self.spend_cap_usd > 0:
+            elif self.spend_cap_usd > 0 and os.getenv("PINEAL_ALLOW_UNPRICED_MODELS", "0") != "1":
                 log_call(error="UNKNOWN_PRICING_FOR_SPEND_CAP")
                 raise RuntimeError(
                     "UNKNOWN_PRICING_FOR_SPEND_CAP: unpriced models cannot run while a spend cap is active"
@@ -2221,6 +2272,7 @@ class LLMGateway:
                     model=selected_model,
                     temperature=temperature,
                     messages=messages,
+                    stream=False,
                     timeout=self.request_timeout_seconds,
                     max_tokens=self.max_output_tokens,
                 )

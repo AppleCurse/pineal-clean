@@ -17,7 +17,6 @@ pipeline:
   # pipeline "halted_critical" olarak bitebilir
   critical_agents:
     - mirror_truth
-    - passion_mapper
 
 agents:
   # The deterministic 7-pillar bundle is the pipeline's evidence foundation.

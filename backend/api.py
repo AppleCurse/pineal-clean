@@ -706,6 +706,7 @@ _VAULT_PROVIDER_ALIASES: dict = {
     "cerebras": "cerebras",
     "nousresearch": "nous-research",
     "nous": "nous-research",
+    "nousportal": "nous-research",
     "mistral": "mistral",
     "together": "together",
     "fireworks": "fireworks",
@@ -741,6 +742,8 @@ _VAULT_PROVIDER_ALIASES: dict = {
     # set_key yoluna duser); yalniz top-level `api_key` yoksa yedek olur.
     "openrouter": "openrouter",
     "or": "openrouter",
+    "ninerouter": "openrouter",
+    "9router": "openrouter",
 }
 
 
@@ -774,11 +777,40 @@ def _extract_vault_provider_keys(vault: dict) -> tuple:
     providers = vault.get("providers")
     if isinstance(providers, dict):
         for raw_name, entry in providers.items():
-            pid = _VAULT_PROVIDER_ALIASES.get(_normalize_vault_provider_name(raw_name))
+            norm_name = _normalize_vault_provider_name(raw_name)
+            if norm_name in ("sandbox",):
+                continue
+            if norm_name in ("searchandosint", "searchosint", "searchandall", "search"):
+                if isinstance(entry, dict):
+                    for sk in ("tavily", "serpapi", "exa"):
+                        val = entry.get(sk)
+                        if isinstance(val, str) and val.strip():
+                            k_name = f"{sk}_key"
+                            if not vault.get(k_name):
+                                vault[k_name] = val.strip()
+                continue
+            pid = _VAULT_PROVIDER_ALIASES.get(norm_name)
             if pid is None:
                 skipped["unknown"].append(str(raw_name))
                 continue
             if isinstance(entry, dict):
+                if pid == "google-gemini":
+                    prim = entry.get("primary_api_key") or entry.get("api_key")
+                    back = entry.get("backup_api_key")
+                    vert = entry.get("vertex_token")
+                    found_any = False
+                    if isinstance(prim, str) and prim.strip():
+                        applied["google-gemini"] = prim.strip()
+                        found_any = True
+                    if isinstance(back, str) and back.strip():
+                        applied["google-gemini-backup"] = back.strip()
+                        found_any = True
+                    if isinstance(vert, str) and vert.strip():
+                        applied["google-gemini-vertex"] = vert.strip()
+                        found_any = True
+                    if not found_any:
+                        skipped["malformed"].append(str(raw_name))
+                    continue
                 key = entry.get("api_key")
             elif isinstance(entry, str):
                 key = entry
@@ -941,7 +973,15 @@ def get_room(client_id: str) -> dict:
         vault.pop("providers", None)
         vault.pop("provider_keys", None)
 
-        api_key = vault.pop("api_key", None) or file_or_key or os.getenv("OPENROUTER_API_KEY")
+        # Check if local 9router proxy is configured
+        is_9router = "20128" in os.getenv("OPENROUTER_BASE_URL", "")
+        ninerouter_key = os.getenv("NINEROUTER_API_KEY") or os.getenv("PINEAL_LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+        if is_9router and ninerouter_key and ninerouter_key.startswith("sk-pineal"):
+            api_key = ninerouter_key
+        else:
+            api_key = vault.pop("api_key", None) or file_or_key or os.getenv("OPENROUTER_API_KEY")
+
         if api_key and not api_key.startswith("sk-or-v1-YOUR"):
             executor.llm_gateway.set_key(api_key)
             if shadow_executor is not None:
@@ -949,6 +989,12 @@ def get_room(client_id: str) -> dict:
             if dialogue_manager is not None:
                 dialogue_manager.llm.set_key(api_key)
             vault["or_key"] = True
+
+        # Export direct keys to environment for underlying SDKs
+        if "google-gemini" in file_provider_keys:
+            os.environ.setdefault("GEMINI_API_KEY", file_provider_keys["google-gemini"])
+        if "google-gemini-backup" in file_provider_keys:
+            os.environ.setdefault("GEMINI_BACKUP_API_KEY", file_provider_keys["google-gemini-backup"])
 
         # FAZ 3: dosyadan yuklenen dogrudan-saglayici anahtarlari (yukarida
         # parse edildi; ham dict'ler odadan dusuruldu). Yalniz oda executor
@@ -980,6 +1026,12 @@ def get_room(client_id: str) -> dict:
         # "SERPAPI_KEY" yalnızca geriye uyumluluk için ikincil okunur.
         serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY")
         exa = vault.get("exa_key") or os.getenv("EXA_API_KEY")
+        if tavily:
+            os.environ.setdefault("TAVILY_API_KEY", tavily)
+        if serpapi:
+            os.environ.setdefault("SERPAPI_API_KEY", serpapi)
+        if exa:
+            os.environ.setdefault("EXA_API_KEY", exa)
         if tavily or serpapi or exa:
             executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
             vault["search_keys"] = True
@@ -2047,8 +2099,10 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                     cookie = random.choice(cookie_list)
                     broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
+        enable_twitter = os.getenv("ENABLE_TWITTER", "false").lower() == "true" or os.getenv("ENABLE_X", "false").lower() == "true"
+        enable_cross = os.getenv("ENABLE_CROSS_PLATFORM", "false").lower() == "true"
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
-        if effective_type == "x":
+        if effective_type == "x" and not enable_twitter:
             # Never run Pineal on an empty X profile. Preserve the request and
             # ask the user to authorize a distinct, auditable alternative.
             room = get_room(client_id)
@@ -2061,19 +2115,124 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
             broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
             return
         if req.url and effective_type == "unsupported_web":
-            # [023] fix: tanınmayan platformda URL segmentini Instagram adı gibi
-            # kullanıp yanlış hedefi kazımak YASAK. Tahmin üretme, açıkça dur.
-            broadcast_log(
-                client_id, "WARNING",
-                f"PLATFORM DESTEKLENMİYOR: {req.url} — yalnızca Instagram kazıması var; "
-                "tanınmayan URL tahmine dayalı kazınmaz, analiz başlatılmadı.",
-            )
-            broadcast_result_error(
-                client_id, "unsupported_platform",
-                "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
-            )
-            return
+            if not enable_cross:
+                # [023] fix: tanınmayan platformda URL segmentini Instagram adı gibi
+                # kullanıp yanlış hedefi kazımak YASAK. Tahmin üretme, açıkça dur.
+                broadcast_log(
+                    client_id, "WARNING",
+                    f"PLATFORM DESTEKLENMİYOR: {req.url} — yalnızca Instagram kazıması var; "
+                    "tanınmayan URL tahmine dayalı kazınmaz, analiz başlatılmadı.",
+                )
+                broadcast_result_error(
+                    client_id, "unsupported_platform",
+                    "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
+                )
+                return
+            effective_type = "cross"
         task_id = task_id or _new_task_id()
+        if req.url and effective_type in ("x", "cross"):
+            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
+            from agent_core.services.platform_registry import extract_x_username
+            clean_u = extract_x_username(req.url) or (req.url.split('/')[-1] if '/' in req.url else req.url).lstrip('@').strip()
+            broadcast_log(client_id, "INFO", f"AÇIK KAYNAK VE OSINT: {clean_u} için veriler taranıyor...")
+            try:
+                # Çok kanallı paralel OSINT araması (Instagram, LinkedIn, Web)
+                if " " in clean_u:
+                    queries = [
+                        f'"{clean_u}" instagram',
+                        f'"{clean_u}" linkedin',
+                        f'"{clean_u}"',
+                        f'site:instagram.com "{clean_u}"',
+                        f'site:linkedin.com/in "{clean_u}"',
+                    ]
+                else:
+                    queries = [
+                        f"{clean_u} instagram",
+                        f"{clean_u} linkedin twitter",
+                        f"{clean_u}",
+                    ]
+                search_tasks = [executor.search_engine.search(q, num_results=6) for q in queries]
+                search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+                all_raw_results = []
+                seen_urls = set()
+                for s_res in search_results:
+                    if isinstance(s_res, Exception):
+                        continue
+                    for r in getattr(s_res, "results", []):
+                        u = r.source_url or ""
+                        if u and u in seen_urls:
+                            continue
+                        seen_urls.add(u)
+                        all_raw_results.append(r)
+
+                # Katmanlı alaka sıralaması: Tam ad eşleşmesi > parça eşleşmesi > genel
+                target_parts = [p.lower() for p in clean_u.split() if len(p) > 1]
+                name_full = clean_u.lower()
+                tier1 = []
+                tier2 = []
+                tier3 = []
+                for r in all_raw_results:
+                    text_blob = f"{r.content or ''} {r.source_url or ''}".lower()
+                    if name_full in text_blob:
+                        tier1.append(r)
+                    elif all(p in text_blob for p in target_parts):
+                        tier2.append(r)
+                    elif any(p in text_blob for p in target_parts):
+                        tier3.append(r)
+
+                ordered_results = (tier1 + tier2 + tier3) or all_raw_results
+
+                # Anlamlı içerikleri filtrele
+                snippets = []
+                for r in ordered_results:
+                    c = (r.content or "").strip()
+                    if c and len(c) > 20:
+                        snippets.append(f"[{r.provider.upper()}] {c}")
+
+                # Tespit edilen doğrudan sosyal medya profilleri
+                found_profiles = []
+                for r in ordered_results:
+                    u = r.source_url or ""
+                    if any(dom in u.lower() for dom in ("instagram.com/", "twitter.com/", "x.com/", "linkedin.com/in/", "linkedin.com/pub/", "facebook.com/")):
+                        if u not in found_profiles:
+                            found_profiles.append(u)
+
+                bio = snippets[0] if snippets else f"Public OSINT dossier for {clean_u}"
+                if found_profiles:
+                    broadcast_log(client_id, "INFO", f"HEDEF PROFİLLERİ TESPİT EDİLDİ: {', '.join(found_profiles[:3])}")
+                
+                display_user = f"@{clean_u.replace(' ', '_').lower()}" if " " in clean_u else f"@{clean_u}"
+                payload["target_profile"].update({
+                    "username": display_user,
+                    "name": clean_u,
+                    "bio": bio,
+                    "posts": snippets[1:] if len(snippets) > 1 else (snippets or [f"Public activity record for {clean_u}."]),
+                    "post_times": [],
+                    "posts_meta": [],
+                    "post_types": ["text" for _ in snippets] if snippets else ["text"],
+                    "images": [],
+                    "followers": 150 if found_profiles else 0,
+                    "following": None,
+                    "is_private": False,
+                    "detected_urls": found_profiles,
+                })
+                broadcast_log(client_id, "INFO", f"TELEMETRİ: {len(snippets)} açık kaynak verisi ve {len(found_profiles)} profil hedefe bağlandı.")
+            except Exception as se:
+                broadcast_log(client_id, "WARNING", f"OSINT ARAMA UYARISI: {se}")
+                payload["target_profile"].update({
+                    "username": f"@{clean_u}",
+                    "name": clean_u,
+                    "bio": f"Target dossier for {clean_u}",
+                    "posts": [f"Public search for {clean_u}"],
+                    "post_times": [],
+                    "posts_meta": [],
+                    "post_types": ["text"],
+                    "images": [],
+                    "followers": 0,
+                    "following": None,
+                    "is_private": False,
+                })
         if req.url and effective_type == "instagram":
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [INSTAGRAM]")
             # [FIX #8] Eski kod: (1) tek deneme + hata yutuluyordu ve
@@ -2133,6 +2292,7 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                     executor.execute_task(payload, task_id),
                     timeout=task_timeout,
                 )
+                setattr(res, "target_profile", payload.get("target_profile"))
                 broadcast_result(client_id, res)
                 return
             except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
@@ -2242,7 +2402,7 @@ def broadcast_result(client_id, res):
             return val.model_dump(mode="json")
         return val
 
-    _enqueue(client_id, ("result", {
+    payload = {
         "type": "result",
         "task_id": res.task_id,
         "status": res.status,
@@ -2265,9 +2425,12 @@ def broadcast_result(client_id, res):
         "visual_evidence": _dump_field(getattr(res, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(res, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(res, "osint_footprint", None)),
+        "target_profile": getattr(res, "target_profile", None),
         **_pillar_payload_fields(res),
         "telemetry": getattr(res, "telemetry", None)
-    }))
+    }
+    room["latest_result"] = payload
+    _enqueue(client_id, ("result", payload))
 
 async def _send_result(room: dict, data: dict):
     result_telemetry = dict(data.get("telemetry") or {})
