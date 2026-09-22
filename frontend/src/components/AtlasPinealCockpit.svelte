@@ -133,66 +133,56 @@
     }
   }
 
+  // Aspasia Canlı CRT Sohbet Akışı
+  let chatMessages: Array<{ ts: string; sender: string; text: string }> = [
+    { ts: nowTime(), sender: 'Aspasia', text: 'Sistem çevrimiçi. Dinliyorum Mösyö; hedefin durumunu, riskleri veya aklınızdaki soruları doğrudan sorabilirsiniz.' }
+  ];
+  let terminalEl: HTMLElement | null = null;
+
+  function scrollToBottom() {
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        if (terminalEl) terminalEl.scrollTop = terminalEl.scrollHeight;
+      }, 40);
+    }
+  }
+
   async function sendAspasiaMessage() {
     const text = inputMessage.trim();
     if (!text || isSending) return;
     inputMessage = '';
     isSending = true;
     playClick(440, 30);
+    
+    // Anında canlı ekrana yaz
+    chatMessages = [...chatMessages, { ts: nowTime(), sender: 'SİZ', text }];
+    scrollToBottom();
     addLog(`SİZ: ${text}`, 'INFO');
 
     try {
-      // Önce komut kanalı — dialogue_manager üzerinden otonom ajan zincirine paslanır
-      // Eğer komut tanınırsa görev başlatılır, değilse sohbet devam eder
-      let commandAttempted = false;
-      try {
-        const cmdRes = await apiFetch('/api/aspasia/command', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            client_id: $clientId || 'default',
-            user_message: text
-          })
-        });
-        if (cmdRes.ok) {
-          const cmdData = await cmdRes.json();
-          if (cmdData.accepted && cmdData.task_id) {
-            commandAttempted = true;
-            addLog(`ASPASIA KOMUT: ${cmdData.intent} -> görev ${cmdData.task_id} [dialogue_manager -> ajan zinciri]`, 'INFO');
-            isProcessing.set(true);
-            taskStatus.update(s => ({ ...(s || {}), task_id: cmdData.task_id, status: 'processing' }));
-            playClick(520, 40);
-          } else if (cmdData.reason) {
-            // Komut tanınmadı — sohbete düş
-            addLog(`ASPASIA: ${cmdData.reason}`, 'INFO');
-            commandAttempted = true; // yine de cevap verdi
-          }
-        }
-      } catch (e) {
-        // Komut kanalı hatası — sohbet fallback
-        console.debug('Aspasia command fallback', e);
-      }
+      const res = await apiFetch('/api/aspasia/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: $clientId || 'default',
+          user_message: text
+        })
+      });
 
-      if (!commandAttempted) {
-        const res = await apiFetch('/api/aspasia/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            client_id: $clientId || 'default',
-            user_message: text
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          const reply = data.message || data.reply || data.response || 'Emir alındı.';
-          addLog(`ASPASIA: ${reply}`, 'INFO');
-          playClick(520, 40);
-        } else {
-          throw new Error(`HTTP ${res.status}`);
-        }
+      if (res.ok) {
+        const data = await res.json();
+        const reply = data.message || data.reply || data.response || 'Emir alındı Mösyö.';
+        chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: reply }];
+        scrollToBottom();
+        addLog(`ASPASIA: ${reply}`, 'INFO');
+        playClick(520, 40);
+      } else {
+        throw new Error(`HTTP ${res.status}`);
       }
     } catch (err: any) {
+      const errMsg = `Aspasia yanıt veremedi: ${err.message || err}`;
+      chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: errMsg }];
+      scrollToBottom();
       addLog(`ASPASIA HATA: ${err.message}`, 'ERROR');
     } finally {
       isSending = false;
@@ -275,26 +265,48 @@
     title="ANALİZİ BAŞLAT (CAPTURE)"
   ></button>
 
-  <!-- Aspasia Sohbet/Komut Satırı (Sol alttaki '> Komut veya sorgu gir...' üzerine şeffaf alan) -->
+  <!-- Aspasia Canlı CRT Terminal Ekranı (Dinamik Canlı Sohbet & Rapor Akışı) -->
+  <div class="aspasia-crt-terminal" bind:this={terminalEl}>
+    {#each chatMessages as msg}
+      <div class="term-line {msg.sender === 'SİZ' ? 'user-line' : 'aspasia-line'}">
+        <span class="ts">[{msg.ts}]</span>
+        <span class={msg.sender === 'SİZ' ? 'sender-user' : 'sender-aspasia'}>{msg.sender}</span>
+        <span class="arrow">&gt;</span>
+        <span class="term-text">{msg.text}</span>
+      </div>
+    {/each}
+    {#if isSending}
+      <div class="term-line typing-line">
+        <span class="ts">[{nowTime()}]</span>
+        <span class="sender-aspasia">Aspasia</span>
+        <span class="arrow">&gt;</span>
+        <span class="term-text typing-glow">Düşünüyor ve sistem verilerini inceliyor...</span>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Aspasia Sohbet/Komut Satırı (Sol alttaki '> Komut veya sorgu gir...' alanı) -->
   <div class="aspasia-command-slot">
     <input
       type="text"
       class="aspasia-command-input"
       bind:value={inputMessage}
-      placeholder=""
+      placeholder="> Komut veya soru girin (Enter ile gönder)..."
       disabled={isSending}
       on:keydown={(e) => { if (e.key === 'Enter') sendAspasiaMessage(); }}
       title="Aspasia Komut Satırı"
     />
   </div>
 
-  <!-- Aspasia GÖNDER Butonu ('GÖNDER' butonu üzerine şeffaf alan) -->
+  <!-- Aspasia GÖNDER Butonu ('GÖNDER' butonu üzerine şık buton) -->
   <button
-    class="antique-touch-btn aspasia-send-spot"
+    class="aspasia-send-spot"
     on:click={sendAspasiaMessage}
     disabled={isSending || !inputMessage.trim()}
     title="GÖNDER"
-  ></button>
+  >
+    GÖNDER
+  </button>
 
   <!-- 7 Sütun Dokunmatik Butonları (FOLLOWER, TIMING, DEPTH, VISUAL, SHADOW, OSINT, RESONANCE) -->
   <div class="seven-pillars-hitbox-rack">
@@ -644,13 +656,99 @@
     animation: amberPulse 0.8s infinite alternate;
   }
 
+  /* =========================================================
+     CANLI ASPASIA CRT TERMİNAL EKRANI (DİNAMİK AKIŞ)
+     ========================================================= */
+  .aspasia-crt-terminal {
+    position: absolute;
+    left: 5.44%;
+    top: 83.20%;
+    width: 44.50%;
+    height: 10.40%;
+    background: #020705;
+    border-radius: 3px;
+    padding: 6px 10px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.95), inset 0 0 4px rgba(6, 182, 212, 0.15);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(9px, 0.76vw, 12px);
+    line-height: 1.35;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+  }
+
+  .aspasia-crt-terminal::-webkit-scrollbar {
+    width: 4px;
+  }
+  .aspasia-crt-terminal::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.4);
+    border-radius: 2px;
+  }
+
+  .term-line {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    word-break: break-word;
+  }
+
+  .ts {
+    color: #4b6e5e;
+    font-size: 0.82em;
+    flex-shrink: 0;
+  }
+
+  .sender-aspasia {
+    color: #38ef7d;
+    font-weight: 700;
+    flex-shrink: 0;
+    text-shadow: 0 0 6px rgba(56, 239, 125, 0.6);
+  }
+
+  .sender-user {
+    color: #f59e0b;
+    font-weight: 700;
+    flex-shrink: 0;
+    text-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+  }
+
+  .arrow {
+    color: #2dd4bf;
+    font-weight: bold;
+    flex-shrink: 0;
+  }
+
+  .term-text {
+    color: #a7f3d0;
+    text-shadow: 0 0 4px rgba(167, 243, 208, 0.3);
+  }
+
+  .user-line .term-text {
+    color: #fef3c7;
+    text-shadow: 0 0 4px rgba(254, 243, 199, 0.3);
+  }
+
+  .typing-glow {
+    color: #67e8f9;
+    animation: textPulse 1s infinite alternate;
+  }
+
+  @keyframes textPulse {
+    0% { opacity: 0.5; }
+    100% { opacity: 1; }
+  }
+
   /* Aspasia Sohbet/Komut Satırı */
   .aspasia-command-slot {
     position: absolute;
     left: 5.44%;
-    top: 93.30%;
-    width: 39.17%;
-    height: 4.20%;
+    top: 93.90%;
+    width: 38.60%;
+    height: 3.80%;
     z-index: 12;
     display: flex;
     align-items: center;
@@ -659,30 +757,62 @@
   .aspasia-command-input {
     width: 100%;
     height: 100%;
-    background: transparent;
-    border: none;
+    background: #020705;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    border-radius: 3px;
     outline: none;
-    padding-left: 22px;
-    color: #fef3c7;
-    font-size: clamp(8px, 0.88vw, 12px);
+    padding: 0 10px;
+    color: #34d399;
+    font-size: clamp(9px, 0.82vw, 12px);
     font-family: 'JetBrains Mono', monospace;
-    caret-color: #f59e0b;
-    text-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+    caret-color: #10b981;
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.95);
+    transition: all 0.2s ease;
   }
 
-  .aspasia-command-input:focus, .aspasia-command-input:not(:placeholder-shown) {
-    background: #030805;
-    border-radius: 3px;
-    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.95);
+  .aspasia-command-input:focus {
+    border-color: #10b981;
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.95), 0 0 8px rgba(16, 185, 129, 0.35);
+    color: #6ee7b7;
+  }
+
+  .aspasia-command-input::placeholder {
+    color: rgba(52, 211, 153, 0.4);
+    font-size: 0.9em;
   }
 
   /* Aspasia GÖNDER Butonu */
   .aspasia-send-spot {
-    left: 44.92%;
-    top: 93.30%;
-    width: 6.58%;
-    height: 4.20%;
+    position: absolute;
+    left: 44.50%;
+    top: 93.90%;
+    width: 5.44%;
+    height: 3.80%;
     border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(16, 185, 129, 0.18);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(8px, 0.70vw, 11px);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 12;
+  }
+
+  .aspasia-send-spot:hover:not(:disabled) {
+    background: rgba(16, 185, 129, 0.35);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
+    color: #fff;
+  }
+
+  .aspasia-send-spot:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   /* 7 Sütun Dokunmatik Alanları */

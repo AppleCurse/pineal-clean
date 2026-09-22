@@ -2512,7 +2512,7 @@ async def api_override(req: OverridePayload):
     return {"status": "sealed", "quarantined": quarantined}
 
 @app.get("/api/telemetry")
-async def api_telemetry(client_id: str):
+async def api_telemetry(client_id: str = "default"):
     room = get_room(client_id)
     executor = room["executor"]
     vault = room["vault"]
