@@ -2598,11 +2598,12 @@ async def api_update_agent_status(agent_id: str, status: str, metadata: Optional
 
 
 class VaultStatusPayload(BaseModel):
-    client_id: str
+    client_id: str = "default"
+    action: Optional[str] = None
 
 
 @app.get("/api/vault/status")
-async def api_vault_status(client_id: str):
+async def api_vault_status(client_id: str = "default"):
     """Vault kilit durumu - mandal baglantisi"""
     room = get_room(client_id)
     vault = room["vault"]
@@ -2620,6 +2621,16 @@ async def api_vault_status(client_id: str):
         "can_scrape": has_key,  # Vault kilidi: anahtar yoksa OSINT/Scraper cikmaz
         "message": "VAULT ACIK - dis dunya erisimi serbest" if has_key else "VAULT KILITLI - operator anahtari cevirmeden OSINT/Scraper cikmaz"
     }
+
+
+@app.post("/api/vault/status")
+async def api_vault_status_toggle(payload: VaultStatusPayload):
+    """Vault kilit durumu gecisi (POST /api/vault/status toggle)"""
+    if payload.action == "lock":
+        return await api_vault_lock(payload)
+    elif payload.action == "unlock":
+        return await api_vault_unlock(payload)
+    return await api_vault_status(payload.client_id)
 
 
 @app.post("/api/vault/lock")

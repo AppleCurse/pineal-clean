@@ -109,6 +109,8 @@
     isProcessing.set(true);
     playRunning();
     addLog(`ANALİZ BAŞLATILDI: ${url}`, 'INFO');
+    chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: `Hedef profil kilitlendi Mösyö: [${url}]. 12 kişilik ajan timi sahaya indi.` }];
+    scrollToBottom();
 
     try {
       const res = await apiFetch('/api/initiate', {
@@ -117,6 +119,9 @@
         body: JSON.stringify({
           client_id: $clientId,
           url,
+          rituals: '',
+          playlist: '',
+          envies: '',
           scraper_type: 'cross',
         })
       });
@@ -125,11 +130,50 @@
       if (data.task_id) {
         taskStatus.update(s => ({ ...(s || {}), task_id: data.task_id, status: 'processing' }));
         addLog(`GÖREV DEVREDE: ${data.task_id}`, 'INFO');
+        chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: `Görev #${data.task_id} resmen devrede. Epifiz gözü taramaya odaklandı.` }];
+        scrollToBottom();
       }
     } catch (e: any) {
       isProcessing.set(false);
       playHalt();
       addLog(`HATA: ${e?.message || e}`, 'ERROR');
+      chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: `Görev başlatılamadı Mösyö: ${e?.message || e}` }];
+      scrollToBottom();
+    }
+  }
+
+  function selectTab(tab: string) {
+    activeTab = tab;
+    playClick(300, 30);
+    const tabDesc: Record<string, string> = {
+      'ASPASIA': 'Ana Komuta ve Gözlemci Modu aktif.',
+      'VISION': 'Görsel & Estetik Forensik kanalı önceliklendirildi.',
+      'OSINT': 'Açık Kaynak Dijital Ayak İzi taraması devrede.',
+      'FRICTION': 'Sınır & Hassasiyet (Friction) dedektörü odaklandı.',
+      'VERIFY': 'Otonom Heyet Çapraz Doğrulama süzgeci açık.'
+    };
+    addLog(`GÜVERTE SEÇİMİ: [${tab}] — ${tabDesc[tab] || ''}`, 'INFO');
+    chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: `Güverte modu güncellendi Mösyö: [${tab}] — ${tabDesc[tab] || ''}` }];
+    scrollToBottom();
+  }
+
+  async function toggleVaultLock() {
+    playClick(400, 30);
+    const targetAction = isVaultLocked ? 'unlock' : 'lock';
+    isVaultLocked = !isVaultLocked;
+    vaultLocked.set(isVaultLocked);
+    const stateText = isVaultLocked ? 'KİLİTLENDİ (OSINT/Scraping korumalı)' : 'AÇILDI (Tam erişim serbest)';
+    chatMessages = [...chatMessages, { ts: nowTime(), sender: 'Aspasia', text: `Vault mandalı Mösyö: ${stateText}.` }];
+    scrollToBottom();
+
+    try {
+      await apiFetch('/api/vault/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: $clientId || 'default', action: targetAction })
+      });
+    } catch (_e) {
+      // background sync handled
     }
   }
 
@@ -226,7 +270,16 @@
   </div>
 
   <!-- Vault LED — gözün üzerinde DEĞİL, sol alt Aspasia konsolunda küçük nokta -->
-  <div class="vault-led" class:locked={isVaultLocked} class:open={!isVaultLocked} title={isVaultLocked ? 'VAULT KİLİTLİ: OSINT/Scraper bloklı' : 'VAULT AÇIK'}>
+  <div
+    class="vault-led"
+    class:locked={isVaultLocked}
+    class:open={!isVaultLocked}
+    role="button"
+    tabindex="0"
+    on:click={toggleVaultLock}
+    on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleVaultLock(); }}
+    title={isVaultLocked ? 'VAULT KİLİTLİ: Tıkla ve Aç (OSINT/Scraper serbest bırak)' : 'VAULT AÇIK: Tıkla ve Kilitle'}
+  >
     <span class="vault-dot"></span>
     <span class="vault-label">{isVaultLocked ? 'VAULT' : 'OPEN'}</span>
   </div>
@@ -238,7 +291,7 @@
     {#each ['ASPASIA', 'VISION', 'OSINT', 'FRICTION', 'VERIFY'] as tab}
       <button
         class="tab-touch-seal {activeTab === tab ? 'tab-active' : ''}"
-        on:click={() => { activeTab = tab; playClick(300, 30); }}
+        on:click={() => selectTab(tab)}
         title="{tab} Ekranı"
       ></button>
     {/each}
@@ -250,7 +303,7 @@
       type="text"
       class="url-cassette-input"
       bind:value={targetUrl}
-      placeholder=""
+      placeholder="> Hedef profil / URL kaseti girin..."
       disabled={$isProcessing}
       on:keydown={(e) => { if (e.key === 'Enter') launchAnalysis(); }}
       title="Hedef Profil / URL Kaseti"
@@ -478,6 +531,7 @@
     letter-spacing: 0.14em;
     z-index: 15;
     pointer-events: auto;
+    cursor: pointer;
     background: rgba(0, 0, 0, 0.55);
     border: 1px solid rgba(212, 175, 55, 0.25);
     backdrop-filter: blur(2px);
@@ -525,11 +579,11 @@
     right: 0;
     top: 50%;
     transform: translateY(-50%) translateX(100%);
-    z-index: 20;
+    z-index: 90;
     transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     pointer-events: auto;
     max-height: 85vh;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .agent-rack-dock.visible {
@@ -621,8 +675,9 @@
   .url-cassette-input {
     width: 100%;
     height: 100%;
-    background: transparent;
-    border: none;
+    background: rgba(3, 8, 5, 0.88);
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    border-radius: 4px;
     outline: none;
     padding: 0 10px;
     color: #fde68a;
@@ -630,12 +685,19 @@
     font-family: 'JetBrains Mono', monospace;
     caret-color: #f59e0b;
     text-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9);
+    transition: all 0.2s ease;
   }
 
-  .url-cassette-input:focus, .url-cassette-input:not(:placeholder-shown) {
+  .url-cassette-input::placeholder {
+    color: rgba(212, 175, 55, 0.5);
+    font-size: 0.9em;
+  }
+
+  .url-cassette-input:focus {
     background: #040907;
-    border-radius: 3px;
-    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.95);
+    border-color: rgba(245, 158, 11, 0.65);
+    box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.95), 0 0 8px rgba(245, 158, 11, 0.3);
   }
 
   /* CAPTURE Butonu */
