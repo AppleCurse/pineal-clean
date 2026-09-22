@@ -1,26 +1,43 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pineal-heretic",
-  "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "productName": "ATLAS PINEAL",
+  "version": "5.0.0",
+  "identifier": "com.pineal.heretic",
   "build": {
     "frontendDist": "../../frontend/dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev --prefix ../../frontend -- --host 0.0.0.0 --port 1420 --strictPort",
+    "beforeBuildCommand": "npm run build --prefix ../../frontend"
   },
   "app": {
     "windows": [
       {
-        "title": "Aspasia Cockpit",
-        "width": 800,
-        "height": 600,
+        "label": "main",
+        "title": "ATLAS PINEAL OBSERVATORY - HERETIC v5.0 [NATIVE GPU]",
+        "width": 1920,
+        "height": 1080,
+        "minWidth": 1280,
+        "minHeight": 720,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true,
+        "visible": true,
+        "decorations": true,
+        "transparent": false,
+        "focus": true,
+        "useOsDefaultWindow": false,
+        "contentProtected": false,
+        "backgroundColor": "#000000",
+        "titleBarStyle": "Visible",
+        "additionalBrowserArgs": "--enable-gpu --enable-gpu-rasterization --enable-zero-copy --enable-hardware-overlays --enable-oop-rasterization --enable-accelerated-video-decode --enable-accelerated-mjpeg-decode --enable-gpu-compositing --enable-native-gpu-memory-buffers --enable-features=Vulkan,UseSkiaRenderer"
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
@@ -33,8 +50,27 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "android": {
-      "debugApplicationIdSuffix": ".debug"
+    "resources": [],
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true,
+      "scope": [
+        {
+          "name": "open-external",
+          "open": true
+        }
+      ]
     }
   }
 }

@@ -47,10 +47,13 @@ sha2 = "0.10"
 # sistem bağımlılıkları olmadan) derlenip test edilebilsin. src-tauri bu
 # feature'ı açar.
 tauri = { version = "2", optional = true }
+redis = { version = "0.27", optional = true, features = ["tokio-comp"] }
+futures-util = { version = "0.3", optional = true }
 
 [features]
 default = []
 tauri = ["dep:tauri"]
+redis = ["dep:redis", "dep:futures-util"]
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -71,6 +71,19 @@ dialogue_manager = DialogueManager()
 aspasia_chief = AspasiaChief()
 _tool_output_optimizer = TokenOptimizer()
 
+# v5.0 - Redis Pub/Sub + Agent Rack canlı köprüsü
+try:
+    from agent_core.services.redis_bus import get_redis_bus, init_redis_bus
+    from agent_core.services.agent_status_tracker import get_tracker, init_tracker, AGENT_DEFINITIONS
+    HAS_AGENT_RACK = True
+except ImportError:
+    HAS_AGENT_RACK = False
+    get_redis_bus = None
+    init_redis_bus = None
+    get_tracker = None
+    init_tracker = None
+    AGENT_DEFINITIONS = []
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     try:
@@ -125,21 +138,43 @@ async def lifespan(application: FastAPI):
             },
         }
         application.state.startup_health = startup_health
+
+        # v5.0 - Redis + Agent Rack init
+        if HAS_AGENT_RACK:
+            try:
+                redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+                bus = await init_redis_bus(redis_url)
+                tracker = await init_tracker(redis_url)
+                application.state.redis_bus = bus
+                application.state.agent_tracker = tracker
+                logger.info("Agent Rack + Redis bus aktif")
+            except Exception as e:
+                logger.warning(f"Agent Rack init hatasi (fallback): {e}")
+                application.state.redis_bus = None
+                application.state.agent_tracker = None
+        else:
+            application.state.redis_bus = None
+            application.state.agent_tracker = None
+
     except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()
         logger.critical("Startup security/dependency gate failed: %s", exc.error_code)
         raise
 
     yield
-    # Kapanista odalari TEK bir yoldan kapat (temiz kapanis). [AUDIT P0-4]
-    # _close_room hem sender hem gorev task'lerini iptal eder; boylece
-    # calisma zamanindaki eviction ile kapanis ayni sozlesmeyi paylasir.
+    # Kapanista odalari TEK bir yoldan kapat
     for client_id in list(application.state.rooms):
         room = application.state.rooms.get(client_id)
         if room is not None:
             _close_room(client_id, room)
     application.state.rooms.clear()
     _rooms_last_seen.clear()
+    # Redis disconnect
+    try:
+        if hasattr(application.state, 'redis_bus') and application.state.redis_bus:
+            await application.state.redis_bus.disconnect()
+    except Exception:
+        pass
 
 app = FastAPI(title="PINEAL-HERETIC v3.0.0-rc.1 API", lifespan=lifespan)
 app.state.llm_backend_mode = "legacy"
@@ -2248,10 +2283,19 @@ async def api_initiate(req: InitiatePayload, request: Request):
             {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
             status_code=429,
         )
+    # VAULT INTERLOCK: anahtar çevrilmeden dış dünyaya OSINT/Scraper isteği yok
+    if req.url and req.url.strip():
+        if not _check_vault_interlock(req.client_id):
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "VAULT_LOCKED",
+                        "message": "VAULT KİLİTLİ: Operatör anahtarı çevirmeden dış dünyaya hiçbir OSINT/Scraper isteği çıkamaz. Önce /api/vault ile anahtar girin veya Tauri kasasını açın."
+                    }
+                },
+                status_code=423,
+            )
     room = get_room(req.client_id)
-    # [AUDIT N1] Oda doymuşsa yeni görev sessizce başlatılmaz: aktif
-    # snapshot'lar tavanı aşmışsa 503 (aktifler silinerek yer açılmaz —
-    # hayalet görev yasağı).
     if _active_tasks_full(room):
         return JSONResponse(
             {
@@ -2267,11 +2311,19 @@ async def api_initiate(req: InitiatePayload, request: Request):
         )
     task_id = _new_task_id()
     _lifecycle(room).transition(task_id, "processing")
+    # Agent Rack: planlanan ajanları Ready yap
+    if HAS_AGENT_RACK and get_tracker:
+        try:
+            tracker = get_tracker()
+            await tracker.set_all_wait()
+            # Tahmini plan - gerçek plan executor'da
+            await tracker.set_all_ready()
+        except Exception:
+            pass
     mission = asyncio.create_task(run_mission(req, task_id))
     room["mission_tasks"][task_id] = mission
 
     def _on_mission_done(_task, _room=room):
-        # [BOSS-2] Görev bitti/iptal edildi: terminal olmayan oda kaydı kalmasın.
         _room["mission_tasks"].pop(task_id, None)
         _room.setdefault("_finished_missions", set()).add(task_id)
         _finalize_finished_missions(_room)
@@ -2467,30 +2519,162 @@ async def api_telemetry(client_id: str):
     capability = await _scraper_capability()
     budget_reader = getattr(type(executor.llm_gateway), "budget_status", None)
     budget = budget_reader(executor.llm_gateway) if callable(budget_reader) else {}
+    # Agent Rack status
+    agent_statuses = {}
+    if HAS_AGENT_RACK:
+        try:
+            tracker = get_tracker() if get_tracker else None
+            if tracker:
+                agent_statuses = tracker.get_all_statuses()
+        except Exception:
+            agent_statuses = {}
     return {
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
-        # geriye uyumlu anahtar; artik import basarisi degil, GERCEK yetenek
         "scraper": capability["instagram"],
         "vault": "x_cookie" in vault or bool(vault.get("or_key")) or "ig_sessionid" in vault,
         "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
-        # W5: gercek capability raporu
-        "x_scraper": False,  # B4: X kazimasi devre disi birakildi
+        "x_scraper": False,
         "instagram_scraper": capability["instagram"],
         "instagram_session": "ig_sessionid" in vault,
         "browser_installed": capability["browser"],
-        # P2-MALİYET: committed + in-flight reservations are read atomically.
         "llm_spend_usd": round(float(budget.get("spend_usd", 0.0)), 6),
         "llm_reserved_spend_usd": round(float(budget.get("reserved_usd", 0.0)), 6),
         "llm_spend_cap_usd": float(budget.get("cap_usd", 0.0)),
         "llm_active_reservations": int(budget.get("active_reservations", 0)),
         "telemetry_delivery": _delivery_status(room),
         "task_lifecycle": _lifecycle(room).metrics(),
-        # Phase 9 decision B: visible, tested, and explicitly non-integrated.
         "rust_core": rust_core_status(),
-        # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
+        "agent_statuses": agent_statuses,
+        "vault_locked": not bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie")),
     }
+
+
+# ─── v5.0: Agent Rack + Vault + Dialogue Manager canlı köprüleri ─────────
+
+@app.get("/api/agents/status")
+async def api_agents_status():
+    """12 ajanin anlik durumu - Agent Rack beslenir"""
+    if not HAS_AGENT_RACK or not get_tracker:
+        return {"agents": [], "source": "fallback", "count": 0}
+    try:
+        tracker = get_tracker()
+        agents = tracker.get_status_list()
+        return {"agents": agents, "source": "redis_bus", "count": len(agents)}
+    except Exception as e:
+        logger.warning(f"Agent status okuma hatasi: {e}")
+        return {"agents": [], "source": "error", "error": str(e)[:100], "count": 0}
+
+
+@app.post("/api/agents/status/{agent_id}")
+async def api_update_agent_status(agent_id: str, status: str, metadata: Optional[dict] = None):
+    """Ajan durumunu guncelle - Docker Compose servisleri buraya POST eder"""
+    if not HAS_AGENT_RACK or not get_tracker:
+        return {"status": "fallback", "agent_id": agent_id}
+    try:
+        tracker = get_tracker()
+        result = await tracker.update_status(agent_id, status, metadata)
+        # WS uzerinden de yayinla
+        # Tum odalara broadcast
+        for client_id in list(app.state.rooms.keys()):
+            room = app.state.rooms.get(client_id)
+            if room:
+                payload = _ws_json({
+                    "type": "agent_status_update",
+                    "agent_id": agent_id,
+                    "status": status,
+                    "timestamp": result.get("timestamp"),
+                    "metadata": metadata or {}
+                })
+                # Kuyruga ekle - dogrudan WS gonderimi
+                try:
+                    await _send_ws(room, payload)
+                except Exception:
+                    pass
+        return {"status": "updated", "agent": result}
+    except Exception as e:
+        return JSONResponse({"error": {"code": "AGENT_UPDATE_FAILED", "message": str(e)[:200]}}, status_code=500)
+
+
+class VaultStatusPayload(BaseModel):
+    client_id: str
+
+
+@app.get("/api/vault/status")
+async def api_vault_status(client_id: str):
+    """Vault kilit durumu - mandal baglantisi"""
+    room = get_room(client_id)
+    vault = room["vault"]
+    has_key = bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"))
+    has_session = bool(vault.get("ig_sessionid"))
+    # Dosya tabanli vault da kontrol
+    file_vault = _load_vault()
+    file_has = bool(file_vault)
+    return {
+        "locked": not has_key,
+        "has_api_key": bool(vault.get("or_key")),
+        "has_session": has_session,
+        "has_cookie": bool(vault.get("x_cookie")),
+        "file_vault_exists": file_has,
+        "can_scrape": has_key,  # Vault kilidi: anahtar yoksa OSINT/Scraper cikmaz
+        "message": "VAULT ACIK - dis dunya erisimi serbest" if has_key else "VAULT KILITLI - operator anahtari cevirmeden OSINT/Scraper cikmaz"
+    }
+
+
+@app.post("/api/vault/lock")
+async def api_vault_lock(payload: VaultStatusPayload):
+    """Vault'u kilitle - dis dunya erisimini durdur"""
+    room = get_room(payload.client_id)
+    # Vault'u temizle
+    room["vault"] = {}
+    broadcast_log(payload.client_id, "WARNING", "VAULT KILITLENDI: Dis dunya erisimi durduruldu, OSINT/Scraper bloklandi")
+    return {"status": "locked", "message": "Kasa kilitlendi, dis dunya erisimi durduruldu"}
+
+
+@app.post("/api/vault/unlock")
+async def api_vault_unlock(payload: VaultStatusPayload):
+    """Vault kilidini ac - backend tarafinda sadece durum raporu, gercek acma /api/vault ile"""
+    room = get_room(payload.client_id)
+    vault = room["vault"]
+    has_key = bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"))
+    if not has_key:
+        return JSONResponse(
+            {"error": {"code": "VAULT_LOCKED", "message": "Kasada anahtar yok, once /api/vault ile anahtar girin"}},
+            status_code=423
+        )
+    broadcast_log(payload.client_id, "INFO", "VAULT ACILDI: Dis dunya erisimi serbest")
+    return {"status": "unlocked", "can_scrape": True}
+
+
+# Vault interlock helper
+def _check_vault_interlock(client_id: str) -> bool:
+    """True = acik, False = kilitli (dis dunya erisimi yok)"""
+    try:
+        room = get_room(client_id)
+        vault = room["vault"]
+        return bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie") or _load_vault())
+    except Exception:
+        return False
+
+
+@app.get("/api/dialogue/sessions")
+async def api_dialogue_sessions():
+    """DialogueManager oturumlari - Aspasia terminal -> ajan zinciri"""
+    if dialogue_manager is None:
+        return {"sessions": [], "count": 0}
+    try:
+        sessions = []
+        for task_id, ctx in dialogue_manager.sessions.items():
+            sessions.append({
+                "task_id": task_id,
+                "history_count": len(ctx.history),
+                "last_seen": ctx.last_seen,
+                "target_profile": bool(ctx.target_profile),
+            })
+        return {"sessions": sessions, "count": len(sessions), "evicted": dialogue_manager.evicted}
+    except Exception as e:
+        return {"sessions": [], "count": 0, "error": str(e)[:100]}
 
 class SocidExtractPayload(BaseModel):
     url: str

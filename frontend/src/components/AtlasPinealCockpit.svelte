@@ -2,13 +2,17 @@
   import { onMount } from 'svelte';
   import {
     apiFetch, clientId, isAuthFailure, logs, taskStatus, isProcessing,
-    apiToken
+    apiToken, agentStatuses, vaultLocked
   } from '../store';
   import { playClick, playHalt, playRunning } from '../lib/consoleAudio';
+  import OrganikIrisCanvas from './OrganikIrisCanvas.svelte';
+  import HolographicResonanceMesh from './HolographicResonanceMesh.svelte';
+  import AgentRack from './AgentRack.svelte';
 
   // Tek dokunulmaz ana şasi görseli (Kayıpsız 16:9 Master Referans)
   import cockpitSkin from '../assets/cockpit-v10-reference.png';
   import livingPinealDisk from '../assets/living_pineal_disk.png';
+  import eyeJpg from '../assets/eye.jpg';
 
   // --- STATE ---
   let targetUrl = '';
@@ -16,8 +20,14 @@
   let isSending = false;
   let activePillarModal: string | null = null;
   let activeTab = 'ASPASIA';
+  let showAgentRack = true;
+  let irisSize = 340;
+  let meshSize = 460;
 
-  // --- YAŞAYAN PİNEAL GÖZ (ORGANİK VE YAVAŞ HAREKET) ---
+  // Vault interlock - mandal durumu
+  $: isVaultLocked = $vaultLocked;
+
+  // --- YAŞAYAN PİNEAL GÖZ (ORGANİK VE YAVAŞ HAREKET) - legacy fallback için korunuyor ---
   let eyeX = 0;
   let eyeY = 0;
   let targetEyeX = 0;
@@ -30,7 +40,6 @@
     const height = typeof window !== 'undefined' ? window.innerHeight : 1080;
     const normX = (e.clientX - width / 2) / (width / 2);
     const normY = (e.clientY - height / 2) / (height / 2);
-    // Yavaş ve zarif bakış hedefi (maksimum ±4.5px kayma)
     targetEyeX = Math.max(-4.5, Math.min(4.5, normX * 4.5));
     targetEyeY = Math.max(-3.5, Math.min(3.5, normY * 3.5));
   }
@@ -40,31 +49,39 @@
 
     function animate(time: number) {
       const elapsed = (time - startTime) * 0.001;
-
-      // Organik, yavaş, hipnotik mikro salınım (2 farklı frekansta sinüs)
       const organicDriftX = Math.sin(elapsed * 0.45) * 2.2 + Math.sin(elapsed * 0.18) * 1.0;
       const organicDriftY = Math.cos(elapsed * 0.35) * 1.8 + Math.cos(elapsed * 0.12) * 0.8;
-
-      // Analiz sırasında hafif odak nefesi
       const processingFlutter = $isProcessing ? Math.sin(elapsed * 3.5) * 0.6 : 0;
-
       const desiredX = targetEyeX + organicDriftX + processingFlutter;
       const desiredY = targetEyeY + organicDriftY;
-
-      // Yumuşak sönümleme (lerp 0.04) ile yavaş ve kaliteli akış
       eyeX += (desiredX - eyeX) * 0.04;
       eyeY += (desiredY - eyeY) * 0.04;
-
-      // Yavaş göz bebeği nefes alışı (1.008 ile 1.024 arası)
       eyeScale = 1.016 + Math.sin(elapsed * 0.5) * 0.012;
-
       animFrameId = requestAnimationFrame(animate);
     }
 
     animFrameId = requestAnimationFrame(animate);
 
+    // Responsive iris size
+    function updateSizes() {
+      const vw = window.innerWidth;
+      if (vw < 1200) {
+        irisSize = 240;
+        meshSize = 340;
+      } else if (vw < 1600) {
+        irisSize = 300;
+        meshSize = 400;
+      } else {
+        irisSize = 340;
+        meshSize = 460;
+      }
+    }
+    updateSizes();
+    window.addEventListener('resize', updateSizes);
+
     return () => {
       if (animFrameId) cancelAnimationFrame(animFrameId);
+      window.removeEventListener('resize', updateSizes);
     };
   });
 
@@ -136,22 +153,55 @@
     addLog(`SİZ: ${text}`, 'INFO');
 
     try {
-      const res = await apiFetch('/api/aspasia/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id: $clientId || 'default',
-          user_message: text
-        })
-      });
+      // Önce komut kanalı — dialogue_manager üzerinden otonom ajan zincirine paslanır
+      // Eğer komut tanınırsa görev başlatılır, değilse sohbet devam eder
+      let commandAttempted = false;
+      try {
+        const cmdRes = await apiFetch('/api/aspasia/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id: $clientId || 'default',
+            user_message: text
+          })
+        });
+        if (cmdRes.ok) {
+          const cmdData = await cmdRes.json();
+          if (cmdData.accepted && cmdData.task_id) {
+            commandAttempted = true;
+            addLog(`ASPASIA KOMUT: ${cmdData.intent} -> görev ${cmdData.task_id} [dialogue_manager -> ajan zinciri]`, 'INFO');
+            isProcessing.set(true);
+            taskStatus.update(s => ({ ...(s || {}), task_id: cmdData.task_id, status: 'processing' }));
+            playClick(520, 40);
+          } else if (cmdData.reason) {
+            // Komut tanınmadı — sohbete düş
+            addLog(`ASPASIA: ${cmdData.reason}`, 'INFO');
+            commandAttempted = true; // yine de cevap verdi
+          }
+        }
+      } catch (e) {
+        // Komut kanalı hatası — sohbet fallback
+        console.debug('Aspasia command fallback', e);
+      }
 
-      if (res.ok) {
-        const data = await res.json();
-        const reply = data.message || data.reply || data.response || 'Emir alındı.';
-        addLog(`ASPASIA: ${reply}`, 'INFO');
-        playClick(520, 40);
-      } else {
-        throw new Error(`HTTP ${res.status}`);
+      if (!commandAttempted) {
+        const res = await apiFetch('/api/aspasia/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id: $clientId || 'default',
+            user_message: text
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const reply = data.message || data.reply || data.response || 'Emir alındı.';
+          addLog(`ASPASIA: ${reply}`, 'INFO');
+          playClick(520, 40);
+        } else {
+          throw new Error(`HTTP ${res.status}`);
+        }
       }
     } catch (err: any) {
       addLog(`ASPASIA HATA: ${err.message}`, 'ERROR');
@@ -173,14 +223,46 @@
   <!-- 1. TEK VE DOKUNULMAZ ANA ŞASİ GÖRSELİ (Kayıpsız 16:9) -->
   <img class="master-cockpit-bg" src={cockpitSkin} alt="Atlas Pineal Observatory Cockpit" />
 
-  <!-- 1.5. YAŞAYAN PİNEAL GÖZ (Pirinç yuva içine gömülü, yavaş, organik ve hipnotik hareket) -->
-  <div class="living-eye-viewport" aria-label="Atlas Pineal Eye">
+  <!-- 1.5. YÜKSEK ÇÖZÜNÜRLÜKLÜ ORGANİK İRİS + HOLOGRAFİK MESH (Tauri GPU) -->
+  <div class="living-eye-viewport-v2" aria-label="Atlas Pineal Eye - Native GPU">
+    <!-- Arkada: Holografik tel kafes rezonans ağı -->
+    <div class="mesh-layer">
+      <HolographicResonanceMesh size={meshSize} active={$isProcessing} intensity={isVaultLocked ? 0.45 : 0.85} />
+    </div>
+    <!-- Önde: Organik iris - fare mikro takip + nefes -->
+    <div class="iris-layer">
+      <OrganikIrisCanvas size={irisSize} irisSrc={eyeJpg} scanning={$isProcessing} />
+    </div>
+    <!-- Vault kilit göstergesi - iris üzerinde -->
+    {#if isVaultLocked}
+      <div class="vault-lock-indicator" title="VAULT KİLİTLİ: OSINT/Scraper bloklı">
+        <span class="lock-icon">🔒</span>
+        <span class="lock-text">VAULT LOCKED</span>
+      </div>
+    {:else}
+      <div class="vault-open-indicator" title="VAULT AÇIK: Dış dünya erişimi serbest">
+        <span class="lock-icon">🔓</span>
+        <span class="lock-text">VAULT OPEN</span>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Legacy fallback gizli (GPU yoksa) -->
+  <div class="living-eye-viewport legacy-hidden" aria-hidden="true">
     <img
       class="living-eye-disk"
       src={livingPinealDisk}
       alt="Atlas Pineal Eye"
       style="transform: translate(calc(-50% + {eyeX.toFixed(2)}px), calc(-50% + {eyeY.toFixed(2)}px)) scale({eyeScale.toFixed(3)});"
     />
+  </div>
+
+  <!-- Sağda: Agent Rack — Redis Pub/Sub canlı -->
+  <div class="agent-rack-dock" class:visible={showAgentRack}>
+    <AgentRack compact={false} />
+    <button class="rack-toggle-btn" on:click={() => showAgentRack = !showAgentRack} title="Agent Rack Toggle">
+      {showAgentRack ? '◀' : '▶'}
+    </button>
   </div>
 
   <!-- 2. SADECE İŞLEVSEL ŞEFFAF HİTBOX'LAR (TIKLAMA ALANLARI) -->
@@ -344,8 +426,133 @@
   }
 
   /* =========================================================
-     YAŞAYAN PİNEAL GÖZ (MERKEZİ PİRİNÇ YUVA)
+     YAŞAYAN PİNEAL GÖZ v2 — ORGANİK İRİS + HOLOGRAFİK MESH (Tauri GPU)
      ========================================================= */
+  .living-eye-viewport-v2 {
+    position: absolute;
+    left: 49.76%;
+    top: 45.70%;
+    width: 18%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    transform-style: preserve-3d;
+    will-change: transform;
+  }
+
+  .living-eye-viewport-v2 .mesh-layer {
+    position: absolute;
+    inset: -20%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .living-eye-viewport-v2 .iris-layer {
+    position: relative;
+    z-index: 2;
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow:
+      inset 0 0 20px rgba(0, 0, 0, 0.95),
+      inset 0 3px 8px rgba(0, 0, 0, 0.9),
+      0 0 0 2px #120904,
+      0 0 30px rgba(212, 175, 55, 0.25);
+    transform: translateZ(10px);
+  }
+
+  .vault-lock-indicator, .vault-open-indicator {
+    position: absolute;
+    bottom: -18%;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 7px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    z-index: 10;
+    pointer-events: auto;
+    white-space: nowrap;
+  }
+
+  .vault-lock-indicator {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+    animation: lockPulse 2s ease-in-out infinite;
+  }
+
+  .vault-open-indicator {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #6ee7b7;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+  }
+
+  @keyframes lockPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  /* Agent Rack Dock - Sağ taraf */
+  .agent-rack-dock {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%) translateX(100%);
+    z-index: 20;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: auto;
+    max-height: 85vh;
+    overflow: hidden;
+  }
+
+  .agent-rack-dock.visible {
+    transform: translateY(-50%) translateX(0);
+  }
+
+  .rack-toggle-btn {
+    position: absolute;
+    left: -24px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 60px;
+    background: linear-gradient(180deg, #1a1a2e 0%, #0a0e1a 100%);
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    border-right: none;
+    border-radius: 6px 0 0 6px;
+    color: #d4af37;
+    font-size: 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.5);
+  }
+
+  .rack-toggle-btn:hover {
+    background: linear-gradient(180deg, #2a2a4e 0%, #1a1e2a 100%);
+    color: #fde68a;
+  }
+
+  /* Legacy fallback - gizli */
+  .living-eye-viewport.legacy-hidden {
+    display: none !important;
+  }
+
   .living-eye-viewport {
     position: absolute;
     left: 49.76%;

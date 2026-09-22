@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
   },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.4",
     "@tsconfig/svelte": "^5.0.8",

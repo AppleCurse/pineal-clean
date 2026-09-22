@@ -1,42 +1,207 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - pineal_redis:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
   pineal:
     build:
       context: .
-      # Playwright indirme aynası (build-time). .env'e örn:
-      #   PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
-      # [AUDIT 2026-09-11 P0] VITE_PINEAL_TOKEN build arg'ı kaldırıldı:
-      # server secret'ı bundle'a gömülmez. UI token'ı çalışma zamanında
-      # Kasa ekranından girer (localStorage). Token girilmezse arayüz
-      # dürüst 401 mesajı gösterir (bkz. RUNBOOK "401 tüm API çağrıları").
       args:
         PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
     ports:
       - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
     env_file:
-      - path: .env    # yoksa sorun değil: cp .env.example .env ile oluşturun
+      - path: .env
         required: false
     environment:
       - PINEAL_PORT=8000
-      # [AUDIT R2] env_file'daki PINEAL_ENV, imajdaki ENV PINEAL_ENV=production'ı
-      # EZİYORDU: reponun kendi önerdiği "cp .env.example .env" akışı (example
-      # içinde PINEAL_ENV=development) konteyneri sessizce development moduna
-      # sokuyor, fail-closed auth KAPANIYORDU. Compose önceliği
-      # environment > env_file olduğundan üretim profili burada açıkça sabitlenir
-      # (host env PINEAL_ENV devralınır; .env artık yalnız PINEAL_TOKEN vb. taşır).
-      # Yerel geliştirme için tek istisna yol: PINEAL_ENV=development ile başlatın.
       - PINEAL_ENV=${PINEAL_ENV:-production}
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
     volumes:
-      - pineal_memory:/app/memory      # kalıcı kanıt/öğrenme belleği (kritik - kayıp = veri kaybı)
-      - pineal_cache:/app/cache        # SQLite response cache (kaybedilebilir; yeniden doldurulur)
-      - pineal_vault:/app/vault-data   # (isteğe bağlı) vault dışa aktarımı
-    # ⚠ MULTI-REPLICA DESTEKLENMEZ: app.state.rooms ve rate-limit sayaçları
-    # process-local tutulur. 2+ instance aynı anda çalıştırılamaz.
-    # Yatay ölçekleme: paylaşımlı session store (Redis vb.) gerektirir.
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+      - pineal_vault:/app/vault-data
     deploy:
       replicas: 1
     restart: unless-stopped
+
+  # ─── Agent Rack Workers — 12 bağımsız ajan servisi ───────────────
+  # Her biri Redis Pub/Sub üzerinden durum yayınlar: Ready/Active/Wait
+  # Backend /api/agents/status üzerinden de POST edebilirler
+  # Aynı imaj, farklı AGENT_ID env ile çalışır
+
+  agent-mirror-truth:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=mirror_truth
+      - AGENT_NAME=Mirror Truth
+    command: python -m agent_core.workers.agent_worker --agent-id mirror_truth
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-autonomous-verifier:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=autonomous_verifier
+      - AGENT_NAME=Autonomous Verifier
+    command: python -m agent_core.workers.agent_worker --agent-id autonomous_verifier
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-human-behavior:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=human_behavior
+      - AGENT_NAME=Human Behavior
+    command: python -m agent_core.workers.agent_worker --agent-id human_behavior
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-passion-mapper:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=passion_mapper
+      - AGENT_NAME=Passion Mapper
+    command: python -m agent_core.workers.agent_worker --agent-id passion_mapper
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-friction-detector:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=friction_detector
+      - AGENT_NAME=Friction Detector
+    command: python -m agent_core.workers.agent_worker --agent-id friction_detector
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-cognitive-profiler:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=cognitive_profiler
+      - AGENT_NAME=Cognitive Profiler
+    command: python -m agent_core.workers.agent_worker --agent-id cognitive_profiler
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-resonance-calculator:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=resonance_calculator
+      - AGENT_NAME=Resonance Calculator
+    command: python -m agent_core.workers.agent_worker --agent-id resonance_calculator
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-pattern-interrupt:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=pattern_interrupt
+      - AGENT_NAME=Pattern Interrupt
+    command: python -m agent_core.workers.agent_worker --agent-id pattern_interrupt
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-osint-investigator:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=osint_investigator
+      - AGENT_NAME=OSINT Investigator
+    command: python -m agent_core.workers.agent_worker --agent-id osint_investigator
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-authenticity-auditor:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=authenticity_auditor
+      - AGENT_NAME=Authenticity Auditor
+    command: python -m agent_core.workers.agent_worker --agent-id authenticity_auditor
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-depth-analyst:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=depth_analyst
+      - AGENT_NAME=Depth Analyst
+    command: python -m agent_core.workers.agent_worker --agent-id depth_analyst
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
+
+  agent-resonance-synthesizer:
+    build: { context: . }
+    depends_on: [redis]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - AGENT_ID=resonance_synthesizer
+      - AGENT_NAME=Resonance Synthesizer
+    command: python -m agent_core.workers.agent_worker --agent-id resonance_synthesizer
+    restart: unless-stopped
+    volumes:
+      - pineal_memory:/app/memory
+      - pineal_cache:/app/cache
 
 volumes:
   pineal_memory:
   pineal_cache:
   pineal_vault:
+  pineal_redis:
