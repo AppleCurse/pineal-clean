@@ -5,6 +5,7 @@ capability raporu + X unsupported'in WS'de gorunmesi.
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -54,37 +55,39 @@ def test_telemetry_reports_real_capabilities():
 
 def test_x_initiate_reports_unsupported_over_ws():
     cid = f"fx_{uuid.uuid4().hex[:6]}"
-    with TestClient(app) as client:
-        with client.websocket_connect(f"/ws/{cid}") as ws:
-            r = client.post(
-                "/api/initiate",
-                json={
-                    "client_id": cid,
-                    "url": "https://x.com/testuser",
-                    "rituals": "çay",
-                    "playlist": "neşet ertaş",
-                    "envies": "bağ",
-                    "aggressiveness": 1.0,
-                    "evidence_th": 3,
-                    "scraper_type": "x",
-                },
-            )
-            assert r.status_code == 200
-            saw_unsupported = False
-            result_status = None
-            for _ in range(200):
-                m = ws.receive_json()
-                if m.get("type") == "log" and "DESTEKLENMİYOR" in (m.get("msg") or ""):
-                    saw_unsupported = True
-                if m.get("type") == "result":
-                    result_status = m.get("status")
-                    break
-            assert saw_unsupported, "WS loglarinda desteklenmiyor mesaji yok"
-            assert result_status in (
-                "completed",
-                "failed",
-                "halted_evidence",
-                "halted_frequency",
+    # Vault interlock bypass — v5.0 vault mandalı test ortamında açık sayılır
+    with patch("backend.api._check_vault_interlock", return_value=True):
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/{cid}") as ws:
+                r = client.post(
+                    "/api/initiate",
+                    json={
+                        "client_id": cid,
+                        "url": "https://x.com/testuser",
+                        "rituals": "çay",
+                        "playlist": "neşet ertaş",
+                        "envies": "bağ",
+                        "aggressiveness": 1.0,
+                        "evidence_th": 3,
+                        "scraper_type": "x",
+                    },
+                )
+                assert r.status_code == 200
+                saw_unsupported = False
+                result_status = None
+                for _ in range(200):
+                    m = ws.receive_json()
+                    if m.get("type") == "log" and "DESTEKLENMİYOR" in (m.get("msg") or ""):
+                        saw_unsupported = True
+                    if m.get("type") == "result":
+                        result_status = m.get("status")
+                        break
+                assert saw_unsupported, "WS loglarinda desteklenmiyor mesaji yok"
+                assert result_status in (
+                    "completed",
+                    "failed",
+                    "halted_evidence",
+                    "halted_frequency",
                     "partially_completed",
                     "awaiting_authorization",
                 )
