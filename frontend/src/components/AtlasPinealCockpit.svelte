@@ -2,11 +2,19 @@
   import { onMount } from 'svelte';
   import {
     apiFetch, clientId, isAuthFailure, logs, taskStatus, isProcessing,
-    apiToken, agentStatuses, vaultLocked
+    apiToken, agentStatuses, vaultLocked, activeViewMode, inspectedAgentId
   } from '../store';
   import { playClick, playHalt, playRunning } from '../lib/consoleAudio';
   import HolographicResonanceMesh from './HolographicResonanceMesh.svelte';
   import AgentRack from './AgentRack.svelte';
+
+  function openWarRoom(agentId?: string) {
+    playClick(500, 30);
+    if (agentId) {
+      inspectedAgentId.set(agentId);
+    }
+    activeViewMode.set('warroom');
+  }
 
   // Tek dokunulmaz ana şasi görseli (Kayıpsız 16:9 Master Referans) — PINEAL-HERETIC v5.0
   import cockpitSkin from '../assets/cockpit-v10-reference.png';
@@ -261,9 +269,20 @@
     />
   </div>
 
+  <!-- HIZLI GEÇİŞ BUTONU: TACTICAL WAR ROOM (100% ŞEFFAF MUHAREBE MASASI) -->
+  <button 
+    class="war-room-switch-pill" 
+    on:click={() => openWarRoom()} 
+    title="100% Şeffaf Muharebe Masası & Ajan Teftiş Odasına Geç"
+  >
+    <span class="war-icon">⚔️</span>
+    <span class="war-text">MUHAREBE MASASI</span>
+    <span class="war-tag">WAR ROOM</span>
+  </button>
+
   <!-- Sağda: Agent Rack — Redis Pub/Sub canlı -->
   <div class="agent-rack-dock" class:visible={showAgentRack}>
-    <AgentRack compact={false} />
+    <AgentRack compact={false} on:select={(e) => openWarRoom(e.detail?.agentId)} />
     <button class="rack-toggle-btn" on:click={() => showAgentRack = !showAgentRack} title="Agent Rack Toggle">
       {showAgentRack ? '◀' : '▶'}
     </button>
@@ -979,5 +998,56 @@
   @keyframes amberPulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50% { opacity: 0.6; transform: scale(0.98); }
+  }
+
+  /* TACTICAL WAR ROOM GEÇİŞ BUTONU */
+  .war-room-switch-pill {
+    position: absolute;
+    top: 22px;
+    right: 32px;
+    z-index: 105;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    background: rgba(10, 15, 29, 0.88);
+    border: 1px solid rgba(6, 182, 212, 0.55);
+    border-radius: 9999px;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7), 0 0 16px rgba(6, 182, 212, 0.25);
+    backdrop-filter: blur(8px);
+    transition: all 0.25s ease;
+    font-family: 'JetBrains Mono', monospace, sans-serif;
+  }
+
+  .war-room-switch-pill:hover {
+    background: rgba(15, 23, 42, 0.98);
+    border-color: rgba(6, 182, 212, 0.95);
+    box-shadow: 0 4px 25px rgba(6, 182, 212, 0.45), inset 0 0 10px rgba(6, 182, 212, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .war-icon {
+    font-size: 14px;
+    filter: drop-shadow(0 0 4px rgba(6, 182, 212, 0.6));
+  }
+
+  .war-text {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: #e2e8f0;
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.3);
+  }
+
+  .war-tag {
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(6, 182, 212, 0.25);
+    color: #22d3ee;
+    border: 1px solid rgba(6, 182, 212, 0.4);
   }
 </style>

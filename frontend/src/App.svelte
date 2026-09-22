@@ -3,10 +3,12 @@
   import { get } from 'svelte/store';
   import {
     apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus,
-    isProcessing, powerEngaged, recordEngaged, agentStatuses, vaultLocked
+    isProcessing, powerEngaged, recordEngaged, agentStatuses, vaultLocked,
+    activeViewMode
   } from './store';
   import { uplinkState } from './lib/telemetry';
   import AtlasPinealCockpit from './components/AtlasPinealCockpit.svelte';
+  import TacticalWarRoom from './components/TacticalWarRoom.svelte';
   import NeuralTelemetryBoard from './components/visualizers/NeuralTelemetryBoard.svelte';
 
   let ws: WebSocket | null = null;
@@ -291,7 +293,11 @@
 </script>
 
 <main class="fullscreen-cockpit-viewport">
-  <AtlasPinealCockpit />
+  {#if $activeViewMode === 'warroom'}
+    <TacticalWarRoom />
+  {:else}
+    <AtlasPinealCockpit />
+  {/if}
 
   <!-- Adli Telemetri & Sözleşme Köprüsü -->
   <div style="display: none;" aria-hidden="true">

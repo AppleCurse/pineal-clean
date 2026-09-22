@@ -86,6 +86,10 @@ export const isProcessing = writable(false);
 export const telemetryEvents = writable<any[]>([]);
 export const agentStatuses = writable<Record<string, { status: string; updatedAt: number; metadata?: any }>>({});
 export const vaultLocked = writable<boolean>(true);
+export const activeViewMode = writable<'warroom' | 'cockpit'>(
+  (typeof localStorage !== 'undefined' && (localStorage.getItem('pineal_view_mode') as 'warroom' | 'cockpit')) || 'warroom'
+);
+export const inspectedAgentId = writable<string | null>(null);
 
 // Scraper vb. state'ler
 export const scrapedUsername = writable('');

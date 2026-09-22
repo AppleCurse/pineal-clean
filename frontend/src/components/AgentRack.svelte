@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
   import { agentStatuses, isProcessing } from '../store';
+
+  const dispatch = createEventDispatcher();
 
   // 12 ajan tanımı - sağdaki Agent Rack slotları
   const AGENT_DEFINITIONS = [
@@ -56,49 +58,10 @@
     }
   }
 
-  // Demo simülasyon - backend yoksa bile Rack canlı görünsün
-  let demoMode = false;
-  let demoInterval: any = null;
+  export let selectedAgentId: string | null = null;
 
-  onMount(() => {
-    // Eğer 3 saniye içinde gerçek veri gelmezse demo moda geç
-    const timeout = setTimeout(() => {
-      const hasRealData = $agentStatuses && Object.keys($agentStatuses).length > 0;
-      if (!hasRealData) {
-        demoMode = true;
-        startDemo();
-      }
-    }, 3000);
-
-    return () => {
-      clearTimeout(timeout);
-      if (demoInterval) clearInterval(demoInterval);
-    };
-  });
-
-  function startDemo() {
-    let idx = 0;
-    demoInterval = setInterval(() => {
-      if ($isProcessing) {
-        // Processing sırasında rastgele ajanları ACTIVE yap
-        const randomId = AGENT_DEFINITIONS[Math.floor(Math.random() * AGENT_DEFINITIONS.length)].id;
-        agentStatuses.update(s => ({
-          ...s,
-          [randomId]: { status: 'Active', updatedAt: Date.now() }
-        }));
-      } else {
-        // Idle - hepsi Ready
-        const allReady: any = {};
-        AGENT_DEFINITIONS.forEach(a => {
-          allReady[a.id] = { status: 'Ready', updatedAt: Date.now() };
-        });
-        agentStatuses.set(allReady);
-      }
-      idx++;
-      if (idx > 50) {
-        idx = 0;
-      }
-    }, 800);
+  function selectAgent(id: string) {
+    dispatch('select', { agentId: id });
   }
 
   $: statuses = $agentStatuses || {};
@@ -116,7 +79,19 @@
       {@const st = statuses[agent.id] || { status: 'Wait' }}
       {@const label = statusLabel(st.status)}
       {@const color = statusColor(st.status)}
-      <div class="rack-slot" class:active={label === 'ACTIVE'} class:ready={label === 'READY'} class:wait={label === 'WAIT'} class:error={label === 'ERROR'} style="--agent-color:{agent.color}; --status-color:{color};">
+      <div 
+        class="rack-slot" 
+        class:active={label === 'ACTIVE'} 
+        class:ready={label === 'READY'} 
+        class:wait={label === 'WAIT'} 
+        class:error={label === 'ERROR'}
+        class:selected={selectedAgentId === agent.id}
+        style="--agent-color:{agent.color}; --status-color:{color}; cursor: pointer;"
+        on:click={() => selectAgent(agent.id)}
+        role="button"
+        tabindex="0"
+        on:keydown={(e) => e.key === 'Enter' && selectAgent(agent.id)}
+      >
         <div class="slot-glyph">{agent.glyph}</div>
         <div class="slot-info">
           <div class="slot-name">{compact ? agent.short : agent.name}</div>
