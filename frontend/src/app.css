@@ -1,24 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&family=VT323&display=swap');
 
 :root {
-  --bg-main: #070402;
-  --panel-bg: #120904;
-  --card-bg: #0d0703;
+  --bg-main: #020101;
   --gold: #d4af37;
-  --gold-dim: #9a7d32;
-  --gold-light: #fef0be;
-  --brass-bright: #e8be48;
-  --brass-border: #7c582c;
-  --brass-dark: #3a220e;
-  --text-main: #f5f1e8;
-  --text-dim: #d1b47c;
-  --text-muted: #8c7355;
   --text-phosphor: #38ef7d;
-  --text-amber: #ffb738;
   --accent-green: #10b981;
   --accent-red: #ef4444;
-  --accent-cyan: #06b6d4;
-  --accent-amber: #f59e0b;
 }
 
 * {
@@ -27,277 +14,28 @@
   padding: 0;
 }
 
-/* Workshop Workbench Background with Heavy Leather Mat Ambience */
-body {
-  background-color: #060402;
-  background-image: 
-    radial-gradient(ellipse at 50% 30%, rgba(55, 33, 14, 0.45) 0%, rgba(10, 6, 3, 0.95) 75%, #030201 100%),
-    repeating-linear-gradient(45deg, rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 2px, transparent 2px, transparent 6px),
-    repeating-linear-gradient(-45deg, rgba(0,0,0,0.12) 0px, rgba(0,0,0,0.12) 2px, transparent 2px, transparent 6px);
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #000000;
   font-family: 'JetBrains Mono', monospace;
-  color: var(--text-main);
-  min-height: 100vh;
-  padding: 20px 16px;
+  color: #f5f1e8;
   display: flex;
+  align-items: center;
   justify-content: center;
-  align-items: flex-start;
-  overflow-x: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .font-cinzel {
   font-family: 'Cinzel', serif;
-}
-
-/* =========================================================
-   MASTER BURL WALNUT ENCLOSURE WITH HEAVY BRASS CORNER BINDINGS
-   ========================================================= */
-.walnut-frame {
-  position: relative;
-  /* Rich burled walnut woodgrain with hand-rubbed oil finish */
-  background: 
-    linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(0,0,0,0.4) 15%, rgba(0,0,0,0.65) 85%, rgba(0,0,0,0.8) 100%),
-    repeating-radial-gradient(ellipse at 30% 20%, #3d2211 0px, #2a150a 18px, #3a2010 32px, #201007 55px),
-    linear-gradient(90deg, #241208 0%, #3e2212 25%, #2a1409 50%, #462614 75%, #221107 100%);
-  border: 3px solid #8e6538;
-  /* Multi-stage 3D bevel & drop shadows */
-  box-shadow: 
-    0 0 0 1px #ffecb3,
-    0 0 0 5px #1a0d05,
-    0 0 0 8px #684724,
-    0 0 0 10px #120803,
-    inset 0 2px 4px rgba(255,235,175,0.4),
-    inset 0 -3px 6px rgba(0,0,0,0.85),
-    0 35px 80px rgba(0,0,0,0.98),
-    0 10px 25px rgba(0,0,0,0.9);
-  border-radius: 16px;
-  width: 100%;
-  max-width: 1600px;
-  padding: 24px;
-}
-
-/* Brass Rivets on Walnut Chassis Corners */
-.walnut-frame::before {
-  content: '';
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  right: 6px;
-  bottom: 6px;
-  border: 1px dashed rgba(212, 175, 55, 0.35);
-  border-radius: 12px;
-  pointer-events: none;
-}
-
-/* Polished Heavy Brass Plates */
-.brass-plate {
-  position: relative;
-  background: 
-    linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 35%, rgba(0,0,0,0.5) 100%),
-    repeating-linear-gradient(90deg, #2d1d11 0px, #362314 1px, #28190e 2px, #3b2718 3px),
-    linear-gradient(145deg, #332013 0%, #1e1108 100%);
-  border: 1px solid var(--brass-border);
-  box-shadow: 
-    inset 1px 1px 1px rgba(255, 235, 160, 0.45),
-    inset -1px -1px 2px rgba(0, 0, 0, 0.8),
-    0 6px 14px rgba(0,0,0,0.7);
-  border-radius: 8px;
-  padding: 14px;
-}
-
-/* Stamped Brass Header Bar */
-.brass-header {
-  background: 
-    linear-gradient(180deg, #fef0be 0%, #dfb448 20%, #a67f27 60%, #684a14 100%);
-  color: #1a0f04;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
-  border: 1px solid #ffecb3;
-  box-shadow: 
-    0 3px 8px rgba(0,0,0,0.7),
-    inset 0 1px 2px rgba(255,255,255,0.9),
-    inset 0 -1px 2px rgba(0,0,0,0.6);
-  border-radius: 6px;
-  padding: 8px 16px;
-}
-
-/* Screen & Card Containers with Deep Bevel */
-.screen-card {
-  background: 
-    radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.04) 0%, transparent 70%),
-    #090503;
-  border: 1px solid #4a3017;
-  border-radius: 6px;
-  padding: 12px;
-  box-shadow: 
-    inset 0 2px 6px rgba(0,0,0,0.95),
-    0 1px 0 rgba(212,175,55,0.15);
-}
-
-.screen-card:focus-within {
-  border-color: var(--gold);
-  box-shadow: 
-    inset 0 2px 6px rgba(0,0,0,0.95),
-    0 0 12px rgba(212,175,55,0.3);
-}
-
-/* Tactical Inputs */
-input, textarea, select {
-  background: 
-    linear-gradient(180deg, #060302 0%, #0d0805 100%);
-  border: 1px solid #4d3319;
-  color: var(--text-main);
-  font-family: 'JetBrains Mono', monospace;
-  border-radius: 4px;
-  padding: 7px 12px;
-  font-size: 12px;
-  width: 100%;
-  outline: none;
-  box-shadow: inset 0 2px 5px rgba(0,0,0,0.9);
-  transition: all 0.2s ease;
-}
-
-input:focus, textarea:focus, select:focus {
-  border-color: var(--brass-bright);
-  box-shadow: 
-    inset 0 2px 5px rgba(0,0,0,0.9),
-    0 0 10px rgba(212,175,55,0.35);
-  color: #fff;
-}
-
-input::placeholder, textarea::placeholder {
-  color: #6d543b;
-}
-
-/* Heavy Machined Brass Buttons */
-.btn-brass {
-  background: 
-    linear-gradient(180deg, #fff3c8 0%, #e2b94c 18%, #ad8228 65%, #634612 100%);
-  color: #170b02;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
-  border: 1px solid #fff5cf;
-  font-family: 'Cinzel', serif;
-  font-weight: 800;
-  border-radius: 6px;
-  padding: 7px 16px;
-  cursor: pointer;
-  box-shadow: 
-    0 4px 8px rgba(0,0,0,0.7),
-    inset 0 1px 2px rgba(255,255,255,0.9),
-    inset 0 -2px 3px rgba(0,0,0,0.6);
-  transition: all 0.12s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.btn-brass:hover:not(:disabled) {
-  filter: brightness(1.12);
-  transform: translateY(-1px);
-  box-shadow: 
-    0 6px 12px rgba(0,0,0,0.8),
-    inset 0 1px 2px rgba(255,255,255,0.95);
-}
-
-.btn-brass:active:not(:disabled) {
-  transform: translateY(2px);
-  box-shadow: 
-    0 1px 3px rgba(0,0,0,0.9),
-    inset 0 2px 4px rgba(0,0,0,0.7);
-}
-
-.btn-brass:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  filter: grayscale(0.6);
-}
-
-.btn-dark {
-  background: linear-gradient(180deg, #20140c 0%, #110905 100%);
-  color: var(--gold);
-  border: 1px solid var(--brass-border);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 700;
-  border-radius: 5px;
-  padding: 6px 12px;
-  cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,235,175,0.2);
-  transition: all 0.15s ease;
-}
-
-.btn-dark:hover:not(:disabled) {
-  background: linear-gradient(180deg, #321f12 0%, #1a0d07 100%);
-  border-color: var(--gold);
-  color: #fff;
-  box-shadow: 0 0 8px rgba(212,175,55,0.35);
-}
-
-.btn-dark:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: inset 0 1px 3px #000;
-}
-
-/* =========================================================
-   CRT PHOSPHOR SCANLINE & CATHODE TUBE VISUAL UTILITIES
-   ========================================================= */
-.crt-phosphor-green {
-  color: #38ef7d !important;
-  text-shadow: 
-    0 0 2px rgba(255,255,255,0.8),
-    0 0 6px rgba(56, 239, 125, 0.7),
-    0 0 15px rgba(56, 239, 125, 0.35) !important;
-}
-
-.crt-phosphor-amber {
-  color: #ffb834 !important;
-  text-shadow: 
-    0 0 2px rgba(255,255,255,0.8),
-    0 0 6px rgba(255, 184, 52, 0.7),
-    0 0 15px rgba(255, 184, 52, 0.35) !important;
-}
-
-/* Screws and Mechanical Fasteners */
-.mechanical-screw {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #a67f38 0%, #523714 65%, #241607 100%);
-  border: 1px solid #1c1005;
-  box-shadow: 
-    0 1px 2px rgba(0,0,0,0.8),
-    inset 0 1px 1px rgba(255,255,255,0.4);
-  position: relative;
-  flex-shrink: 0;
-}
-
-.mechanical-screw::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 1px;
-  right: 1px;
-  height: 1px;
-  background: #170d04;
-  transform: rotate(45deg);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.25);
-}
-
-/* Scrollbars */
-::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
-}
-::-webkit-scrollbar-track {
-  background: #090503;
-  border: 1px solid #28190d;
-}
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #6c4b26 0%, #3e2610 100%);
-  border: 1px solid #855c30;
-  border-radius: 3px;
-  box-shadow: inset 0 1px 1px rgba(255,255,255,0.3);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #8e6536 0%, #543417 100%);
-  border-color: var(--gold);
 }
