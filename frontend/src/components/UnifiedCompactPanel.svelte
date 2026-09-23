@@ -783,6 +783,26 @@
         </div>
         <div class="risk-text">risk index: <b>{riskVal === null ? '—' : riskVal.toFixed(2)}</b> · {riskLabel === 'BEKLEMEDE' ? 'ölçüm bekleniyor' : 'belirsizlik: ' + riskLabel.toLowerCase()}</div>
       </section>
+      <div class="agent-cards-stack">
+        {#each agentList as agent, i}
+          {@const run = runs[agent.id]}<!-- [BOSS-10] 'depth_forensics' ölü anahtardı:
+             backend koşu kaydını 'depth_analyst' adıyla yazar; ölü anahtar
+             yüzünden derinlik ajanı HER durumda statik etiketi gösteriyordu. -->
+          {@const isCompleted = run?.status === 'completed' || run?.status === 'completed_no_decision'}
+          {@const isRunning = currentAgent === agent.id && ($isProcessing || taskState === 'processing')}
+          {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
+          {@const liveModel = run?.model || agent.primaryModel}
+          {@const liveVia = run?.via || agent.via}
+          <!-- W4: kanonik çağrı bağlayıcısı — run.output_summary._provenance
+               üzerinden call_id okunur (LLM'siz/uydurma satır üretilmez). -->
+          {@const provCallId = (run && run.output_summary && run.output_summary._provenance) ? (run.output_summary._provenance.call_id || '') : ''}
+
+          <div class="agent-instrument-card {isRunning ? 'card-running' : isHalted ? 'card-halted' : isCompleted ? 'card-done' : 'card-wait'}">
+            <div class="card-top-line">
+              <!-- Antik Madalyon / İkon -->
+              <div class="agent-medal {isRunning ? 'medal-pulse-red' : ''}">
+                <span class="medal-symbol">{agent.glyph || '⚙️'}</span>
+              </div>
 
       <section class="panel rack-panel">
         <div class="panel-title">

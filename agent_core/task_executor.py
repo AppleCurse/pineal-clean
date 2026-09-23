@@ -77,6 +77,15 @@ def _append_upstream_finding(input_data: dict, agent: str, core: str) -> None:
 
 class PinealExecutor:
     # v5.0 Agent Rack mapping - task_executor agent names to Agent Rack IDs
+    # [FORENSIC RACK-WIRING] BİREBİR slot eşlemesi. Eskiden `shadow_executor`
+    # DEPTH ANALYST slotunu, `pineal_7pillar` + `vision_analyzer` ise PATTERN
+    # INTERRUPT slotunu boyuyordu (ödünç slot): o ajanların gerçek durumları
+    # ekrandan izlenemiyor, bir ajanın aktivitesi başka ajanın slotunda
+    # görünüyordu. Artık her yürütücü KENDİ slotunu boyar; yardımcılar
+    # tracker'da kendi dinamik slotlarını açar, 12'li rafın slotlarını
+    # ASLA ezmez.
+    # (`resonance_calc` -> `resonance_calculator` gerçek bir 1:1 yeniden
+    # adlandırmadır; o slota başka ajan yazmaz.)
     _AGENT_RACK_MAP = {
         "mirror_truth": "mirror_truth",
         "autonomous_verifier": "autonomous_verifier",
@@ -90,9 +99,20 @@ class PinealExecutor:
         "authenticity_auditor": "authenticity_auditor",
         "depth_analyst": "depth_analyst",
         "resonance_synthesizer": "resonance_synthesizer",
-        "shadow_executor": "depth_analyst",  # shadow -> depth slot fallback
-        "pineal_7pillar": "pattern_interrupt",
-        "vision_analyzer": "pattern_interrupt",
+        # [RÖNTGEN 2026-09-23] ÖDÜNÇ SLOT EŞLEMELERİ KALDIRILDI. Eski tabloda
+        #   "shadow_executor": "depth_analyst",
+        #   "pineal_7pillar":  "pattern_interrupt",
+        #   "vision_analyzer": "pattern_interrupt",
+        # satırları vardı: deterministik 7-sütun motoru koştuğunda ekranda
+        # PATTERN INTERRUPT slotu READY yanıyor, görsel analizi de aynı slotu
+        # boyuyor, shadow_executor ise DEPTH ANALYST slotunu kendi durumuyla
+        # değiştiriyordu. Yani Agent Rack'teki durum, adını taşıdığı AJANA
+        # izlenemiyordu (kullanıcının 3. talebinin ihlali). Slotu olmayan
+        # adımlar None'a eşlenir: gerçek durumları olay akışında ve koşu
+        # kayıtlarında (runs / War Room) yaşar, başka ajanın slotunu ÇALMAZ.
+        "shadow_executor": None,
+        "pineal_7pillar": None,
+        "vision_analyzer": None,
     }
 
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):
@@ -135,23 +155,43 @@ class PinealExecutor:
             self._agent_tracker = None
 
     def _rack_update(self, agent_name: str, status: str):
-        """Agent Rack durum guncelle - sync wrapper for async tracker"""
-        rack_id = self._AGENT_RACK_MAP.get(agent_name, agent_name)
+        """Agent Rack durum güncelle — sync wrapper for async tracker.
+
+        Yalnız BİRE-BİR slotu olan görev ajanları yayınlar; ``None``'a eşlenen
+        adımlar (7-sütun motoru, görsel analizi, shadow) hiçbir slotu
+        boyayamaz. Rack'te görünen her durum, adını taşıyan ajanın kendi
+        koşusundan gelmek zorundadır.
+        """
+        if agent_name in self._AGENT_RACK_MAP:
+            rack_id = self._AGENT_RACK_MAP[agent_name]
+            if rack_id is None:
+                return
+        else:
+            # Tabloda olmayan gerçek görev ajanı (ör. interpreter, aspasia)
+            # kendi kimliğiyle yayınlanır — ödünç slot yok.
+            rack_id = agent_name
         if self._agent_tracker is None:
             return
+        import asyncio
         try:
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._agent_tracker.update_status(rack_id, status, {"task_agent": agent_name}))
-            except RuntimeError:
-                if hasattr(self._agent_tracker, 'statuses') and rack_id in self._agent_tracker.statuses:
-                    self._agent_tracker.statuses[rack_id].status = status
-        except Exception:
-            pass
-
-    def _rack_update_sync(self, agent_name: str, status: str):
-        self._rack_update(agent_name, status)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # [RÖNTGEN 2026-09-23] Çalışan event loop yok (CLI/senkron bağlam):
+            # durum YAYINLANAMAZ. Eski kod burada `self._agent_tracker.statuses`
+            # üzerinden senkron yazım deniyordu — ama tracker'ın alanı
+            # `_statuses`'tur, yani o yedek DAL HİÇBİR ZAMAN ÇALIŞMADI (ölü
+            # kod + sessiz yutma). Dürüst yol: yazamadığını söyle, uydurma.
+            self._log(
+                "DEBUG",
+                f"Agent Rack: '{rack_id}' durumu yayınlanamadı (çalışan event loop yok)",
+            )
+            return
+        try:
+            loop.create_task(
+                self._agent_tracker.update_status(rack_id, status, {"task_agent": agent_name})
+            )
+        except Exception as exc:
+            self._log("WARNING", f"Agent Rack güncellenemedi ({rack_id}): {exc}")
 
     @staticmethod
     def _finding_core(result: Any, limit: int = 280) -> str:
@@ -174,12 +214,53 @@ class PinealExecutor:
                     parts.append(v)
         return " | ".join(parts)[:limit]
 
-    @staticmethod
-    def _hash_evidence_result(result: BaseModel) -> str:
-        """Canonical SHA-256 hash for a single typed agent result."""
+    # [RÖNTGEN 2026-09-23 / SAHİP KARARI §8.7] Kanıt mührünün (SHA-256)
+    # girdisinden ÇIKARILAN duvar saati alanları. Ölçülen eski kusur:
+    # `computed_at` (ve benzerleri) hash'e girdiği için AYNI kanıt koşudan
+    # koşuya farklı mühür üretiyordu — yani mühür tekrar-üretilemiyordu ve
+    # bağımsız doğrulama/yeniden-üretim karşılaştırması yapılamıyordu.
+    # Mühür artık KANITIN KİMLİĞİDİR: aynı kanıt → aynı mühür.
+    # Zaman damgası KAYBOLMAZ, yalnız mühür girdisinden çıkar: koşu kaydında
+    # (`AgentRun.started_at/completed_at`) ve olay zamanında ayrıca taşınır.
+    _WALL_CLOCK_FIELDS = frozenset({
+        "computed_at", "created_at", "updated_at", "generated_at",
+        "measured_at", "observed_at", "started_at", "completed_at",
+        "timestamp", "ts", "time", "date",
+    })
+
+    @classmethod
+    def _seal_payload(cls, result: Any) -> Dict[str, Any]:
+        """Mühür girdisi: kanıt alanları (duvar saati alanları iç içe dahil çıkarılır)."""
+        dump = result.model_dump() if hasattr(result, "model_dump") else result
+        if not isinstance(dump, dict):
+            return {}
+
+        def _strip(node: Any) -> Any:
+            if isinstance(node, dict):
+                return {
+                    k: _strip(v) for k, v in node.items()
+                    if k not in cls._WALL_CLOCK_FIELDS
+                }
+            if isinstance(node, list):
+                return [_strip(v) for v in node]
+            return node
+
+        return _strip(dump)
+
+    @classmethod
+    def _hash_evidence_result(cls, result: BaseModel) -> str:
+        """Canonical SHA-256 hash for a single typed agent result.
+
+        TEKRAR-ÜRETİLEBİLİR: duvar saati alanları mühür girdisinde değildir
+        (`_WALL_CLOCK_FIELDS`, sahip kararı §8.7). Aynı kanıt → aynı mühür;
+        farklı kanıt → farklı mühür.
+        """
         import hashlib
         import json
-        canonical = json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        canonical = json.dumps(
+            cls._seal_payload(result), ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), default=str,
+        )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     # LLM çağrısı yapmayan tamamen deterministik ajanlar. Bu listede olmayan
@@ -884,8 +965,23 @@ class PinealExecutor:
                         continue
 
                 check = self.uncertainty.evaluate(result, agent_name)
-                
-                if check.confidence < agent_cfg.min_llm_confidence:
+                # GÖREV TAMAMLANDI ≠ KARAR ÜRETİLDİ: ajan kendi çıktısını
+                # "karar değil" (data_confidence=False) diye işaretlediyse koşu
+                # LOW_CONFIDENCE ile halted YAZILMAZ; çıktı kaydedilir ama
+                # karar-Grade sayılmaz (run.status = "completed_no_decision").
+                # Eskiden bu ayrım resonance_calc için 0.75'lik UYDURMA güven
+                # tabanıyla yapılıyordu (uncertainty_engine).
+                # `is True` ŞART: MagicMock tabanlı testlerde getattr truthy bir
+                # mock döndürür ve fail-closed kapısını yanlışlıkla atlatırdı.
+                no_decision = getattr(check, "no_decision", False) is True
+                if no_decision:
+                    self._log(
+                        "WARNING",
+                        f"[{task_id}] {agent_name}: çıktı KARAR DEĞİL — {check.reason} "
+                        f"Koşu kaydedildi, güven uydurulmadı.",
+                    )
+
+                if check.confidence < agent_cfg.min_llm_confidence and not no_decision:
                     halt_reason = check.reason
                     self._log("ERROR", f"[{task_id}] COGNITIVE ROUTER: {halt_reason}")
                     run.status = "halted"
@@ -967,7 +1063,8 @@ class PinealExecutor:
                         llm_calls=_deep_llm_calls,
                     ))
 
-                run.status = "completed"
+                run.status = "completed_no_decision" if no_decision else "completed"
+                run.decision_grade = not no_decision
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
                 run.output_summary["_provenance"] = self._provenance_for(agent_name, result, agent_llm_calls)
@@ -1078,7 +1175,16 @@ class PinealExecutor:
                     continue
 
                 check = self.uncertainty.evaluate(result, agent_name)
-                if check.confidence < agent_cfg.min_llm_confidence:
+                # `is True` ŞART: MagicMock tabanlı testlerde getattr truthy bir
+                # mock döndürür ve fail-closed kapısını yanlışlıkla atlatırdı.
+                no_decision = getattr(check, "no_decision", False) is True
+                if no_decision:
+                    self._log(
+                        "WARNING",
+                        f"[{task_id}] {agent_name}: çıktı KARAR DEĞİL — {check.reason} "
+                        f"Koşu kaydedildi, güven uydurulmadı.",
+                    )
+                if check.confidence < agent_cfg.min_llm_confidence and not no_decision:
                     halt_reason = check.reason
                     run.status = "halted"
                     run.error_code = "LOW_CONFIDENCE"
@@ -1131,7 +1237,8 @@ class PinealExecutor:
                         uncertainty=check,
                         llm_calls=_deep_llm_calls,
                     ))
-                run.status = "completed"
+                run.status = "completed_no_decision" if no_decision else "completed"
+                run.decision_grade = not no_decision
                 run.completed_at = datetime.now(timezone.utc)
                 run.output_summary = result.model_dump()
                 run.output_summary["_provenance"] = self._provenance_for(agent_name, result, agent_llm_calls)

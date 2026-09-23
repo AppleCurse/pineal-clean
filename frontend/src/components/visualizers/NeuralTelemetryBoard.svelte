@@ -1,106 +1,123 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  
-  // Backend'den gelen canlı telemetri objesi (App.svelte'den beslenecek)
+  // Backend'den gelen canlı telemetri nesnesi (App.svelte üzerinden beslenir)
   export let telemetry: any = null;
 
-  // Fallback simulation mode
-  let isSimulating = false;
-  
-  onMount(() => {
-    setInterval(() => {
-      if (!telemetry || Object.keys(telemetry).length === 0) {
-        isSimulating = true;
-        // Randomly turn on nodes to show fluid
-        const nodes = ['gateway', 'router', 'memory', 'llm'];
-        activeNodes.clear();
-        
-        // Always gateway and router
-        activeNodes.add('gateway');
-        activeNodes.add('router');
-        
-        // Randomly pick memory or llm
-        if (Math.random() > 0.5) activeNodes.add('memory');
-        else activeNodes.add('llm');
-        
-        activeNodes = activeNodes;
-        flowSpeed = 1.5;
-      } else {
-        isSimulating = false;
-      }
-    }, 2000);
-  });
+  // Gerçek telemetri durumu — ASLA SİMÜLASYON YOK
+  $: isOnline = !!(
+    telemetry &&
+    typeof telemetry === 'object' &&
+    Object.keys(telemetry).length > 0 &&
+    telemetry.core !== undefined
+  );
 
-  
-  // Görseldeki sıvı akış hızını kontrol eden iç değişkenler
-  let flowSpeed = 2; 
+  // Aktif düğümler kümesi — YALNIZCA BACKEND VERİSİNDEN BESLENİR
   let activeNodes = new Set<string>();
+  let flowSpeed = 0; // 0 = akış durdu
+  let systemStatusText = 'TELEMETRY OFFLINE';
+  let systemStatusColor = '#ef4444'; // Sinyal yoksa daima KIRMIZI
+  let activeAgentsCount = 0;
+  let readyAgentsCount = 0;
 
-  // Düzmece/Gerçek veriyi ayrıştırma mantığı
+  // Gerçek telemetri verisini ayrıştırma
   $: {
-    if (telemetry) {
-      const state = telemetry.status || 'idle';
-      const active = telemetry.active_tasks?.length > 0;
-      
-      activeNodes.clear();
-      if (active) {
-        activeNodes.add('gateway');
-        activeNodes.add('router');
-        
-        // Örnek: Eğer memory read varsa
-        if (JSON.stringify(telemetry).includes('memory')) {
-          activeNodes.add('memory');
-        }
-        
-        if (telemetry.router === 'unified' || JSON.stringify(telemetry).includes('llm')) {
-          activeNodes.add('llm');
-        }
+    activeNodes.clear();
+
+    if (!isOnline) {
+      systemStatusText = 'TELEMETRY OFFLINE';
+      systemStatusColor = '#ef4444';
+      flowSpeed = 0;
+      activeAgentsCount = 0;
+      readyAgentsCount = 0;
+    } else {
+      // Backend servis bayrakları
+      if (telemetry.gateway) activeNodes.add('gateway');
+      if (telemetry.core) activeNodes.add('router');
+      if (telemetry.vault) activeNodes.add('memory');
+
+      // Ajan durumlarını gerçek veriden say
+      const agentList = Object.values(telemetry.agent_statuses || {}) as any[];
+      activeAgentsCount = agentList.filter(
+        (a) => a.status?.toLowerCase() === 'active' || a.status?.toLowerCase() === 'running'
+      ).length;
+      readyAgentsCount = agentList.filter(
+        (a) => a.status?.toLowerCase() === 'ready' || a.status?.toLowerCase() === 'done'
+      ).length;
+
+      // LLM borusu yalnız gerçekten çalışan ajan varsa aktifleşir
+      if (activeAgentsCount > 0) {
+        activeNodes.add('llm');
+        systemStatusText = `PROCESSING (${activeAgentsCount} AJAN)`;
+        systemStatusColor = '#d4af37'; // Altın sarısı
+        flowSpeed = 0.8;
+      } else {
+        systemStatusText = 'STANDBY / READY';
+        systemStatusColor = '#10b981'; // Zümrüt yeşili
+        flowSpeed = 3.5;
       }
-      activeNodes = activeNodes; // Svelte reaktivitesini tetikle
-      flowSpeed = active ? 0.5 : 3;
     }
+    activeNodes = activeNodes;
   }
 
-  // Parçacık efekti için (arka planda kayan tozlar)
-  let particles = Array(20).fill(0).map(() => ({
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    size: Math.random() * 2 + 1,
-    speed: Math.random() * 1 + 0.5,
-    delay: Math.random() * -10
-  }));
+  // Parçacık efekti için (yalnızca arka plan estetiği, telemetri durumuyla ilgisi yok)
+  const particles = Array(16)
+    .fill(0)
+    .map((_, i) => ({
+      x: (i * 6.25 + 2) % 100,
+      y: (i * 12.5 + 5) % 100,
+      size: (i % 3) + 1,
+      speed: 1 + (i % 2) * 0.5,
+      delay: -(i * 0.7),
+    }));
 </script>
 
-<div class="telemetry-board">
-  <!-- Arka plan ortam parçacıkları -->
-  {#each particles as p}
-    <div class="ambient-particle" 
-         style="left: {p.x}%; top: {p.y}%; width: {p.size}px; height: {p.size}px; 
-                animation-duration: {10 / p.speed}s; animation-delay: {p.delay}s;">
+<div class="telemetry-board" class:offline={!isOnline}>
+  <!-- OFFLINE UYARI KATMANI — TELEMETRİ YOKSA GİZLEME VE SİMÜLASYON KESİNLİKLE YASAKTIR -->
+  {#if !isOnline}
+    <div class="offline-overlay" role="alert">
+      <div class="offline-card">
+        <span class="offline-icon">⚠️</span>
+        <div class="offline-text-group">
+          <div class="offline-headline">TELEMETRY OFFLINE // SİNYAL YOK</div>
+          <div class="offline-subtext">
+            Backend API veya WebSocket telemetri akışı alınamadı. Sahte veri üretimi engellendi.
+          </div>
+        </div>
+      </div>
     </div>
+  {/if}
+
+  <!-- Arka plan ortam parçacıkları (sadece estetik) -->
+  {#each particles as p}
+    <div
+      class="ambient-particle"
+      style="left: {p.x}%; top: {p.y}%; width: {p.size}px; height: {p.size}px; 
+             animation-duration: {10 / p.speed}s; animation-delay: {p.delay}s; opacity: {isOnline ? 0.3 : 0.08};"
+    ></div>
   {/each}
 
   <div class="board-header">
     <div class="title-container">
-      <div class="status-dot" class:pulsing={activeNodes.size > 0}></div>
-      <h2 class="board-title">HERETIC TELEMETRY PIPELINE</h2>
+      <div class="status-dot" class:pulsing={isOnline && activeAgentsCount > 0} class:offline-dot={!isOnline}></div>
+      <h2 class="board-title">PINEAL TELEMETRY PIPELINE</h2>
     </div>
     <div class="metrics">
       <div class="metric-box">
         <span class="metric-lbl">SYSTEM STATUS</span>
-        <span class="metric-val" style="color: {activeNodes.size > 0 ? '#d4af37' : '#a0aec0'}">
-          {activeNodes.size > 0 ? 'PROCESSING' : 'IDLE'}
+        <span class="metric-val" style="color: {systemStatusColor}">
+          {systemStatusText}
         </span>
       </div>
       <div class="metric-box">
         <span class="metric-lbl">ACTIVE TUBES</span>
-        <span class="metric-val">{activeNodes.size}</span>
+        <span class="metric-val" style="color: {isOnline ? '#fff' : '#64748b'}">
+          {isOnline ? activeNodes.size : 0}
+        </span>
       </div>
     </div>
   </div>
 
   <div class="pipeline-canvas">
-    <!-- SVG Boru Hatları (Şeffaf Su Hortumu Metaphoru) -->
+    <!-- SVG Boru Hatları -->
     <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 1000 400" class="pipes-svg">
       <defs>
         <!-- Akışkan filtre efekti (Neon Glow) -->
@@ -111,7 +128,7 @@
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
-        
+
         <!-- Boş Hortum Doku (Cam hissi) -->
         <linearGradient id="glass-pipe" x1="0%" y1="0%" x2="0%" y2="100%">
           <stop offset="0%" stop-color="rgba(255,255,255,0.1)" />
@@ -133,66 +150,86 @@
       <path d="M 700,100 L 900,200" class="glass-path" />
       <path d="M 700,300 L 900,200" class="glass-path" />
 
-      <!-- İçerideki Akışkan Sıvı (Fluid) -->
+      <!-- İçerideki Akışkan Sıvı (Fluid) — YALNIZCA GERÇEK TELEMETRİYLE AKAR -->
       <!-- Gateway -> Router -->
-      <path d="M 100,200 L 300,200" 
-            class="fluid-path" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('gateway') ? 1 : 0.3};" />
-            
+      <path
+        d="M 100,200 L 300,200"
+        class="fluid-path"
+        class:stalled={!isOnline || flowSpeed === 0}
+        filter="url(#neon-glow)"
+        style="animation-duration: {flowSpeed || 999}s; opacity: {isOnline && activeNodes.has('gateway') ? 1 : 0.06};"
+      />
+
       <!-- Router -> Memory/OSINT (Üst Kol) -->
-      <path d="M 300,200 L 500,100 L 700,100" 
-            class="fluid-path" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('memory') ? 1 : 0.3};" />
-            
+      <path
+        d="M 300,200 L 500,100 L 700,100"
+        class="fluid-path"
+        class:stalled={!isOnline || flowSpeed === 0}
+        filter="url(#neon-glow)"
+        style="animation-duration: {flowSpeed || 999}s; opacity: {isOnline && activeNodes.has('memory') ? 1 : 0.06};"
+      />
+
       <!-- Router -> LLM Engine (Alt Kol) -->
-      <path d="M 300,200 L 500,300 L 700,300" 
-            class="fluid-path alt-fluid" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('llm') ? 1 : 0.3};" />
-            
+      <path
+        d="M 300,200 L 500,300 L 700,300"
+        class="fluid-path alt-fluid"
+        class:stalled={!isOnline || flowSpeed === 0}
+        filter="url(#neon-glow)"
+        style="animation-duration: {flowSpeed || 999}s; opacity: {isOnline && activeNodes.has('llm') ? 1 : 0.06};"
+      />
+
       <!-- Merge -> Output -->
-      <path d="M 700,100 L 900,200" 
-            class="fluid-path" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('memory') ? 1 : 0.3};" />
-      <path d="M 700,300 L 900,200" 
-            class="fluid-path alt-fluid" filter="url(#neon-glow)" 
-            style="animation-duration: {flowSpeed}s; opacity: {activeNodes.has('llm') ? 1 : 0.3};" />
+      <path
+        d="M 700,100 L 900,200"
+        class="fluid-path"
+        class:stalled={!isOnline || flowSpeed === 0}
+        filter="url(#neon-glow)"
+        style="animation-duration: {flowSpeed || 999}s; opacity: {isOnline && activeNodes.has('memory') ? 1 : 0.06};"
+      />
+      <path
+        d="M 700,300 L 900,200"
+        class="fluid-path alt-fluid"
+        class:stalled={!isOnline || flowSpeed === 0}
+        filter="url(#neon-glow)"
+        style="animation-duration: {flowSpeed || 999}s; opacity: {isOnline && activeNodes.has('llm') ? 1 : 0.06};"
+      />
     </svg>
 
     <!-- Node UI'ları (Cam Kartlar) -->
     <!-- Gateway -->
     <div class="cyber-node" style="left: 10%; top: 50%;">
-      <div class="node-icon" class:active={activeNodes.has('gateway')}>⛩️</div>
+      <div class="node-icon" class:active={isOnline && activeNodes.has('gateway')}>⛩️</div>
       <div class="node-label">API GATEWAY</div>
     </div>
 
     <!-- Unified Router -->
     <div class="cyber-node" style="left: 30%; top: 50%;">
-      <div class="node-icon" class:active={activeNodes.has('router')}>🚦</div>
+      <div class="node-icon" class:active={isOnline && activeNodes.has('router')}>🚦</div>
       <div class="node-label">UNIFIED ROUTER</div>
-      <div class="node-pulse" class:pulsing={activeNodes.has('router')}></div>
+      <div class="node-pulse" class:pulsing={isOnline && activeNodes.has('router')}></div>
     </div>
 
     <!-- OSINT / Memory -->
     <div class="cyber-node" style="left: 60%; top: 25%;">
-      <div class="node-icon" class:active={activeNodes.has('memory')}>🧠</div>
+      <div class="node-icon" class:active={isOnline && activeNodes.has('memory')}>🧠</div>
       <div class="node-label">OSINT & MEMORY</div>
-      {#if activeNodes.has('memory')}
-        <div class="mini-hud">READING VAULT...</div>
+      {#if isOnline && activeNodes.has('memory')}
+        <div class="mini-hud">VAULT ONLINE</div>
       {/if}
     </div>
 
     <!-- LLM Engine -->
     <div class="cyber-node" style="left: 60%; top: 75%;">
-      <div class="node-icon" class:active={activeNodes.has('llm')}>🔥</div>
+      <div class="node-icon" class:active={isOnline && activeNodes.has('llm')}>🔥</div>
       <div class="node-label">LLM ENGINE</div>
-      {#if activeNodes.has('llm')}
+      {#if isOnline && activeNodes.has('llm')}
         <div class="mini-hud stream-text">SYNTHESIZING...</div>
       {/if}
     </div>
 
     <!-- Output -->
     <div class="cyber-node" style="left: 90%; top: 50%;">
-      <div class="node-icon" class:active={activeNodes.has('gateway')}>✅</div>
+      <div class="node-icon" class:active={isOnline && activeNodes.has('gateway')}>✅</div>
       <div class="node-label">CLIENT RESPONSE</div>
     </div>
   </div>
@@ -204,18 +241,67 @@
     width: 100%;
     height: 450px;
     background: radial-gradient(circle at center, #0a0f1d 0%, #03050a 100%);
-    border: 1px solid rgba(212, 175, 55, 0.1);
+    border: 1px solid rgba(212, 175, 55, 0.15);
     border-radius: 16px;
     overflow: hidden;
-    font-family: 'Courier New', Courier, monospace;
-    box-shadow: inset 0 0 50px rgba(0,0,0,0.8), 0 10px 30px rgba(0,0,0,0.5);
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.8), 0 10px 30px rgba(0, 0, 0, 0.5);
+  }
+
+  .telemetry-board.offline {
+    border-color: rgba(239, 68, 68, 0.35);
+    background: radial-gradient(circle at center, #180808 0%, #080303 100%);
+  }
+
+  /* OFFLINE UYARI ŞERİDİ */
+  .offline-overlay {
+    position: absolute;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 25;
+    pointer-events: none;
+  }
+
+  .offline-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(239, 68, 68, 0.65);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.25), inset 0 0 12px rgba(239, 68, 68, 0.15);
+    backdrop-filter: blur(8px);
+  }
+
+  .offline-icon {
+    font-size: 20px;
+    animation: alertPulse 1.6s ease-in-out infinite;
+  }
+
+  .offline-headline {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: #fca5a5;
+  }
+
+  .offline-subtext {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 2px;
+  }
+
+  @keyframes alertPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.9); }
   }
 
   .ambient-particle {
     position: absolute;
     background: #b8860b;
     border-radius: 50%;
-    opacity: 0.3;
     animation: floatUp linear infinite;
     pointer-events: none;
   }
@@ -230,7 +316,7 @@
     justify-content: space-between;
     align-items: flex-start;
     z-index: 10;
-    background: linear-gradient(180deg, rgba(3,5,10,0.8) 0%, rgba(3,5,10,0) 100%);
+    background: linear-gradient(180deg, rgba(3, 5, 10, 0.9) 0%, rgba(3, 5, 10, 0) 100%);
   }
 
   .title-container {
@@ -243,8 +329,8 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #4a5568;
-    box-shadow: 0 0 0 rgba(0,0,0,0);
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
   }
 
   .status-dot.pulsing {
@@ -252,13 +338,19 @@
     animation: redAlert 1.5s infinite;
   }
 
+  .status-dot.offline-dot {
+    background: #ef4444;
+    box-shadow: 0 0 8px #ef4444;
+    animation: alertPulse 1.2s infinite;
+  }
+
   .board-title {
     margin: 0;
     color: #fff;
-    font-size: 18px;
-    letter-spacing: 4px;
+    font-size: 16px;
+    letter-spacing: 3px;
     font-weight: 600;
-    text-shadow: 0 0 10px rgba(255,255,255,0.3);
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
   }
 
   .metrics {
@@ -274,14 +366,15 @@
 
   .metric-lbl {
     font-size: 10px;
-    color: #a0aec0; font-size: 11px;
+    color: #a0aec0;
     letter-spacing: 1px;
   }
 
   .metric-val {
-    font-size: 18px;
+    font-size: 15px;
     font-weight: bold;
     color: #fff;
+    letter-spacing: 0.05em;
   }
 
   .pipeline-canvas {
@@ -308,7 +401,6 @@
     stroke-linejoin: round;
   }
 
-  /* Ana akışkan (Neon yeşil/mavi) */
   .fluid-path {
     fill: none;
     stroke: url(#fluid-gradient);
@@ -320,7 +412,10 @@
     transition: opacity 0.4s ease;
   }
 
-  /* İkinci akışkan (Neon mor/kırmızı - LLM ateşi) */
+  .fluid-path.stalled {
+    animation: none !important;
+  }
+
   .alt-fluid {
     stroke: #ff4500;
     stroke-dasharray: 15 30;
@@ -338,7 +433,7 @@
   .node-icon {
     width: 50px;
     height: 50px;
-    background: rgba(10, 15, 30, 0.8);
+    background: rgba(10, 15, 30, 0.85);
     border: 1px solid #2d3748;
     border-radius: 12px;
     display: flex;
@@ -347,23 +442,25 @@
     font-size: 20px;
     backdrop-filter: blur(4px);
     transition: all 0.3s ease;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
     position: relative;
+    opacity: 0.5;
   }
 
   .node-icon.active {
+    opacity: 1;
     border-color: #d4af37;
     box-shadow: 0 0 20px rgba(212, 175, 55, 0.4), inset 0 0 10px rgba(212, 175, 55, 0.2);
-    transform: scale(1.1);
+    transform: scale(1.08);
   }
 
   .node-label {
     margin-top: 10px;
-    color: #e2e8f0; font-size: 13px; font-weight: bold;
-    font-size: 11px;
+    color: #94a3b8;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: 1px;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
   }
 
   .node-pulse {
@@ -418,8 +515,8 @@
 
   @keyframes floatUp {
     0% { transform: translateY(0); opacity: 0; }
-    10% { opacity: 0.5; }
-    90% { opacity: 0.5; }
+    10% { opacity: 0.3; }
+    90% { opacity: 0.3; }
     100% { transform: translateY(-100px); opacity: 0; }
   }
 </style>

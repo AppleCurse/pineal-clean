@@ -96,10 +96,16 @@ def extract_username(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
         return ""
+    # [RÖNTGEN 2026-09-23] "@handle" kısayolu KALDIRILDI (P1-6 sözleşmesine
+    # dönüş). Çıplak "@ornek" hangi platforma ait olduğunu SÖYLEMEZ; onu
+    # Instagram hedefi saymak, [023]/P1-6'nın yasakladığı "tahmine dayalı
+    # hedef" kapısını yeniden açıyordu: aynı adı taşıyan gerçek bir hesap
+    # sessizce kazınır ve kanıt zinciri yanlış kişiye bağlanırdı. Üç denetim
+    # kilidi de (tests/audit/test_auditor_round2_findings.py,
+    # test_production_audit_findings.py P1-6, test_round3_residue_findings.py
+    # N4) host'suz girdide "" ister. Operatör gerçekten Instagram hedeflemek
+    # istiyorsa tam profil URL'si verir.
     if raw.startswith("@"):
-        clean = raw.lstrip("@").strip().lower()
-        if _IG_USERNAME.match(clean) and clean not in _RESERVED_IG_SEGMENTS and not (clean.startswith(".") or clean.endswith(".") or ".." in clean):
-            return clean
         return ""
     if not raw.startswith(("http://", "https://")) and "instagram.com" in raw.lower():
         raw = "https://" + raw

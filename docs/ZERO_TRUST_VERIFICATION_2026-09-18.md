@@ -22,7 +22,7 @@ Testin mantığı tautoloji mi? **Hayır**: `app.state.rooms`'a iki oda kaydedip
 gönderiyor ve B'nin `sent == []` olmasını istiyor. Mutant-1 (eski `all_ws.update(...)` döngüsü
 geri konuldu) → **2 failed**. Test sızıntıyı gerçekten ölçüyor, ama süreç-içi.
 
-Eksik canlı kanıtı ben ürettim: `scripts/ws_leak_probe.py` (yeni, commit c61fe66).
+Eksik canlı kanıtı ben ürettim: `scripts/archive/ws_leak_probe.py` (yeni, commit c61fe66).
 Tautoloji koruması: her istemci **kendi** odasının sırrını görmek zorunda; görmüyorsa
 sonuç `VIOLATION_OR_INVALID` (ilk denemede tam da bu oldu — log yayını `fact`'i değil
 `tag`'i taşıyordu; sır `tag`'e taşındı, sonra geçerli oldu).
@@ -139,7 +139,7 @@ Kaldırılan: `require_data_confidence`, `min_final_confidence`, `critical: true
 
 | # | Madde | Durum |
 |---|---|---|
-| 1 | leak_probe.py var mı | **BULGU**: hiç yoktu; yeni `scripts/ws_leak_probe.py` eklendi |
+| 1 | leak_probe.py var mı | **BULGU**: hiç yoktu; yeni `scripts/archive/ws_leak_probe.py` eklendi |
 | 2 | Canlı WS izolasyon | **DOĞRULANDI** 0 leak (mutant: 72) |
 | 3 | Timeout/eviction | **DOĞRULANDI**, oda kilitlenmiyor (tcp_wmem nüansı) |
 | 4 | Zombi Chromium | **KISMİ**: zincir doğrulandı, gerçek Chromium ortamda yoktu |

@@ -73,13 +73,10 @@ _tool_output_optimizer = TokenOptimizer()
 
 # v5.0 - Redis Pub/Sub + Agent Rack canlı köprüsü
 try:
-    from agent_core.services.redis_bus import get_redis_bus, init_redis_bus
     from agent_core.services.agent_status_tracker import get_tracker, init_tracker, AGENT_DEFINITIONS
     HAS_AGENT_RACK = True
 except ImportError:
     HAS_AGENT_RACK = False
-    get_redis_bus = None
-    init_redis_bus = None
     get_tracker = None
     init_tracker = None
     AGENT_DEFINITIONS = []
@@ -143,18 +140,18 @@ async def lifespan(application: FastAPI):
         if HAS_AGENT_RACK:
             try:
                 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-                bus = await init_redis_bus(redis_url)
+                # TEK bus: init_tracker zaten init_redis_bus çağırır; ikinci bir
+                # bağlantı açılmasın (önceden 2 istemci açılıyor, biri sızıyordu).
                 tracker = await init_tracker(redis_url)
+                bus = tracker.redis_bus
                 application.state.redis_bus = bus
-                application.state.agent_tracker = tracker
-                logger.info("Agent Rack + Redis bus aktif")
+                transport = "redis" if getattr(bus, "_use_redis", False) else "in-memory"
+                logger.info(f"Agent Rack aktif (telemetri taşıyıcı: {transport})")
             except Exception as e:
                 logger.warning(f"Agent Rack init hatasi (fallback): {e}")
                 application.state.redis_bus = None
-                application.state.agent_tracker = None
         else:
             application.state.redis_bus = None
-            application.state.agent_tracker = None
 
     except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()
@@ -837,6 +834,114 @@ def _extract_vault_provider_keys(vault: dict) -> tuple:
     return applied, openrouter_key, skipped
 
 
+# [FORENSIC VAULT-INTERLOCK] Kilit, dosyanın VARLIĞIYLA değil, içindeki GERÇEK
+# sır malzemesiyle açılır. Eskiden `_check_vault_interlock` dosya dict'inin
+# truthiness'ına bakıyordu: `{"use_local": true}` gibi anahtarsız bir dosya,
+# hatta `sk-or-v1-YOUR...` placeholder'ı bile kilidi açıyordu. Artık her bayrak
+# kurulum yolu (`get_room`, `/api/vault`) ve dosya denetimi aynı
+# `_is_real_key` kapısından geçer; placeholder fail-closed reddedilir.
+# Değerler ASLA loglanmaz/döndürülmez — bu yardımcılar yalnızca boolean üretir.
+_PLACEHOLDER_KEY_PREFIXES: tuple = ("sk-or-v1-YOUR",)
+_PLACEHOLDER_KEY_MARKERS: tuple = (
+    "YOUR_", "YOUR-", "YOUR ", "_YOUR",
+    "PLACEHOLDER", "EXAMPLE", "CHANGE_ME", "CHANGEME",
+    "REPLACE_ME", "REPLACEME", "INSERT_", "SAMPLE_KEY",
+)
+_SEARCH_CONTAINER_NAMES: frozenset = frozenset({
+    "searchandosint", "searchosint", "searchandall", "search",
+})
+
+
+def _is_placeholder_key(value: object) -> bool:
+    """Placeholder/örnek anahtar metni mi? (fail-closed sınıflandırıcı)"""
+    if not isinstance(value, str):
+        return True
+    text = value.strip()
+    if not text:
+        return True
+    for prefix in _PLACEHOLDER_KEY_PREFIXES:
+        if text.startswith(prefix):
+            return True
+    upper = text.upper()
+    return any(marker in upper for marker in _PLACEHOLDER_KEY_MARKERS)
+
+
+def _is_real_key(value: object) -> bool:
+    """Gerçek sır malzemesi mi? Boş + placeholder reddedilir."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and not _is_placeholder_key(value)
+    )
+
+
+def _cookie_pool_has_key(value: object) -> bool:
+    """Çok satırlı cookie havuzunda en az bir gerçek satır var mı?"""
+    if not isinstance(value, str):
+        return False
+    lines = [line for line in value.splitlines() if line.strip()]
+    if not lines:
+        return _is_real_key(value)
+    return any(_is_real_key(line) for line in lines)
+
+
+def _vault_file_has_key_material(vault: dict) -> bool:
+    """Dosya kasasında GERÇEK anahtar malzemesi var mı? (salt-okur)
+
+    `providers.*`, `provider_keys.*`, top-level `api_key`, arama anahtarları,
+    `x_cookie` / `ig_sessionid` taranır. (Interlock `_vault_bears_key_material`
+    kullanır; bu yardımcı `/api/vault/status` raporu içindir.)
+    """
+    if not isinstance(vault, dict) or not vault:
+        return False
+    if _is_real_key(vault.get("api_key")):
+        return True
+    for field in ("ig_sessionid", "tavily_key", "serpapi_key", "exa_key"):
+        if _is_real_key(vault.get(field)):
+            return True
+    if _cookie_pool_has_key(vault.get("x_cookie")):
+        return True
+    providers = vault.get("providers")
+    if isinstance(providers, dict):
+        for raw_name, entry in providers.items():
+            norm_name = _normalize_vault_provider_name(raw_name)
+            if norm_name in _SEARCH_CONTAINER_NAMES:
+                if isinstance(entry, dict):
+                    for sk in ("tavily", "serpapi", "exa"):
+                        if _is_real_key(entry.get(sk)):
+                            return True
+                continue
+            if isinstance(entry, dict):
+                for key_field in ("primary_api_key", "backup_api_key", "vertex_token", "api_key"):
+                    if _is_real_key(entry.get(key_field)):
+                        return True
+            elif _is_real_key(entry):
+                return True
+    flat = vault.get("provider_keys")
+    if isinstance(flat, dict):
+        for _pid, key in flat.items():
+            if _is_real_key(key):
+                return True
+    return False
+
+
+def _room_vault_unlocked(vault: dict) -> bool:
+    """Oda kasası açık mı? Bayraklar YALNIZCA gerçek malzemeyle kurulur
+    (`get_room` + `/api/vault` aynı kapıdan geçer), bu yüzden bayraklar
+    güvenilirdir. `/api/vault/lock` bayrakları temizler -> kilitli."""
+    if not isinstance(vault, dict):
+        return False
+    if vault.get("or_key") is True:
+        return True
+    if vault.get("provider_keys_set"):
+        return True
+    if vault.get("search_keys") is True:
+        return True
+    if _is_real_key(vault.get("ig_sessionid")):
+        return True
+    return _cookie_pool_has_key(vault.get("x_cookie"))
+
+
 # [AUDIT P0-4] Oda kayıt defteri sınırları. client_id istemcinin seçtiği,
 # doğrulanmayan bir string olduğu için sınırsız oda = sınırsız PinealExecutor +
 # sender task + kuyruk = OOM (ölçülen: 300 farklı client_id -> 300 kalıcı oda).
@@ -982,7 +1087,9 @@ def get_room(client_id: str) -> dict:
         else:
             api_key = vault.pop("api_key", None) or file_or_key or os.getenv("OPENROUTER_API_KEY")
 
-        if api_key and not api_key.startswith("sk-or-v1-YOUR"):
+        # [FORENSIC VAULT-INTERLOCK] Yalnızca GERÇEK anahtar bayrak kurar;
+        # placeholder (`sk-or-v1-YOUR...` ve türevleri) fail-closed reddedilir.
+        if _is_real_key(api_key):
             executor.llm_gateway.set_key(api_key)
             if shadow_executor is not None:
                 shadow_executor.llm_gateway.set_key(api_key)
@@ -991,9 +1098,10 @@ def get_room(client_id: str) -> dict:
             vault["or_key"] = True
 
         # Export direct keys to environment for underlying SDKs
-        if "google-gemini" in file_provider_keys:
+        # [FORENSIC VAULT-INTERLOCK] Placeholder ortama YAZILMAZ (env kirliliği yok).
+        if _is_real_key(file_provider_keys.get("google-gemini")):
             os.environ.setdefault("GEMINI_API_KEY", file_provider_keys["google-gemini"])
-        if "google-gemini-backup" in file_provider_keys:
+        if _is_real_key(file_provider_keys.get("google-gemini-backup")):
             os.environ.setdefault("GEMINI_BACKUP_API_KEY", file_provider_keys["google-gemini-backup"])
 
         # FAZ 3: dosyadan yuklenen dogrudan-saglayici anahtarlari (yukarida
@@ -1003,6 +1111,11 @@ def get_room(client_id: str) -> dict:
         if file_provider_keys:
             applied = []
             for provider_id, provider_key in file_provider_keys.items():
+                # [FORENSIC VAULT-INTERLOCK] Placeholder dosyadan bile gelse
+                # havuza girmez; atlanan ID dürüstçe raporlanır (sir DEĞERİ asla).
+                if not _is_real_key(provider_key):
+                    file_skipped["malformed"].append(str(provider_id))
+                    continue
                 try:
                     executor.llm_gateway.set_provider_key(provider_id, provider_key)
                     applied.append(str(provider_id))
@@ -1026,6 +1139,14 @@ def get_room(client_id: str) -> dict:
         # "SERPAPI_KEY" yalnızca geriye uyumluluk için ikincil okunur.
         serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY")
         exa = vault.get("exa_key") or os.getenv("EXA_API_KEY")
+        # [FORENSIC VAULT-INTERLOCK] Placeholder arama anahtarları ne ortama
+        # yazılır ne bayrak kurar (fail-closed).
+        if not _is_real_key(tavily):
+            tavily = None
+        if not _is_real_key(serpapi):
+            serpapi = None
+        if not _is_real_key(exa):
+            exa = None
         if tavily:
             os.environ.setdefault("TAVILY_API_KEY", tavily)
         if serpapi:
@@ -2022,9 +2143,11 @@ class InitiatePayload(BaseModel):
     # Bellek/istismar yüzeyini daraltmak için katı alan tavanları:
     client_id: str = Field(max_length=_MAX_CLIENT_ID_LENGTH)
     url: str = Field(max_length=8_192)
-    rituals: str = Field(max_length=32_000)
-    playlist: str = Field(max_length=32_000)
-    envies: str = Field(max_length=32_000)
+    # [main 481edb8'den taşındı] Alanlar opsiyonel: `default=""` olmadan istemci
+    # bu üç alanı göndermezse 422 alıyordu. Bellek tavanı (max_length) korunur.
+    rituals: str = Field(default="", max_length=32_000)
+    playlist: str = Field(default="", max_length=32_000)
+    envies: str = Field(default="", max_length=32_000)
     scraper_type: str = Field(default="instagram", max_length=64)
     # ASPASIA TRUE CHIEF LAYER: kullanicinin AMACI (goal id'leri) görev
     # verisiyle birlikte tasinir — ama AJAN SECIMI degil; sozlesme tek
@@ -2474,13 +2597,15 @@ async def api_initiate(req: InitiatePayload, request: Request):
         )
     task_id = _new_task_id()
     _lifecycle(room).transition(task_id, "processing")
-    # Agent Rack: planlanan ajanları Ready yap
+    # Agent Rack: görev başladı — tüm slotlar BEKLEMEDE (Wait).
+    # [RÖNTGEN 2026-09-23] Eskiden burada "tahmini plan" bahanesiyle
+    # set_all_ready() çağrılıyordu: daha tek bir ajan çalışmadan rack 12/12
+    # READY gösteriyordu. Ready/Active geçişlerinin TEK kaynağı executor'ın
+    # gerçek ajan geçişleridir (PinealExecutor._rack_update).
     if HAS_AGENT_RACK and get_tracker:
         try:
             tracker = get_tracker()
             await tracker.set_all_wait()
-            # Tahmini plan - gerçek plan executor'da
-            await tracker.set_all_ready()
         except Exception:
             pass
     mission = asyncio.create_task(run_mission(req, task_id))
@@ -2511,6 +2636,18 @@ class VaultPayload(BaseModel):
     
 @app.post("/api/vault")
 async def api_vault(req: VaultPayload):
+    # [FORENSIC VAULT-INTERLOCK] Placeholder fail-closed: ret HER ŞEYDEN ÖNCE
+    # yapılır, böylece reddedilen istek HİÇBİR bayrak kuramaz (kısmi mutasyon yok).
+    if req.api_key and not _is_real_key(req.api_key):
+        return JSONResponse(
+            {"error": {"code": "PLACEHOLDER_KEY", "message": "KASA REDDETTİ: API anahtarı placeholder (ör. sk-or-v1-YOUR...); gerçek anahtar girin."}},
+            status_code=400,
+        )
+    if req.x_cookie and not _cookie_pool_has_key(req.x_cookie):
+        return JSONResponse(
+            {"error": {"code": "PLACEHOLDER_KEY", "message": "KASA REDDETTİ: cookie havuzunda gerçek anahtar malzemesi yok (boş/placeholder)."}},
+            status_code=400,
+        )
     vault = get_vault(req.client_id)
     executor = get_executor(req.client_id)
     if req.x_cookie:
@@ -2535,6 +2672,11 @@ async def api_vault(req: VaultPayload):
         if dialogue_manager is not None:
             gateways.append(dialogue_manager.llm)
         for provider_id, provider_key in req.provider_keys.items():
+            # [FORENSIC VAULT-INTERLOCK] Placeholder havuza girmez; atlanan
+            # ID dürüstçe raporlanır (değer asla loglanmaz).
+            if not _is_real_key(provider_key):
+                broadcast_log(req.client_id, "WARNING", f"KASA: placeholder saglayici anahtari reddedildi: {provider_id}")
+                continue
             ok = True
             for gateway in gateways:
                 try:
@@ -2561,9 +2703,31 @@ async def api_vault(req: VaultPayload):
         broadcast_log(req.client_id, "INFO", f"KASA: Yerel Kısıtlamasız LLM Yapılandırıldı ({req.local_model or 'Ollama/LM Studio'}).")
 
     if req.tavily_key or req.serpapi_key or req.exa_key:
-        executor.search_engine.set_keys(tavily=req.tavily_key, serpapi=req.serpapi_key, exa=req.exa_key)
-        vault["search_keys"] = True
-        broadcast_log(req.client_id, "INFO", "KASA: Arama Motoru anahtarları mühürlendi.")
+        # [FORENSIC VAULT-INTERLOCK] Yalnızca GERÇEK arama anahtarları
+        # uygulanır ve bayrak kurar; placeholder sessizce bayrak kuramaz.
+        real_search = {
+            name: val for name, val in (
+                ("tavily", req.tavily_key),
+                ("serpapi", req.serpapi_key),
+                ("exa", req.exa_key),
+            ) if _is_real_key(val)
+        }
+        provided = [name for name, val in (
+            ("tavily", req.tavily_key),
+            ("serpapi", req.serpapi_key),
+            ("exa", req.exa_key),
+        ) if val]
+        rejected = [name for name in provided if name not in real_search]
+        if rejected:
+            broadcast_log(req.client_id, "WARNING", f"KASA: placeholder arama anahtari reddedildi: {', '.join(rejected)}")
+        if real_search:
+            executor.search_engine.set_keys(
+                tavily=real_search.get("tavily"),
+                serpapi=real_search.get("serpapi"),
+                exa=real_search.get("exa"),
+            )
+            vault["search_keys"] = True
+            broadcast_log(req.client_id, "INFO", "KASA: Arama Motoru anahtarları mühürlendi.")
         
     return {"status": "secured"}
 
@@ -2691,15 +2855,22 @@ async def api_telemetry(client_id: str = "default"):
                 agent_statuses = tracker.get_all_statuses()
         except Exception:
             agent_statuses = {}
+    # [FORENSIC VAULT-INTERLOCK] Telemetri, kilidin GERÇEK durumunu söyler:
+    # placeholder anahtar "hazır" sayılmaz; `vault_locked` interlock ile birebir.
+    vault_open = _check_vault_interlock(client_id)
+    search_keys = getattr(executor, "search_engine", None)
     return {
         "core": True,
-        "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
+        "gateway": _is_real_key(getattr(executor.llm_gateway, 'api_key', None)),
         "scraper": capability["instagram"],
-        "vault": "x_cookie" in vault or bool(vault.get("or_key")) or "ig_sessionid" in vault,
-        "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
+        "vault": vault_open,
+        "search_engine": bool(vault.get("search_keys", False)) or any(
+            _is_real_key(getattr(search_keys, attr, None))
+            for attr in ("tavily_key", "serpapi_key", "exa_key")
+        ),
         "x_scraper": False,
         "instagram_scraper": capability["instagram"],
-        "instagram_session": "ig_sessionid" in vault,
+        "instagram_session": _is_real_key(vault.get("ig_sessionid")),
         "browser_installed": capability["browser"],
         "llm_spend_usd": round(float(budget.get("spend_usd", 0.0)), 6),
         "llm_reserved_spend_usd": round(float(budget.get("reserved_usd", 0.0)), 6),
@@ -2710,7 +2881,7 @@ async def api_telemetry(client_id: str = "default"):
         "rust_core": rust_core_status(),
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
         "agent_statuses": agent_statuses,
-        "vault_locked": not bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie")),
+        "vault_locked": not vault_open,
     }
 
 
@@ -2718,13 +2889,24 @@ async def api_telemetry(client_id: str = "default"):
 
 @app.get("/api/agents/status")
 async def api_agents_status():
-    """12 ajanin anlik durumu - Agent Rack beslenir"""
+    """12 ajanin anlik durumu - Agent Rack beslenir.
+
+    ``source`` UI'nin KAYNAK satırını besler ve GERÇEK taşıyıcıyı beyan eder:
+      - ``redis_bus``  : PING'lenmiş Redis bağlantısı üzerinden okundu
+      - ``in_memory``  : Redis yok/bağlanamadı, süreç-içi bellek
+      - ``fallback``   : Agent Rack modülü hiç yüklenmedi
+      - ``error``      : okuma patladı
+    [RÖNTGEN 2026-09-23] Eskiden tracker varsa koşulsuz ``redis_bus``
+    yazılıyordu; Redis kapalıyken bile UI "REDIS PUB/SUB" etiketi basıyordu.
+    """
     if not HAS_AGENT_RACK or not get_tracker:
         return {"agents": [], "source": "fallback", "count": 0}
     try:
         tracker = get_tracker()
         agents = tracker.get_status_list()
-        return {"agents": agents, "source": "redis_bus", "count": len(agents)}
+        state_fn = getattr(getattr(tracker, "redis_bus", None), "connection_state", None)
+        source = state_fn() if callable(state_fn) else "in_memory"
+        return {"agents": agents, "source": source, "count": len(agents)}
     except Exception as e:
         logger.warning(f"Agent status okuma hatasi: {e}")
         return {"agents": [], "source": "error", "error": str(e)[:100], "count": 0}
@@ -2767,22 +2949,25 @@ class VaultStatusPayload(BaseModel):
 
 @app.get("/api/vault/status")
 async def api_vault_status(client_id: str = "default"):
-    """Vault kilit durumu - mandal baglantisi"""
+    """Vault kilit durumu - mandal baglantisi.
+
+    [FORENSIC VAULT-INTERLOCK] `locked`/`can_scrape`, `/api/initiate` ile
+    AYNI kapıdan (`_check_vault_interlock`) okunur: dosya varlığı kilidi
+    açmaz, yalnızca gerçek anahtar malzemesi açar.
+    """
     room = get_room(client_id)
     vault = room["vault"]
-    has_key = bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"))
-    has_session = bool(vault.get("ig_sessionid"))
-    # Dosya tabanli vault da kontrol
+    unlocked = _check_vault_interlock(client_id)
     file_vault = _load_vault()
-    file_has = bool(file_vault)
     return {
-        "locked": not has_key,
-        "has_api_key": bool(vault.get("or_key")),
-        "has_session": has_session,
-        "has_cookie": bool(vault.get("x_cookie")),
-        "file_vault_exists": file_has,
-        "can_scrape": has_key,  # Vault kilidi: anahtar yoksa OSINT/Scraper cikmaz
-        "message": "VAULT ACIK - dis dunya erisimi serbest" if has_key else "VAULT KILITLI - operator anahtari cevirmeden OSINT/Scraper cikmaz"
+        "locked": not unlocked,
+        "has_api_key": vault.get("or_key") is True,
+        "has_session": _is_real_key(vault.get("ig_sessionid")),
+        "has_cookie": _cookie_pool_has_key(vault.get("x_cookie")),
+        "file_vault_exists": bool(file_vault),
+        "file_vault_has_keys": _vault_file_has_key_material(file_vault),
+        "can_scrape": unlocked,  # Vault kilidi: anahtar yoksa OSINT/Scraper cikmaz
+        "message": "VAULT ACIK - dis dunya erisimi serbest" if unlocked else "VAULT KILITLI - operator anahtari cevirmeden OSINT/Scraper cikmaz"
     }
 
 
@@ -2811,7 +2996,7 @@ async def api_vault_unlock(payload: VaultStatusPayload):
     """Vault kilidini ac - backend tarafinda sadece durum raporu, gercek acma /api/vault ile"""
     room = get_room(payload.client_id)
     vault = room["vault"]
-    has_key = bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"))
+    has_key = _room_vault_unlocked(vault)
     if not has_key:
         return JSONResponse(
             {"error": {"code": "VAULT_LOCKED", "message": "Kasada anahtar yok, once /api/vault ile anahtar girin"}},
@@ -2822,12 +3007,72 @@ async def api_vault_unlock(payload: VaultStatusPayload):
 
 
 # Vault interlock helper
+_VAULT_KEY_FIELDS = (
+    "api_key",       # OpenRouter master (eski düz şema)
+    "or_key",        # oda kasasında "gerçek anahtar uygulandı" bayrağı
+    "ig_sessionid",  # Instagram oturum kimliği
+    "x_cookie",      # Instagram çerez malzemesi
+    "tavily_key",
+    "serpapi_key",
+    "exa_key",
+)
+
+# Yer tutucu değerler anahtar DEĞİLDİR: .env.example'dan kopyalanan
+# "sk-or-v1-YOUR..." satırı kasayı açmamalı.
+_VAULT_PLACEHOLDER_MARKERS = ("your", "changeme", "placeholder", "xxx", "<", "ornek", "örnek")
+
+
+def _vault_bears_key_material(vault: dict) -> bool:
+    """Kasa dict'i GERÇEK anahtar/oturum malzemesi taşıyor mu?
+
+    [RÖNTGEN 2026-09-23] `.pineal_vault.json` dosyasının VARLIĞI yetki
+    değildi ama eski `_check_vault_interlock` onu öyle sayıyordu
+    (`or ... or _load_vault()`): `{"providers": {}}` gibi bomboş bir dosya
+    bile dış-dünya mandalını açıyordu. Bu yardımcı "dosya var" ile "anahtar
+    var" ayrımını tek yerde yapar:
+      - providers/provider_keys içinde uygulanabilir anahtar, VEYA
+      - _VAULT_KEY_FIELDS'te yer tutucu olmayan gerçek değer.
+    """
+    if not isinstance(vault, dict) or not vault:
+        return False
+    applied, openrouter_key, _skipped = _extract_vault_provider_keys(vault)
+    # `_extract_*` yer tutucu süzmez; çıkarılan her değer gerçeklik kapısından
+    # geçirilir (örn. providers.gemini.api_key="PLACEHOLDER" mandalı açamaz).
+    if openrouter_key and _is_real_key(openrouter_key):
+        return True
+    if any(_is_real_key(key) for key in applied.values()):
+        return True
+    for field in _VAULT_KEY_FIELDS:
+        raw = vault.get(field)
+        if raw is True:  # oda kasasında "uygulandı" bayrağı
+            return True
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if any(marker in lowered for marker in _VAULT_PLACEHOLDER_MARKERS):
+            continue
+        return True
+    return False
+
+
 def _check_vault_interlock(client_id: str) -> bool:
-    """True = acik, False = kilitli (dis dunya erisimi yok)"""
+    """True = acik, False = kilitli (dis dunya erisimi yok).
+
+    [RÖNTGEN 2026-09-23] Eskiden son koşul `_load_vault()` idi: diskteki
+    `.pineal_vault.json` dosyasının VARLIĞI (içinde tek anahtar olmasa bile,
+    ör. `{"providers": {}}`) mandalı açıyordu. Dosya varlığı yetki değildir;
+    kasa ancak GERÇEK anahtar/oturum malzemesi taşıyorsa açıktır.
+    """
     try:
         room = get_room(client_id)
         vault = room["vault"]
-        return bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie") or _load_vault())
+        if vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"):
+            return True
+        # Dosya kasası: VARLIK değil, GERÇEK anahtar malzemesi aranır.
+        return _vault_bears_key_material(_load_vault())
     except Exception:
         return False
 

@@ -109,9 +109,11 @@ class AgentStatusTracker:
     async def set_wait(self, agent_id: str):
         return await self.update_status(agent_id, AgentStatus.WAIT.value)
 
-    async def set_all_ready(self):
-        for agent in AGENT_DEFINITIONS:
-            await self.set_ready(agent["id"])
+    # `set_all_ready()` KALDIRILDI ([RÖNTGEN 2026-09-23]): toplu READY,
+    # "her ajan çalışmaya hazır ve kanıt üretti" anlamına gelen bir durum
+    # iddiasıdır ve hiçbir gerçek koşuya dayanmadan yazılabiliyordu.
+    # Tekil `set_ready(agent_id)` kalır: onu yalnız executor gerçek bir ajan
+    # koşusunu bitirdiğinde çağırır.
 
     async def set_all_wait(self):
         for agent in AGENT_DEFINITIONS:
@@ -127,22 +129,13 @@ class AgentStatusTracker:
         """Frontend icin liste formati"""
         return list(self._statuses.values())
 
-    async def simulate_processing(self, planned_agents: list):
-        """Belirli bir plan icin ajanlari sirayla Active yap - demo"""
-        await self.set_all_wait()
-        await asyncio.sleep(0.2)
-        for agent_id in planned_agents:
-            if agent_id in self._statuses:
-                await self.set_ready(agent_id)
-        await asyncio.sleep(0.3)
-        for agent_id in planned_agents:
-            await self.set_active(agent_id)
-            await asyncio.sleep(0.8)
-            await self.set_done(agent_id)
-        # Kalanlar Ready
-        for agent in AGENT_DEFINITIONS:
-            if agent["id"] not in planned_agents:
-                await self.set_ready(agent["id"])
+    # [RÖNTGEN 2026-09-23] `simulate_processing()` BURADAN KALDIRILDI.
+    # Gerekçe: üretim modülünde yaşayan bu metod, hiçbir ajan çalışmadan
+    # Ready→Active→Done geçişlerini zamanlayıcıyla UYDURUYORDU ("demo").
+    # Çağıranı yoktu ama Agent Rack'in veri sözleşmesiyle aynı tipte durum
+    # ürettiği için herhangi bir kablolama hatası ekranda sahte operasyon
+    # anlamına geliyordu. Durum üretiminin TEK meşru yolu: PinealExecutor
+    # ._rack_update() (gerçek ajan geçişleri) ve POST /api/agents/status/{id}.
 
 
 # Global singleton
@@ -157,9 +150,16 @@ def get_tracker() -> AgentStatusTracker:
 
 
 async def init_tracker(redis_url: Optional[str] = None) -> AgentStatusTracker:
+    """Tracker'ı kurar ve TÜM ajanları Wait (beklemede) olarak mühürler.
+
+    [RÖNTGEN 2026-09-23] Eskiden açılışta `set_all_ready()` çağrılıyordu:
+    hiçbir ajan tek bir kanıt üretmemişken Agent Rack 12/12 READY basıyordu
+    (uydurma operasyonel durum). Ready artık YALNIZCA gerçek bir koşunun
+    ardından yazılır (PinealExecutor._rack_update).
+    """
     global _tracker
     from .redis_bus import init_redis_bus
     bus = await init_redis_bus(redis_url)
     _tracker = AgentStatusTracker(bus)
-    await _tracker.set_all_ready()
+    await _tracker.set_all_wait()
     return _tracker

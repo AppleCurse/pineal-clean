@@ -118,13 +118,10 @@ pub mod live {
             Ok(())
         }
 
-        pub async fn set_all_ready(&self) -> Result<(), redis::RedisError> {
-            let agents = crate::redis_bridge::all_agent_ids();
-            for agent_id in agents {
-                self.set_agent_status(agent_id, "Ready", None).await?;
-            }
-            Ok(())
-        }
+        // [RÖNTGEN 2026-09-23] `set_all_ready` KALDIRILDI: hiçbir ajan
+        // koşmadan 12 slotu birden "Ready" ilan etmek ölçülmeyen bir durum
+        // iddiasıdır (Python tarafındaki AgentStatusTracker.set_all_ready ile
+        // aynı kusur). Ready yalnız gerçek bir ajan geçişinde yazılır.
     }
 }
 
@@ -151,9 +148,6 @@ pub mod live {
             Ok(())
         }
         pub async fn set_all_wait(&self) -> Result<(), std::io::Error> {
-            Ok(())
-        }
-        pub async fn set_all_ready(&self) -> Result<(), std::io::Error> {
             Ok(())
         }
     }

@@ -37,11 +37,17 @@ class GravityEngine:
             m = meta[i] if isinstance(meta[i], dict) else {}
             lk = float(m.get("like_count") or m.get("likes") or 0)
             likes.append(lk)
-            for w in set(re.findall(rf"\b\w{{{self.min_word_len},}}\b", t.lower())) - STOPS:
+            # [RÖNTGEN 2026-09-23] DETERMİNİZM: `set(...)` yinelemesi Python
+            # hash rastgelelemesine (PYTHONHASHSEED) bağlıdır; bucket'a giriş
+            # sırası koşular arasında değişiyordu. Eşit pull/mass'lı kuyularda
+            # sıralama bu giriş sırasına düştüğü için `dominant_attractor`
+            # AYNI VERİYLE farklı çıkıyordu (ölçülen: 'uzun' / 'düşündüm' /
+            # 'hakkında'). Sözcükler sıralı yinelenir.
+            for w in sorted(set(re.findall(rf"\b\w{{{self.min_word_len},}}\b", t.lower())) - STOPS):
                 bucket[w].append(lk)
         mean = float(np.mean(likes)) or 1
         wells = []
-        for word, a in bucket.items():
+        for word, a in sorted(bucket.items()):
             if len(a) < self.min_recurrence:
                 continue
             mass = len(a) / n
@@ -60,7 +66,9 @@ class GravityEngine:
                     evidence_refs=[f"gravity:{word}:n={len(a)}"],
                 )
             )
-        wells.sort(key=lambda x: (-x.pull, -x.mass))
+        # Eşitlikte alfabetik kırma: sıralama girdi sırasına (dolayısıyla hash
+        # tohumuna) bağımlı kalamaz.
+        wells.sort(key=lambda x: (-x.pull, -x.mass, x.anchor))
         wells = wells[: self.max_wells]
         dom = wells[0].anchor if wells else None
         return GravityReport(

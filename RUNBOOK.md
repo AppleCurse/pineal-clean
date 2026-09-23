@@ -153,17 +153,17 @@ Yatay ölçekleme: paylaşımlı session store (Redis vb.) + sticky session gere
 | aspasia | heavy | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
 | authenticity_auditor | heavy | deepseek-v4-flash → gemini-3.7-flash → claude-sonnet-5 | agent_matrix |
 | autonomous_verifier | verify | claude-sonnet-5 → gemini-3.7-flash → grok-4.6 | agent_matrix |
-| autonomous_verifier_extract | simple | gpt-oss-120b → gemini-3.7-flash → laguna-s-2.1:free | agent_matrix |
+| autonomous_verifier_extract | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | cognitive_profiler | heavy | gpt-oss-120b → gemini-3.7-flash → deepseek-v4-flash | agent_matrix |
 | depth_analyst | heavy | deepseek-v4-pro → claude-sonnet-5 → gemini-3.7-flash | task_routing |
 | dialogue_manager | simple | gpt-oss-120b → laguna-s-2.1:free | task_routing |
 | friction_detector | heavy | claude-sonnet-5 → gemini-3.7-flash → deepseek-v4-pro | agent_matrix |
 | human_behavior | heavy | gpt-oss-120b → gemini-3.7-flash | agent_matrix |
 | interpreter | simple | gpt-oss-120b → laguna-s-2.1:free | task_routing |
-| lilith_growth | simple | gpt-oss-120b → gemini-3.7-flash → laguna-s-2.1:free | agent_matrix |
+| lilith_growth | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | mirror_truth | heavy | claude-sonnet-5 → gemini-3.7-flash | agent_matrix |
 | osint_investigator | heavy | gemini-3.7-flash → grok-4.6 → deepseek-v4-pro | agent_matrix |
-| passion_mapper | simple | gpt-oss-120b → gemini-3.7-flash → laguna-s-2.1:free | agent_matrix |
+| passion_mapper | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | pattern_interrupt | simple | gpt-oss-120b → laguna-s-2.1:free | agent_matrix |
 | pineal_juror_claude | jury | pineal-juror-claude | agent_matrix |
 | pineal_juror_google | jury | pineal-juror-google | agent_matrix |

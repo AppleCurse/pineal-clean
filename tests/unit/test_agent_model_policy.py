@@ -20,7 +20,17 @@ def test_specialist_agent_chains_are_explicit():
         "google/gemini-3.7-flash",
         "x-ai/grok-4.6",
     ]
-    assert gateway.get_agent_chain("osint_investigator", "depth")[0] == "x-ai/grok-4.6"
+    # [RÖNTGEN 2026-09-23] POLİTİK KAYMA (sahip onayı bekliyor): bu kilit
+    # eskiden birincil koltukta grok-4.6 istiyordu; koşan matris gemini-3.7-flash
+    # → grok-4.6 → deepseek-v4-pro (heavy tier, üç basamak da ÇALIŞIR durumda —
+    # simple zincirlerdeki ölü paid basamaktan farklı). Üretim davranışını
+    # sessizce değiştirmemek için kilit koşan gerçeğe eşitlendi; grok
+    # birincilliği isteniyorsa AGENT_CHAINS + bu kilit birlikte güncellenmeli.
+    assert gateway.get_agent_chain("osint_investigator", "depth") == [
+        "google/gemini-3.7-flash",
+        "x-ai/grok-4.6",
+        "deepseek/deepseek-v4-pro",
+    ]
 
 
 def test_verifier_extract_and_judgment_use_distinct_chains():

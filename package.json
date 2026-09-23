@@ -1,7 +1,13 @@
 {
   "name": "pineal-clean",
   "version": "3.0.0",
+  "private": true,
+  "description": "PINEAL EPIFIZ — kök derleme kabuğu (Cloudflare Workers Builds / Pages burada `npm run build` çalıştırır).",
   "scripts": {
-    "build": "npm --prefix frontend install && npm --prefix frontend run build"
+    "build": "npm ci --prefix frontend && npm run build --prefix frontend",
+    "check": "npm run check --prefix frontend"
+  },
+  "engines": {
+    "node": ">=20.19 <23"
   }
 }
