@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import {
     apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus,
-    isProcessing, powerEngaged, recordEngaged, agentStatuses, vaultLocked,
+    isProcessing, powerEngaged, recordEngaged, agentStatuses, agentTransport, vaultLocked,
     activeViewMode
   } from './store';
   import { uplinkState } from './lib/telemetry';
@@ -235,6 +235,8 @@
         const res = await apiFetch('/api/agents/status');
         if (res.ok) {
           const data = await res.json();
+          // Canlı taşıyıcı bildirimi (redis_bus | in_memory | ...) — raf başlığı buradan beslenir.
+          if (typeof data.source === 'string') agentTransport.set(data.source);
           if (data.agents && data.agents.length > 0) {
             const mapped: Record<string, any> = {};
             for (const agent of data.agents) {

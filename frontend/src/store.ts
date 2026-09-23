@@ -85,6 +85,9 @@ export const taskStatus = writable<any>(null);
 export const isProcessing = writable(false);
 export const telemetryEvents = writable<any[]>([]);
 export const agentStatuses = writable<Record<string, { status: string; updatedAt: number; metadata?: any }>>({});
+// Agent Rack taşıyıcısı: backend `/api/agents/status` yanıtındaki CANLI `source`
+// (`redis_bus` | `in_memory` | `fallback` | `error`). Boş = henüz yoklama yapılmadı.
+export const agentTransport = writable<string>('');
 export const vaultLocked = writable<boolean>(true);
 export const activeViewMode = writable<'warroom' | 'cockpit'>(
   (typeof localStorage !== 'undefined' && (localStorage.getItem('pineal_view_mode') as 'warroom' | 'cockpit')) || 'warroom'

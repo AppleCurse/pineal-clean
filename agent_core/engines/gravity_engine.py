@@ -37,7 +37,9 @@ class GravityEngine:
             m = meta[i] if isinstance(meta[i], dict) else {}
             lk = float(m.get("like_count") or m.get("likes") or 0)
             likes.append(lk)
-            for w in set(re.findall(rf"\b\w{{{self.min_word_len},}}\b", t.lower())) - STOPS:
+            # [FORENSIC DETERMINISM] Küme yinelemesi hash-tohumuna bağlıdır
+            # (PYTHONHASHSEED); sıralı tüketim ekleme sırasını sabitler.
+            for w in sorted(set(re.findall(rf"\b\w{{{self.min_word_len},}}\b", t.lower())) - STOPS):
                 bucket[w].append(lk)
         mean = float(np.mean(likes)) or 1
         wells = []
@@ -60,7 +62,10 @@ class GravityEngine:
                     evidence_refs=[f"gravity:{word}:n={len(a)}"],
                 )
             )
-        wells.sort(key=lambda x: (-x.pull, -x.mass))
+        # [FORENSIC DETERMINISM] Eşit (pull, mass) durumunda kazanan alfabetik
+        # tie-breaker ile seçilir; `dominant_attractor` hash-tohumundan
+        # bağımsız, çalışmadan çalışmaya BİREBİR aynıdır.
+        wells.sort(key=lambda x: (-x.pull, -x.mass, x.anchor))
         wells = wells[: self.max_wells]
         dom = wells[0].anchor if wells else None
         return GravityReport(

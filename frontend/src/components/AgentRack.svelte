@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
-  import { agentStatuses, isProcessing } from '../store';
+  import { agentStatuses, agentTransport, isProcessing } from '../store';
 
   const dispatch = createEventDispatcher();
 
@@ -64,13 +64,31 @@
     dispatch('select', { agentId: id });
   }
 
+  // Taşıyıcı etiketi backend'in CANLI bildiriminden gelir (`/api/agents/status`
+  // `source`); Redis bağlı değilse "REDIS PUB/SUB" iddia edilmez.
+  function transportLabel(source: string): string {
+    switch ((source || '').toLowerCase()) {
+      case 'redis_bus': return 'REDIS PUB/SUB';
+      case 'in_memory': return 'IN-MEMORY BUS';
+      case 'fallback': return 'BUS OFFLINE';
+      case 'error': return 'BUS ERROR';
+      default: return 'PROBING BUS…';
+    }
+  }
+
+  // Sayaçlar YALNIZCA görüntülenen 12 slotu sayar; tracker'daki yardımcı
+  // slotlar (shadow_executor, pineal_7pillar, vision_analyzer) toplamı şişirmez.
+  function rackCount(label: string): number {
+    return AGENT_DEFINITIONS.filter((a) => statusLabel(statuses[a.id]?.status) === label).length;
+  }
+
   $: statuses = $agentStatuses || {};
 </script>
 
 <div class="agent-rack {compact ? 'compact' : ''}" role="region" aria-label="Agent Rack">
   <div class="rack-header">
     <div class="rack-title">AGENT RACK</div>
-    <div class="rack-subtitle">12 AUTONOMOUS NODES · REDIS PUB/SUB</div>
+    <div class="rack-subtitle">12 AUTONOMOUS NODES · {transportLabel($agentTransport)}</div>
     <div class="rack-live-dot" class:live={$isProcessing}></div>
   </div>
 
@@ -115,15 +133,15 @@
   <div class="rack-footer">
     <div class="footer-stat">
       <span class="stat-label">READY</span>
-      <span class="stat-value">{Object.values(statuses).filter((s:any)=>statusLabel(s.status)==='READY').length}</span>
+      <span class="stat-value">{rackCount('READY')}</span>
     </div>
     <div class="footer-stat">
       <span class="stat-label">ACTIVE</span>
-      <span class="stat-value active">{Object.values(statuses).filter((s:any)=>statusLabel(s.status)==='ACTIVE').length}</span>
+      <span class="stat-value active">{rackCount('ACTIVE')}</span>
     </div>
     <div class="footer-stat">
       <span class="stat-label">WAIT</span>
-      <span class="stat-value wait">{Object.values(statuses).filter((s:any)=>statusLabel(s.status)==='WAIT').length}</span>
+      <span class="stat-value wait">{rackCount('WAIT')}</span>
     </div>
   </div>
 </div>

@@ -77,6 +77,15 @@ def _append_upstream_finding(input_data: dict, agent: str, core: str) -> None:
 
 class PinealExecutor:
     # v5.0 Agent Rack mapping - task_executor agent names to Agent Rack IDs
+    # [FORENSIC RACK-WIRING] BİREBİR slot eşlemesi. Eskiden `shadow_executor`
+    # DEPTH ANALYST slotunu, `pineal_7pillar` + `vision_analyzer` ise PATTERN
+    # INTERRUPT slotunu boyuyordu (ödünç slot): o ajanların gerçek durumları
+    # ekrandan izlenemiyor, bir ajanın aktivitesi başka ajanın slotunda
+    # görünüyordu. Artık her yürütücü KENDİ slotunu boyar; yardımcılar
+    # tracker'da kendi dinamik slotlarını açar, 12'li rafın slotlarını
+    # ASLA ezmez.
+    # (`resonance_calc` -> `resonance_calculator` gerçek bir 1:1 yeniden
+    # adlandırmadır; o slota başka ajan yazmaz.)
     _AGENT_RACK_MAP = {
         "mirror_truth": "mirror_truth",
         "autonomous_verifier": "autonomous_verifier",
@@ -90,9 +99,9 @@ class PinealExecutor:
         "authenticity_auditor": "authenticity_auditor",
         "depth_analyst": "depth_analyst",
         "resonance_synthesizer": "resonance_synthesizer",
-        "shadow_executor": "depth_analyst",  # shadow -> depth slot fallback
-        "pineal_7pillar": "pattern_interrupt",
-        "vision_analyzer": "pattern_interrupt",
+        "shadow_executor": "shadow_executor",
+        "pineal_7pillar": "pineal_7pillar",
+        "vision_analyzer": "vision_analyzer",
     }
 
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):
@@ -145,8 +154,13 @@ class PinealExecutor:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._agent_tracker.update_status(rack_id, status, {"task_agent": agent_name}))
             except RuntimeError:
-                if hasattr(self._agent_tracker, 'statuses') and rack_id in self._agent_tracker.statuses:
-                    self._agent_tracker.statuses[rack_id].status = status
+                # [FORENSIC RACK-WIRING] Loop yoksa (senkron bağlam) bilinen
+                # slot DOĞRUDAN yazılır. Eskiden `statuses` (yok) + `.status`
+                # (dict'te yok) hedefleniyordu: AttributeError sessizce
+                # yutuluyor, güncelleme HİÇBİR yere yazılmıyordu.
+                statuses = getattr(self._agent_tracker, "_statuses", None)
+                if isinstance(statuses, dict) and rack_id in statuses:
+                    statuses[rack_id]["status"] = status
         except Exception:
             pass
 
