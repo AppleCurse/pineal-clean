@@ -946,7 +946,56 @@ sandbox'tan auth'suz koşulamıyor. Kanıt, bu commit'in PR check'lerinden alın
 `package.json` adı `pineal-clean`); o projenin ayarları yalnız CF panelinde,
 bu yüzden depo tarafındaki düzeltme onun için **gerekli ama yeterli olmayabilir**.
 
-### 14.4 Workers Builds sonucu (push sonrası ölçüm)
+### 14.4 Workers Builds sonucu (push sonrası ÖLÇÜLDÜ — hâlâ kırmızı, neden Cloudflare tarafında)
 
-_(Bu bölüm commit push edildikten sonra ölçülen gerçek sonuçla doldurulur;
-öncesinde "yeşil" yazılmadı.)_
+`37fc639` push edildikten sonra ölçülen gerçek durum:
+
+| Check | Sonuç |
+|---|---|
+| GitHub Actions `backend` / `frontend` / `rust-core` / `android` / `smoke` | **success** (hem `push` hem `pull_request` koşusu) |
+| `CodeRabbit` | success |
+| `Workers Builds: pineal-clean` | **FAILURE** (önceden de failure) |
+| `Workers Builds: pineal-gland` | **FAILURE** (önceden de failure) |
+| PR `mergeStateStatus` | `BLOCKED` → sonra `UNSTABLE` (kırmızı CF check'leri nedeniyle) |
+
+Yani depo tarafındaki üç engel de kapatıldı (kök `npm ci` çalışıyor, Node sabit,
+`wrangler deploy --dry-run` yapılandırma doğrulamasından geçiyor) ama CF
+derlemeleri **hâlâ kırmızı**. Check çıktısında hata metni YOK — yalnız
+`Build ID` ve `Script` bağlantısı var:
+
+```text
+dash.cloudflare.com/331d8dd0…/workers/services/view/pineal-clean/production/builds/616f14f3-…
+dash.cloudflare.com/331d8dd0…/workers/services/view/pineal-gland/production/builds/016fc3c7-…
+```
+
+Gerçek hata **Cloudflare panelindeki derleme logunda** ve bu sandbox'tan
+erişilemez (CF kimliği yok; kimlik istenmedi ve saklanmadı). GitHub tarafında
+branch protection/ruleset okunamadı (`403 Resource not accessible by integration`,
+`rulesets: []`), dolayısıyla bu iki check'in "zorunlu" olup olmadığı da
+buradan doğrulanamıyor.
+
+**Ölçülebilen sınır burası.** Depo tarafında kalan bilinen eksik yok; kırmızının
+sürmesi CF proje ayarlarına işaret ediyor. Sahibin panelde bakması gerekenler
+(ölçülen kanıtla eşleşen sıra):
+
+1. **Proje tipi**: her iki servis de Workers-tipi (`/workers/services/view/…`).
+   Ayarlarda "Static assets" etkin mi ve assets dizini `frontend/dist` mi?
+2. **Derleme komutu**: `npm ci && npm run build` (kök). Boş bırakıldıysa
+   `frontend/dist` hiç üretilmez ve assets adımı "dizin yok" diye düşer.
+3. **Kök dizin (root directory)**: repo kökü olmalı; `frontend/` seçiliyse
+   kökteki `wrangler.toml` ve `worker.ts` bulunamaz.
+4. **`pineal-gland`**: bu projenin depoda HİÇBİR izi yok (kök `package.json` adı
+   `pineal-clean`). Muhtemelen aynı repoya bağlı ikinci bir servis; hangi
+   yapılandırmayı beklediği yalnız panelde görülebilir. İki servis aynı repoyu
+   aynı `wrangler.toml` ile derliyorsa biri `name` çakışması da yaşayabilir.
+5. Bu iki check zorunlu (required) ise ve CF tarafı düzeltilmeyecekse, PR
+   `UNSTABLE/BLOCKED` kalır — GitHub Actions tarafı tamamen yeşil olduğu için
+   birleştirme kararı repo sahibine ait (admin merge ya da check'i required
+   listesinden çıkarma).
+
+**Dürüstlük kaydı:** "Workers Builds yeşile döndü" denMEdi; ölçüm iki kez
+yapıldı (npm/Node düzeltmesi `edbf6f0`, Workers yapılandırması `37fc639`) ve
+iki sonuç da olduğu gibi yazıldı. Depo tarafında doğrulanabilen her şey
+doğrulandı: `wrangler deploy --dry-run` → assets + binding OK (uyarı yok),
+`wrangler pages functions build` → derlendi, kök `npm ci && npm run build` →
+`frontend/dist` + `PINEAL-HERETIC` işareti, `svelte-check` → 0 hata.
