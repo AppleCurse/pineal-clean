@@ -1,4 +1,50 @@
-# Cloudflare Pages Dağıtımı — PINEAL Frontend
+# Cloudflare Dağıtımı — PINEAL Frontend (Workers static assets + Pages yolu)
+
+## Hangi tip? (ölçüldü, 2026-09-23)
+
+Depoya bağlı Cloudflare projeleri **Workers servisi**, Pages değil: PR/commit
+check'lerinin `details_url` alanı
+`dash.cloudflare.com/<hesap>/workers/services/view/pineal-clean/...` ve
+`.../view/pineal-gland/...` gösteriyor. Buna karşılık `wrangler.toml` yalnız
+Pages alanı (`pages_build_output_dir`) taşıyordu ve `main`/`[assets]` YOKTU;
+ölçülen sonuç:
+
+```text
+$ npx wrangler deploy --dry-run
+✘ [ERROR] There is no JavaScript/TypeScript to deploy ...
+  add `main = "src/index.ts"` veya `[assets] directory = "./dist"`
+```
+
+Yani **Workers Builds daha frontend derlenmeden yapılandırma adımında ölüyordu**
+(`Workers Builds: pineal-clean` / `pineal-gland` kırmızılarının kök nedeni).
+
+İki tip aynı `wrangler.toml`'da **bir arada olamıyor** (ikisi de ölçüldü):
+
+| Deneme | Sonuç |
+|---|---|
+| `pages_build_output_dir` üst düzeyde + `[assets] binding = "ASSETS"` | `✘ [ERROR] The name 'ASSETS' is reserved in Pages projects.` |
+| `pages_build_output_dir` `[assets]` tablosundan SONRA | TOML gereği o tablonun alanı sayılıyor → `▲ WARNING Unexpected fields found in assets field` |
+| Pages'e ayrı config dosyası: `wrangler pages deploy -c wrangler.pages.toml …` | `✘ [ERROR] Pages does not support custom paths for the Wrangler configuration file` |
+
+Bu yüzden kök `wrangler.toml` **Workers-tipi** (`main = "worker.ts"` +
+`[assets] directory = "frontend/dist"`, binding `ASSETS`). Pages yolu da
+çalışmaya devam ediyor: `npx wrangler pages deploy frontend/dist` komutu çıktı
+dizinini ARGÜMAN olarak aldığı için `pages_build_output_dir` gerektirmiyor
+(ölçüldü: komut yapılandırma doğrulamasını geçiyor, yalnız `CLOUDFLARE_API_TOKEN`
+yokluğunda duruyor).
+
+`worker.ts` proxy mantığını **kopyalamaz**: `/api/*` ve `/ws/*` isteklerini
+`functions/api/[[path]].ts` ve `functions/ws/[[path]].ts` handler'larına iletir
+(import) — yani iki dağıtım yolu AYNI sözleşmeyi çalıştırır.
+
+Doğrulama (yerelde ölçüldü):
+
+```text
+$ npx wrangler deploy --dry-run            → ✨ Read 9 files from the assets directory frontend/dist
+                                             binding: env.ASSETS   (uyarı YOK)
+$ npx wrangler pages functions build ./functions → ✨ Compiled Worker successfully
+$ npm ci && npm run build (kök)            → frontend/dist üretildi, PINEAL-HERETIC işareti var
+```
 
 ## Sorun (eski durum)
 
@@ -43,10 +89,14 @@ tanınmaz.
 
 ```
 <repo-root>
-├── wrangler.toml                 # name, compatibility_date, pages_build_output_dir
+├── wrangler.toml                 # Workers: name, compatibility_date, main, [assets]
+├── worker.ts                     # Worker girişi; /api,/ws -> functions/ handler'ları
 ├── functions/
 │   ├── api/[[path]].ts
 │   └── ws/[[path]].ts
+├── package.json                  # kök derleme kabuğu: npm ci --prefix frontend && build
+├── package-lock.json             # kök `npm ci` çalışsın diye (CF Workers Builds)
+├── .nvmrc                        # 22 — CI ile aynı Node
 ├── frontend/                     # Vite projesi
 │   └── dist/                     # build çıktısı (build edilmiş hali)
 └── ...
@@ -68,15 +118,22 @@ açısından origin zaten Pages origin'idir.
 ### 2. Frontend'i build et
 
 ```bash
-npm --prefix frontend install
-npm --prefix frontend run build     # → frontend/dist
+npm ci                              # kök (package-lock.json var; deterministik)
+npm run build                       # = npm ci --prefix frontend && vite build → frontend/dist
 ```
+
+Node sürümü `.nvmrc` (22) ve `package.json > engines.node` (>=20.19 <23) ile
+sabittir — CI ile aynı ağaç.
 
 ### 3. Backend kökenini secret olarak ata
 
 ```bash
-npx wrangler pages secret put BACKEND_ORIGIN
+# Workers-tipi servis (bu depodaki CF projeleri):
+npx wrangler secret put BACKEND_ORIGIN
 # > Enter value: https://api.pineal.example.com
+
+# Pages-tipi dağıtım kullanılıyorsa:
+npx wrangler pages secret put BACKEND_ORIGIN
 ```
 
 Secret olarak atanır — `wrangler.toml`'a ya da repo'ya yazılmaz.
@@ -84,12 +141,17 @@ Secret olarak atanır — `wrangler.toml`'a ya da repo'ya yazılmaz.
 ### 4. Deploy
 
 ```bash
+# Workers (statik varlıklar + worker.ts) — CF projelerinin gerçek tipi:
+npx wrangler deploy
+
+# veya Pages yolu (çıktı dizini argümanla verilir, functions/ otomatik alınır):
 npx wrangler pages deploy frontend/dist
 ```
 
-Dashboard tabanlı (GitHub integration) kurulumda da aynı sonuç alınır:
-root dizin = repo kökü, build output = `frontend/dist`; `functions/`
-dizini root'ta olduğu için otomatik alınır.
+Dashboard tabanlı (GitHub integration / Workers Builds) kurulumda: root dizin =
+repo kökü, build command = `npm ci && npm run build`, build output =
+`frontend/dist`. `wrangler.toml` Workers-tipi olduğu için `wrangler deploy`
+yapılandırma doğrulamasından geçer (önceden geçmiyordu — yukarıdaki ölçüm).
 
 ## Doğrulama
 

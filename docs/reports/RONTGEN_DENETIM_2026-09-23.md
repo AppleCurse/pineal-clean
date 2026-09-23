@@ -889,9 +889,64 @@ kök neden **yerelde ölçüldü**:
 * Ölçülen sonuç: kökte `npm ci && npm run build` → `frontend/dist` üretildi ve
   `PINEAL-HERETIC` işareti dist içinde VAR.
 
-**İDDİA EDİLMEYEN:** "Workers Builds yeşile döndü" denmiyor — CF panelindeki derleme
-komutu ve proje tipi (Pages mi Workers mi) buradan görülemiyor. Kanıt, bu commit'in
-PR'daki check'lerinden alınacak. Eğer o projeler **Workers-tipi** ise depo tarafında
-`main` + `[assets]` gerekir (yukarıdaki `wrangler deploy --dry-run` hatası bunu söylüyor);
-bu, `pages_build_output_dir` + `functions/` ile çalışan Pages yolunu bozabileceği için
-**spekülatif olarak eklenmedi** — proje sahibinin CF panelinde tip seçmesi gerekir.
+**İkinci ölçüm turu — kök neden NETLEŞTİ:** ilk düzeltme (kök `package-lock.json`,
+`.nvmrc`, deterministik build) push edildikten sonra `Workers Builds: pineal-clean`
+**hâlâ FAILURE** döndü. Yani kırmızı npm/Node kaynaklı değildi. Check'in
+`details_url` alanı kesin kanıtı verdi:
+
+```text
+dash.cloudflare.com/331d8dd0…/workers/services/view/pineal-clean/production/builds/…
+dash.cloudflare.com/331d8dd0…/workers/services/view/pineal-gland/production/builds/…
+```
+
+İki proje de **Workers SERVİSİ** (Pages değil). Depoda ise `wrangler.toml` yalnız
+Pages alanı taşıyordu → `wrangler deploy` yapılandırma doğrulamasında ölüyordu
+(yukarıdaki ölçüm). Yani kırmızının kök nedeni **tip uyumsuzluğu**.
+
+İki tipin aynı dosyada bir arada olamayacağı da ölçüldü:
+
+| Deneme | Ölçülen sonuç |
+|---|---|
+| `pages_build_output_dir` üst düzeyde + `[assets] binding="ASSETS"` | `✘ [ERROR] The name 'ASSETS' is reserved in Pages projects.` |
+| `pages_build_output_dir` `[assets]` tablosundan sonra | `▲ WARNING Unexpected fields found in assets field` (TOML: anahtar tabloya ait sayıldı) |
+| Pages'e ayrı config: `wrangler pages deploy -c wrangler.pages.toml …` | `✘ [ERROR] Pages does not support custom paths for the Wrangler configuration file` |
+
+**Uygulanan çözüm:**
+
+* `wrangler.toml` → **Workers-tipi**: `main = "worker.ts"` + `[assets] directory =
+  "frontend/dist"`, binding `ASSETS` (üst düzeyde `pages_build_output_dir` YOK).
+* **Yeni `worker.ts`**: statik varlıkları `env.ASSETS`'e, `/api/*` ve `/ws/*`
+  isteklerini `functions/api|ws/[[path]].ts` handler'larına iletir — proxy mantığı
+  **KOPYALANMADI, import edildi** (tek sözleşme, iki dağıtım yolu). Dürüstlük
+  sözleşmesi aynı: `BACKEND_ORIGIN` yoksa 502 + `BACKEND_ORIGIN_NOT_CONFIGURED`,
+  upgrade değilse 426, uzak uç bağlanamazsa istemci soketi kapatılır.
+* Pages yolu bozulmadı: `npx wrangler pages deploy frontend/dist` çıktı dizinini
+  ARGÜMANLA aldığı için `pages_build_output_dir` istemiyor (ölçüldü: komut
+  yapılandırmayı geçiyor, yalnız `CLOUDFLARE_API_TOKEN` yokluğunda duruyor) ve
+  `wrangler pages functions build ./functions` → **"✨ Compiled Worker successfully"**.
+* `docs/DEPLOYMENT_CLOUDFLARE.md` iki yolu, ölçüm tablolarını ve yeni yerleşimi
+  (`worker.ts`, kök `package-lock.json`, `.nvmrc`) anlatacak şekilde güncellendi.
+
+**Ölçülen sonuç (yerel):**
+
+```text
+$ npx wrangler deploy --dry-run
+✨ Read 9 files from the assets directory /…/frontend/dist
+Total Upload: 6.25 KiB / gzip: 2.09 KiB
+Binding: env.ASSETS  Assets            (UYARI YOK — önceden "no code to deploy")
+
+$ npx wrangler pages functions build ./functions   → ✨ Compiled Worker successfully
+$ npm ci && npm run build (kök)                    → frontend/dist + PINEAL-HERETIC işareti VAR
+```
+
+**İDDİA EDİLMEYEN:** "Workers Builds yeşile döndü" bu satır yazılırken henüz
+ölçülmemişti — CF panelindeki derleme komutu buradan görülemiyor ve `deploy`
+sandbox'tan auth'suz koşulamıyor. Kanıt, bu commit'in PR check'lerinden alınacak
+(sonuç §14.4'te). `pineal-gland` projesinin depoda hâlâ hiçbir izi yok (kök
+`package.json` adı `pineal-clean`); o projenin ayarları yalnız CF panelinde,
+bu yüzden depo tarafındaki düzeltme onun için **gerekli ama yeterli olmayabilir**.
+
+### 14.4 Workers Builds sonucu (push sonrası ölçüm)
+
+_(Bu bölüm commit push edildikten sonra ölçülen gerçek sonuçla doldurulur;
+öncesinde "yeşil" yazılmadı.)_
