@@ -95,17 +95,6 @@ class AgentStatusTracker:
     async def set_ready(self, agent_id: str):
         return await self.update_status(agent_id, AgentStatus.READY.value)
 
-    async def set_active(self, agent_id: str, task_id: Optional[str] = None):
-        meta = {"task_id": task_id} if task_id else {}
-        return await self.update_status(agent_id, AgentStatus.ACTIVE.value, meta)
-
-    async def set_done(self, agent_id: str, result_summary: Optional[str] = None):
-        meta = {"result": result_summary} if result_summary else {}
-        return await self.update_status(agent_id, AgentStatus.DONE.value, meta)
-
-    async def set_error(self, agent_id: str, error: str):
-        return await self.update_status(agent_id, AgentStatus.ERROR.value, {"error": error})
-
     async def set_wait(self, agent_id: str):
         return await self.update_status(agent_id, AgentStatus.WAIT.value)
 
