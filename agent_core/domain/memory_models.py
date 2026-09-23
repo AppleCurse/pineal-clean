@@ -6,7 +6,16 @@ import uuid
 class AgentRun(BaseModel):
     task_id: str
     agent_name: str
-    status: str = "pending"  # pending, running, completed, failed, halted
+    # pending, running, completed, completed_no_decision, failed, halted,
+    # timed_out, unavailable. `completed_no_decision`: ajan koştu ve çıktı
+    # verdi ama çıktı KARAR DEĞİL (kendi sözleşmesi data_confidence=False
+    # diyor) — güven uydurulmaz, kayıt karar-Grade sayılmaz
+    # ([RÖNTGEN 2026-09-23]; bkz. uncertainty_engine.UncertaintyReport.no_decision).
+    status: str = "pending"
+    #: Koşu KARAR-GRADE mi? `completed_no_decision` için False: ajan koştu, çıktı
+    #: kaydedildi ama karar üretilmedi. UI ve DecisionEngine "karar var mı?"
+    #: sorusunu yalnız `status == "completed"` ile değil bu alanla da görebilir.
+    decision_grade: bool = True
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     input_summary: Dict[str, Any] = {}

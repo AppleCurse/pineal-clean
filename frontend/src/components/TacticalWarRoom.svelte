@@ -11,7 +11,10 @@
     { id: 'osint_investigator', name: 'OSINT INVESTIGATOR', short: 'OSINT', glyph: '🔍', color: '#8b5cf6', desc: 'Açık kaynak & dijital ayak izi' },
     { id: 'pineal_7pillar', name: '7-PILLAR FORENSICS', short: '7-PILLAR', glyph: '🏛️', color: '#06b6d4', desc: 'Deterministik 7 sütun mühürü' },
     { id: 'mirror_truth', name: 'MIRROR TRUTH', short: 'MIRROR', glyph: '🪞', color: '#10b981', desc: 'Öz-frekans & kullanıcı yansıtma' },
-    { id: 'autonomous_verifier', name: 'AUTONOMOUS VERIFIER', short: 'VERIFIER', glyph: '⚖️', color: '#a855f7', desc: '3 jürili çapraz hakem paneli' },
+    // [RÖNTGEN 2026-09-23] '3 jürili' sabit metni kalktı: üreten modelin
+    // ailesiyle çakışan koltuk düştüğünde panel 2 koltukla karar verir.
+    // Gerçek koltuk sayısı koşu özetinden (jurors) okunur.
+    { id: 'autonomous_verifier', name: 'AUTONOMOUS VERIFIER', short: 'VERIFIER', glyph: '⚖️', color: '#a855f7', desc: 'Çapraz hakem paneli (koltuk sayısı koşuya göre)' },
     { id: 'human_behavior', name: 'HUMAN BEHAVIOR', short: 'HUMAN', glyph: '👤', color: '#f59e0b', desc: 'Dijital cold reading & aşil tendonu' },
     { id: 'passion_mapper', name: 'PASSION MAPPER', short: 'PASSION', glyph: '✨', color: '#eab308', desc: 'Tutkular, neşe & akış tetikleyicileri' },
     { id: 'friction_detector', name: 'FRICTION & BOUNDS', short: 'FRICTION', glyph: '🛡️', color: '#ef4444', desc: 'Hassasiyetler, stres & sınırlar' },
@@ -25,6 +28,18 @@
   // Hedef giriş formu
   let targetUrl = '';
   let scraperType = 'cross'; // cross | instagram | x
+  // [RÖNTGEN 2026-09-23] Kullanıcı (operatör) verisi SADECE operatörden gelir.
+  // Eski kod her görevde sabit İngilizce kurgu gönderiyordu:
+  //   rituals: 'Morning cold exposure, strategic deep work, journaling'
+  //   playlist: 'Max Richter, Nils Frahm, Olafur Arnalds'
+  //   envies:  'Enduring intellectual architects ...'
+  // Backend sözleşmesi bunu açıkça yasaklıyor (backend/api.py [009]:
+  // "Kullanıcı göndermediyse ASLA örnek/placeholder ritüel ÜRETME"). Bu kurgu
+  // mirror_truth'un "kullanıcı frekansı" hükmünü uydurma veriye bağlıyordu.
+  let userRituals = '';
+  let userPlaylist = '';
+  let userEnvies = '';
+  let showOperatorData = false;
   let logFilter = 'ALL';
   let activeDetailTab = 'OUTPUT'; // OUTPUT | INPUT | VERDICT | RAW
   let terminalContainer: HTMLElement;
@@ -34,7 +49,9 @@
   $: selectedAgent = $inspectedAgentId || 'osint_investigator';
   $: activeRuns = $taskStatus?.runs || {};
   $: completedCount = $taskStatus?.completed_agents?.length || 0;
-  $: plannedCount = $taskStatus?.planned_agents?.length || 12;
+  // Planlanmayan görevde "12" basmak uydurma sayıdır; gerçek plan uzunluğu ya
+  // da null (ekranda "—") gösterilir.
+  $: plannedCount = $taskStatus?.planned_agents?.length ?? null;
   $: currentRunningAgent = $taskStatus?.current_agent || null;
   $: pipelineStatus = $taskStatus?.status || ($isProcessing ? 'RUNNING' : 'IDLE');
   $: detectedUrls = $taskStatus?.target_profile?.detected_urls || [];
@@ -58,6 +75,10 @@
     const run = activeRuns[id];
     if (run) {
       if (run.status === 'completed') return 'DONE';
+      // [RÖNTGEN 2026-09-23] GÖREV TAMAMLANDI ≠ KARAR ÜRETİLDİ: ajan koştu
+      // ama çıktısı kendi sözleşmesine göre karar değil (data_confidence=False).
+      // DONE diye boyanırsa "karar üretildi" okunur; ayrı etiket + ayrı renk.
+      if (run.status === 'completed_no_decision') return 'NO-DECISION';
       if (run.status === 'running') return 'ACTIVE';
       if (run.status === 'halted') return 'HALTED';
       if (run.status === 'failed') return 'FAILED';
@@ -87,52 +108,70 @@
     if (run.status === 'halted') {
       return `DURDU: ${run.error_message || 'Düşük kanıt'}`;
     }
+    if (run.status === 'completed_no_decision') {
+      // Koşu tamam ama KARAR yok: güven uydurulmaz, ölçülen değer gösterilir.
+      const st = run.output_summary?.state || 'durum kaydı yok';
+      const comp = run.output_summary?.compatibility_score;
+      const compText = typeof comp === 'number' ? `%${(comp * 100).toFixed(0)}` : 'ölçülmedi';
+      return `KARAR DEĞİL: ${st} · ölçülen benzerlik ${compText} (güven uydurulmadı)`;
+    }
     if (run.status === 'completed') {
       if (id === 'osint_investigator') {
         const count = detectedUrls.length;
         return `${count} sosyal profil ve açık veri bağlandı`;
       }
       if (id === 'mirror_truth') {
-        return `Kullanıcı Frekansı: ${run.output_summary?.user_core_frequency || 'Analitik'}`;
+        // 'Analitik' uydurma varsayılandı: alan yoksa ölçüm de yok.
+        return `Kullanıcı Frekansı: ${run.output_summary?.user_core_frequency || 'veri yok'}`;
       }
       if (id === 'autonomous_verifier') {
-        const vCount = run.output_summary?.verifications?.length || 0;
-        const jCount = run.output_summary?.jurors?.length || (run.output_summary?.dropped_juror?.length !== undefined ? Math.max(0, 3 - run.output_summary.dropped_juror.length) : null);
-        const jText = jCount !== null ? `${jCount} jürili` : 'jüri';
-        return `${vCount} adli iddia ${jText} panelce incelendi`;
+        // "3 jürili" sabit metindi: üreten aileyle çakışan koltuk düştüğünde
+        // panel 2 koltukla karar verir. Gerçek sayı ve gerçek hüküm basılır.
+        const summary = run.output_summary || {};
+        const vCount = summary.verifications?.length ?? null;
+        const jurorCount = summary.jurors?.length ?? 0;
+        const verdict = summary.status || 'HÜKÜM YOK';
+        if (vCount === null) return 'İddia kaydı yok — teyit yapılmadı';
+        return `${vCount} iddia · ${jurorCount} bağımsız jüri · hüküm: ${verdict}`;
       }
       if (id === 'human_behavior') {
+        // `?? 15` uydurma skordu: ölçüm yoksa "ölçülmedi" yazılır.
         const achilles = run.output_summary?.achilles_score;
-        const achillesText = achilles !== undefined && achilles !== null ? achilles : 'ölçülmedi';
-        return `Aşil Skoru: ${achillesText} · ${run.output_summary?.micro_signals?.length || 0} mikro sinyal`;
+        const achillesText = typeof achilles === 'number' ? achilles.toFixed(0) : 'ölçülmedi';
+        return `Aşil Skoru: ${achillesText} · ${run.output_summary?.micro_signals?.length ?? 0} mikro sinyal`;
       }
       if (id === 'passion_mapper') {
         const p = (run.output_summary?.core_passions || []).slice(0, 2).join(', ');
-        return p || 'Tutku ve akış tetikleyicileri haritalandı';
+        // Boş çıktı "haritalandı" diye başarı olarak gösterilemez.
+        return p || 'Tutku kanıtı yok (alan boş döndü)';
       }
       if (id === 'friction_detector') {
         const b = (run.output_summary?.boundary_signals || []).slice(0, 1).join(', ');
-        return b || 'Sınırlar ve iletişim hassasiyetleri mühürlendi';
+        return b || 'Sınır kanıtı yok (alan boş döndü)';
       }
       if (id === 'cognitive_profiler') {
-        return `Ton: ${run.output_summary?.communication_tone || 'Sade'} · Karmaşıklık: ${run.output_summary?.complexity_level || 'Normal'}`;
+        // 'Sade'/'Normal' uydurma varsayılanlardı.
+        return `Ton: ${run.output_summary?.communication_tone || 'veri yok'} · Karmaşıklık: ${run.output_summary?.complexity_level || 'veri yok'}`;
       }
       if (id === 'resonance_calc') {
+        // `?? 1.0` ölçülmeyen rezonansı "%100 benzerlik" diye basıyordu.
         const comp = run.output_summary?.compatibility_score;
-        const compText = comp !== undefined && comp !== null ? `${(comp * 100).toFixed(0)}%` : 'ölçülmedi';
-        return `Vektörel Benzerlik: ${compText} · ${run.output_summary?.state || 'Analiz'}`;
+        const compText = typeof comp === 'number' ? `%${(comp * 100).toFixed(0)}` : 'ölçülmedi';
+        return `Vektörel Benzerlik: ${compText} · ${run.output_summary?.state || 'durum kaydı yok'}`;
       }
       if (id === 'pattern_interrupt') {
         return `Kanca üretildi: "${(run.output_summary?.message || '').slice(0, 35)}..."`;
       }
       if (id === 'resonance_synthesizer') {
-        return `Temas Başlığı: ${run.output_summary?.authentic_opening_topic || 'Sahici Köprü'}`;
+        return `Temas Başlığı: ${run.output_summary?.authentic_opening_topic || 'veri yok'}`;
       }
       if (id === 'depth_analyst') {
-        const rIndexText = realityIndex !== undefined && realityIndex !== null ? realityIndex.toFixed(2) : 'ölçülmedi';
-        return `Gerçeklik Endeksi: ${rIndexText} · Öz çıkarıldı`;
+        // `?? 0.88` uydurma gerçeklik endeksiydi (%88 sahici görünümü).
+        const idx = realityIndex;
+        if (typeof idx !== 'number') return 'Gerçeklik endeksi ölçülmedi (derinlik raporu yok)';
+        return `Gerçeklik Endeksi: %${(idx * 100).toFixed(0)} · ${run.output_summary?.essence_one_liner || 'öz alanı boş'}`;
       }
-      return 'Tamamlandı';
+      return 'Tamamlandı (özet alanı yok)';
     }
     return 'Beklemede';
   }
@@ -152,9 +191,11 @@
           client_id: $clientId,
           url: q,
           scraper_type: scraperType,
-          rituals: '',
-          playlist: '',
-          envies: ''
+          // Boş = operatör veri girmedi: backend dürüst "user_data_missing"
+          // yoluyla çalışır, kurgu profil üretilmez.
+          rituals: userRituals.trim(),
+          playlist: userPlaylist.trim(),
+          envies: userEnvies.trim()
         })
       });
     } catch (e: any) {
@@ -230,6 +271,15 @@
           on:keydown={(e) => e.key === 'Enter' && launchTask()}
           disabled={$isProcessing}
         />
+        <button
+          class="btn-operator-data"
+          class:filled={!!(userRituals.trim() || userPlaylist.trim() || userEnvies.trim())}
+          on:click={() => { showOperatorData = !showOperatorData; playClick(); }}
+          disabled={$isProcessing}
+          title="Kullanıcı (operatör) kanıtı girilmedikçe mirror_truth uydurma veriyle çalışmaz"
+        >
+          <span class="btn-glyph">🧾</span> OPERATÖR VERİSİ{showOperatorData ? ' ▲' : ' ▼'}
+        </button>
         {#if $isProcessing}
           <button class="btn-halt" on:click={haltTask}>
             <span class="btn-glyph">⏹</span> DURDUR
@@ -240,13 +290,27 @@
           </button>
         {/if}
       </div>
+      {#if showOperatorData}
+        <div class="operator-data-row">
+          <input type="text" bind:value={userRituals} class="operator-input" disabled={$isProcessing}
+                 placeholder="Kişisel ritüeller (virgülle ayır) — boş bırakılırsa uydurulmaz" />
+          <input type="text" bind:value={userPlaylist} class="operator-input" disabled={$isProcessing}
+                 placeholder="Çalma listesi / müzik — boş bırakılırsa uydurulmaz" />
+          <input type="text" bind:value={userEnvies} class="operator-input" disabled={$isProcessing}
+                 placeholder="Derin arzular / hedefler — boş bırakılırsa uydurulmaz" />
+          <span class="operator-note">
+            Boş alan = kanıt yok. Backend kurgu kullanıcı profili ÜRETMEZ
+            (mirror_truth "user_data_missing" döner).
+          </span>
+        </div>
+      {/if}
     </div>
 
     <!-- MOD GEÇİŞİ VE METRİKLER -->
     <div class="header-right">
       <div class="quick-metric">
         <span class="m-label">TAMAMLANAN</span>
-        <span class="m-val">{completedCount}/{plannedCount}</span>
+        <span class="m-val">{completedCount}/{plannedCount === null ? '—' : plannedCount}</span>
       </div>
       {#if realityIndex !== null}
         <div class="quick-metric">
@@ -430,8 +494,8 @@
               <span class="inspected-desc">{agentDef?.desc}</span>
             </div>
           </div>
-          <div class="inspected-status-pill {run?.status || 'idle'}">
-            {run?.status?.toUpperCase() || 'BEKLEMEDE'}
+          <div class="inspected-status-pill {run?.status === 'completed_no_decision' ? 'no-decision' : (run?.status || 'idle')}">
+            {run?.status === 'completed_no_decision' ? 'TAMAM · KARAR YOK' : (run?.status?.toUpperCase() || 'BEKLEMEDE')}
           </div>
         </div>
 
@@ -728,6 +792,48 @@
     color: #10b981;
   }
 
+  .btn-operator-data {
+    background: rgba(212, 175, 55, 0.06);
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    color: #d4af37;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    padding: 6px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-operator-data.filled {
+    border-color: rgba(16, 185, 129, 0.6);
+    color: #10b981;
+  }
+
+  .operator-data-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    align-items: center;
+  }
+
+  .operator-input {
+    flex: 1 1 180px;
+    background: rgba(3, 6, 12, 0.9);
+    border: 1px solid rgba(212, 175, 55, 0.18);
+    color: #e2e8f0;
+    font-size: 10px;
+    padding: 6px 8px;
+    border-radius: 3px;
+  }
+
+  .operator-note {
+    flex: 1 1 100%;
+    font-size: 8px;
+    letter-spacing: 0.06em;
+    color: #64748b;
+  }
+
   .btn-switch-view {
     background: rgba(212, 175, 55, 0.1);
     color: #d4af37;
@@ -872,6 +978,13 @@
     background: rgba(16, 185, 129, 0.15);
     color: #10b981;
     border: 1px solid #10b981;
+  }
+
+  /* KOŞU TAMAM ama KARAR YOK: yeşil (DONE) ile karışmasın diye amber. */
+  .status-pill.no-decision {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid #f59e0b;
   }
 
   .status-pill.active {

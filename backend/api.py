@@ -2022,6 +2022,8 @@ class InitiatePayload(BaseModel):
     # Bellek/istismar yüzeyini daraltmak için katı alan tavanları:
     client_id: str = Field(max_length=_MAX_CLIENT_ID_LENGTH)
     url: str = Field(max_length=8_192)
+    # [main 481edb8'den taşındı] Alanlar opsiyonel: `default=""` olmadan istemci
+    # bu üç alanı göndermezse 422 alıyordu. Bellek tavanı (max_length) korunur.
     rituals: str = Field(default="", max_length=32_000)
     playlist: str = Field(default="", max_length=32_000)
     envies: str = Field(default="", max_length=32_000)
@@ -2474,7 +2476,11 @@ async def api_initiate(req: InitiatePayload, request: Request):
         )
     task_id = _new_task_id()
     _lifecycle(room).transition(task_id, "processing")
-    # Agent Rack: Görev başlangıcında tüm ajanlar Wait (Beklemede); gerçek geçişler executor tarafından yürütülür
+    # Agent Rack: görev başladı — tüm slotlar BEKLEMEDE (Wait).
+    # [RÖNTGEN 2026-09-23] Eskiden burada "tahmini plan" bahanesiyle
+    # set_all_ready() çağrılıyordu: daha tek bir ajan çalışmadan rack 12/12
+    # READY gösteriyordu. Ready/Active geçişlerinin TEK kaynağı executor'ın
+    # gerçek ajan geçişleridir (PinealExecutor._rack_update).
     if HAS_AGENT_RACK and get_tracker:
         try:
             tracker = get_tracker()
@@ -2716,13 +2722,24 @@ async def api_telemetry(client_id: str = "default"):
 
 @app.get("/api/agents/status")
 async def api_agents_status():
-    """12 ajanin anlik durumu - Agent Rack beslenir"""
+    """12 ajanin anlik durumu - Agent Rack beslenir.
+
+    ``source`` UI'nin KAYNAK satırını besler ve GERÇEK taşıyıcıyı beyan eder:
+      - ``redis_bus``  : PING'lenmiş Redis bağlantısı üzerinden okundu
+      - ``in_memory``  : Redis yok/bağlanamadı, süreç-içi bellek
+      - ``fallback``   : Agent Rack modülü hiç yüklenmedi
+      - ``error``      : okuma patladı
+    [RÖNTGEN 2026-09-23] Eskiden tracker varsa koşulsuz ``redis_bus``
+    yazılıyordu; Redis kapalıyken bile UI "REDIS PUB/SUB" etiketi basıyordu.
+    """
     if not HAS_AGENT_RACK or not get_tracker:
         return {"agents": [], "source": "fallback", "count": 0}
     try:
         tracker = get_tracker()
         agents = tracker.get_status_list()
-        return {"agents": agents, "source": "redis_bus", "count": len(agents)}
+        state_fn = getattr(getattr(tracker, "redis_bus", None), "connection_state", None)
+        source = state_fn() if callable(state_fn) else "in_memory"
+        return {"agents": agents, "source": source, "count": len(agents)}
     except Exception as e:
         logger.warning(f"Agent status okuma hatasi: {e}")
         return {"agents": [], "source": "error", "error": str(e)[:100], "count": 0}
@@ -2820,12 +2837,68 @@ async def api_vault_unlock(payload: VaultStatusPayload):
 
 
 # Vault interlock helper
+_VAULT_KEY_FIELDS = (
+    "api_key",       # OpenRouter master (eski düz şema)
+    "or_key",        # oda kasasında "gerçek anahtar uygulandı" bayrağı
+    "ig_sessionid",  # Instagram oturum kimliği
+    "x_cookie",      # Instagram çerez malzemesi
+    "tavily_key",
+    "serpapi_key",
+    "exa_key",
+)
+
+# Yer tutucu değerler anahtar DEĞİLDİR: .env.example'dan kopyalanan
+# "sk-or-v1-YOUR..." satırı kasayı açmamalı.
+_VAULT_PLACEHOLDER_MARKERS = ("your", "changeme", "placeholder", "xxx", "<", "ornek", "örnek")
+
+
+def _vault_bears_key_material(vault: dict) -> bool:
+    """Kasa dict'i GERÇEK anahtar/oturum malzemesi taşıyor mu?
+
+    [RÖNTGEN 2026-09-23] `.pineal_vault.json` dosyasının VARLIĞI yetki
+    değildi ama eski `_check_vault_interlock` onu öyle sayıyordu
+    (`or ... or _load_vault()`): `{"providers": {}}` gibi bomboş bir dosya
+    bile dış-dünya mandalını açıyordu. Bu yardımcı "dosya var" ile "anahtar
+    var" ayrımını tek yerde yapar:
+      - providers/provider_keys içinde uygulanabilir anahtar, VEYA
+      - _VAULT_KEY_FIELDS'te yer tutucu olmayan gerçek değer.
+    """
+    if not isinstance(vault, dict) or not vault:
+        return False
+    applied, openrouter_key, _skipped = _extract_vault_provider_keys(vault)
+    if applied or openrouter_key:
+        return True
+    for field in _VAULT_KEY_FIELDS:
+        raw = vault.get(field)
+        if raw is True:  # oda kasasında "uygulandı" bayrağı
+            return True
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if any(marker in lowered for marker in _VAULT_PLACEHOLDER_MARKERS):
+            continue
+        return True
+    return False
+
+
 def _check_vault_interlock(client_id: str) -> bool:
-    """True = acik, False = kilitli (dis dunya erisimi yok)"""
+    """True = acik, False = kilitli (dis dunya erisimi yok).
+
+    [RÖNTGEN 2026-09-23] Eskiden son koşul `_load_vault()` idi: diskteki
+    `.pineal_vault.json` dosyasının VARLIĞI (içinde tek anahtar olmasa bile,
+    ör. `{"providers": {}}`) mandalı açıyordu. Dosya varlığı yetki değildir;
+    kasa ancak GERÇEK anahtar/oturum malzemesi taşıyorsa açıktır.
+    """
     try:
         room = get_room(client_id)
         vault = room["vault"]
-        return bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie") or _load_vault())
+        if vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"):
+            return True
+        # Dosya kasası: VARLIK değil, GERÇEK anahtar malzemesi aranır.
+        return _vault_bears_key_material(_load_vault())
     except Exception:
         return False
 

@@ -45,9 +45,14 @@ class PinealAnalyzerEngine {
             return@flow
         }
 
-        emit(PipelineEvent.AgentUpdate("mirror_truth", "RUNNING", 0.0))
-        emit(PipelineEvent.AgentUpdate("autonomous_verifier", "RUNNING", 0.0))
-        emit(PipelineEvent.AgentUpdate("human_behavior", "RUNNING", 0.0))
+        // [RÖNTGEN 2026-09-23] HAYALET AJAN DURUMLARI KALDIRILDI.
+        // Bu üç satır mirror_truth / autonomous_verifier / human_behavior
+        // ajanlarını "RUNNING" diye yayınlıyordu; Android tarafında bu ajanlar
+        // YOK — tek bir Gemini çağrısı var (aşağıda). ViewModel bu isimleri
+        // ajan listesinde eşleştiremese de `currentAgentId` alanına yazıyordu,
+        // yani ekran "şu an koşan ajan: MIRROR TRUTH" diyordu. Durum artık
+        // gerçekten koşan hattın kimliğiyle yayınlanıyor.
+        emit(PipelineEvent.AgentUpdate("deep_inference", "RUNNING", 0.0))
         emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "INFO", "[LLM_ORCHESTRATOR] Google Gemini Pro ile derin bağlamsal çıkarım başlatılıyor...")))
 
         try {
@@ -112,7 +117,15 @@ class PinealAnalyzerEngine {
                 bridge = analyzerResponse.bridge,
                 depthReport = analyzerResponse.depthReport,
                 shadowProfile = analyzerResponse.shadowProfile,
-                overallConfidence = analyzerResponse.bridge.resonanceScore, // Fixed for UI consistency based on inference
+                // [RÖNTGEN 2026-09-23] Bu değer MODELİN KENDİ BEYANIDIR
+                // (bridge.resonanceScore): Android hattında bağımsız doğrulama,
+                // jüri paneli, kanıt-URL denetimi veya entailment kapısı YOKTUR
+                // (Python tarafındaki agent_core/agents/autonomous_verifier.py
+                // sözleşmesi burada uygulanmıyor). UI etiketi buna göre
+                // "MODEL BEYANI GÜVEN (DOĞRULANMADI)" olarak düzeltildi
+                // (i18n/I18n.kt) — "TOPLAM SİSTEM GÜVENİ" doğrulanmış bir
+                // ölçüm iddiasıydı.
+                overallConfidence = analyzerResponse.bridge.resonanceScore,
                 timestamp = System.currentTimeMillis()
             )
 
@@ -124,7 +137,7 @@ class PinealAnalyzerEngine {
                 llmCallsObserved = 1
             )))
             emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "LLM Çıkarımı Tamamlandı. ~${promptTokens + completionTokens} token işlendi.")))
-            emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "360° BÜTÜNCÜL İNSAN HARİTASI BAŞARIYLA MÜHÜRLENDİ.")))
+            emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "360° İNSAN HARİTASI OLUŞTURULDU — TEK LLM ÇIKARIMI: bağımsız doğrulama, kanıt URL denetimi ve mühür (SHA-256) YOK.")))
 
             val redFlags = analyzerResponse.frictions.sensitivities.take(2)
             emit(PipelineEvent.Completed(
@@ -146,7 +159,11 @@ class PinealAnalyzerEngine {
         apiKey: String
     ): Flow<PipelineEvent> = flow {
         emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "INFO", "[SENTEZ AĞI] Yeni profil verisi sisteme ekleniyor...")))
-        emit(PipelineEvent.AgentUpdate("mirror_truth", "RUNNING", currentProfile.overallConfidence))
+        // [RÖNTGEN 2026-09-23] hayalet ajan adı düzeltildi; ayrıca ESKİ
+        // profilin güven skoru yeni koşunun skoru gibi yayınlanıyordu
+        // (ölçülmeyen değer). Yeni koşu 0.0 ile başlar, sonucu kendi çağrısı
+        // belirler.
+        emit(PipelineEvent.AgentUpdate("deep_inference", "RUNNING", 0.0))
 
         if (apiKey.isBlank()) {
             emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "ERROR", "GEMINI API ANAHTARI EKSİK!")))
@@ -199,7 +216,7 @@ class PinealAnalyzerEngine {
             val analyzerResponse = jsonParser.decodeFromString<AnalyzerResponse>(responseText)
 
             emit(PipelineEvent.Log(LogEntry(timeFormat.format(Date()), "SUCCESS", "[SENTEZ AĞI] Harita güncellendi, yeni veri bilişsel profile işlendi.")))
-            emit(PipelineEvent.AgentUpdate("mirror_truth", "COMPLETED", analyzerResponse.bridge.resonanceScore))
+            emit(PipelineEvent.AgentUpdate("deep_inference", "COMPLETED", analyzerResponse.bridge.resonanceScore))
 
             val updatedProfile = HolisticProfile(
                 username = currentProfile.username,
@@ -209,7 +226,7 @@ class PinealAnalyzerEngine {
                 bridge = analyzerResponse.bridge,
                 depthReport = analyzerResponse.depthReport,
                 shadowProfile = analyzerResponse.shadowProfile,
-                overallConfidence = analyzerResponse.bridge.resonanceScore,
+                overallConfidence = analyzerResponse.bridge.resonanceScore, // model beyanı (doğrulanmadı)
                 timestamp = System.currentTimeMillis()
             )
 

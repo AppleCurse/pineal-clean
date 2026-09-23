@@ -110,9 +110,11 @@ object AppStrings {
         vaultTitle = "GÜVENLİ KASA (VAULT)",
         vaultReady = "KASA • HAZIR",
         vaultSaving = "MÜHÜRLENİYOR...",
-        vaultActive = "KASA • AKTİF (MÜHÜRLENDİ)",
+        // [RÖNTGEN 2026-09-23] "MÜHÜRLENDİ" ölçülmeyen bir güvenlik
+        // iddiasıydı: Android'de şifreli saklama/mühürleme yok.
+        vaultActive = "KASA • İŞARETLİ (ŞİFRELİ SAKLAMA YOK)",
         vaultError = "KASA HATASI",
-        vaultDesc = "Cihaz üzerinde yerel ve şifreli saklama",
+        vaultDesc = "Anahtarlar yalnız bellekte (düz metin); kalıcı veya şifreli saklama YOK",
         apiKeyPlaceholder = "GEMINI / OPENROUTER API ANAHTARI",
         cookiePlaceholder = "SOSYAL MEDYA COOKIE (Opsiyonel)",
         sealBtn = "KASAYI MÜHÜRLE",
@@ -177,7 +179,10 @@ object AppStrings {
         osintTitle = "🌐 DİJİTAL İZ VE KİMLİK (ADIM 6)",
         visualTitle = "📸 GÖRSEL VE ESTETİK TERCİHLER (ADIM 4)",
         agentChainTitle = "⚙️ BİLİŞSEL SENTEZ AĞI",
-        overallConfidence = "TOPLAM SİSTEM GÜVENİ",
+        // [RÖNTGEN 2026-09-23] "TOPLAM SİSTEM GÜVENİ" doğrulanmış bir ölçüm
+        // iddiasıydı; Android hattında bağımsız doğrulama yok (tek LLM
+        // çıkarımı). Etiket kaynağını söyler.
+        overallConfidence = "MODEL BEYANI GÜVEN (DOĞRULANMADI)",
         sevenPillarsTitle = "◈ Pineal-Gland 7-Pillar REZONANS DALGA FORMLARI",
         historyTitle = "GEÇMİŞ ANALİZ ARŞİVİ",
         clearHistory = "Geçmişi Temizle",
@@ -200,9 +205,9 @@ object AppStrings {
         vaultTitle = "SECURE VAULT",
         vaultReady = "VAULT • READY",
         vaultSaving = "SEALING CREDENTIALS...",
-        vaultActive = "VAULT • ACTIVE (SEALED)",
+        vaultActive = "VAULT • FLAGGED (NO ENCRYPTED STORAGE)",
         vaultError = "VAULT ERROR",
-        vaultDesc = "On-device local encrypted keystore",
+        vaultDesc = "Keys live in memory only (plaintext); no persistent or encrypted storage",
         apiKeyPlaceholder = "GEMINI / OPENROUTER API KEY",
         cookiePlaceholder = "SOCIAL MEDIA COOKIE (Optional)",
         sealBtn = "SEAL VAULT",
@@ -267,7 +272,7 @@ object AppStrings {
         osintTitle = "🌐 DIGITAL FOOTPRINT (STAMP 6)",
         visualTitle = "📸 VISUAL EVIDENCE & AESTHETICS (STAMP 4)",
         agentChainTitle = "⚙️ 9-AGENT EXECUTION PIPELINE",
-        overallConfidence = "OVERALL SYSTEM CONFIDENCE",
+        overallConfidence = "MODEL-CLAIMED CONFIDENCE (UNVERIFIED)",
         sevenPillarsTitle = "◈ Pineal-Gland 7-Pillar RESONANCE WAVEFORMS",
         historyTitle = "ANALYSIS ARCHIVE",
         clearHistory = "Clear History",

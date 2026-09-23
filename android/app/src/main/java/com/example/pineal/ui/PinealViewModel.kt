@@ -135,9 +135,30 @@ class PinealViewModel(
     fun setModel(model: String) { _uiState.update { it.copy(selectedModel = model) } }
     fun toggleCloudApi(useCloud: Boolean) { _uiState.update { it.copy(useCloudApi = useCloud) } }
 
+    /**
+     * [RÖNTGEN 2026-09-23] DÜRÜST KASA DURUMU.
+     *
+     * Eski sürüm bu metotta `isVaultSealed = true` yapıp "Kasa mühürlendi ·
+     * Kimlik ve anahtarlar bellekte güvenceye alındı" logluyordu; UI yeşil
+     * asma kilit + "KASA • AKTİF (MÜHÜRLENDİ)" basıyordu. Gerçekte Android
+     * tarafında HİÇBİR mühürleme/şifreleme yok: anahtarlar düz String olarak
+     * StateFlow içinde yaşıyor (EncryptedSharedPreferences / Android Keystore
+     * kullanılmıyor) ve diske hiç yazılmıyor. Yani ekrandaki güvenlik iddiası
+     * ölçülmeyen bir durumdu — Python tarafındaki kasa mandalı sözleşmesi
+     * (backend/api.py `_check_vault_interlock`, gerçek anahtar malzemesi
+     * şartı) burada UYGULANMIYOR.
+     *
+     * Bu metod artık yalnız operatörün "kasa modu" işaretini tutar ve bunu
+     * olduğu gibi söyler. Gerçek mühür için: Keystore-backed şifreli saklama +
+     * anahtar malzemesi doğrulaması eklenmeli (docs/reports/... adım 7).
+     */
     fun sealVault() {
         _uiState.update {
-            val log = LogEntry(timeFormat.format(Date()), "SUCCESS", "Kasa mühürlendi · Kimlik ve anahtarlar bellekte güvenceye alındı.")
+            val log = LogEntry(
+                timeFormat.format(Date()),
+                "WARNING",
+                "Kasa modu İŞARETLENDİ (şifreli saklama YOK): anahtarlar yalnız bellekte, düz metin StateFlow içinde tutuluyor."
+            )
             it.copy(isVaultSealed = true, logs = it.logs + log)
         }
     }

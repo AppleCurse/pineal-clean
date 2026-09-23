@@ -1,17 +1,34 @@
-# Cloudflare Pages — PINEAL frontend dağıtım yapılandırması.
+# Cloudflare dağıtım yapılandırması — PINEAL frontend + /api,/ws proxy.
 #
-# Yerleşim (Cloudflare konvansiyonu):
-#   - Statik çıktı : frontend/dist  (npm --prefix frontend run build)
-#   - Functions    : functions/     (bu dosyanın YANINDA — frontend/ içinde DEĞİL)
+# [RÖNTGEN 2026-09-23] Bu dosya WORKERS-tipi (static assets) yapılandırmadır,
+# çünkü depoya bağlı Cloudflare projeleri Workers SERVİSİ:
+#   check details_url -> dash.cloudflare.com/<acct>/workers/services/view/pineal-clean/...
+#   check details_url -> dash.cloudflare.com/<acct>/workers/services/view/pineal-gland/...
+# Eskiden burada yalnız `pages_build_output_dir` vardı ve `main`/`[assets]`
+# YOKTU; ölçülen sonuç:
+#   $ npx wrangler deploy --dry-run
+#   ✘ [ERROR] There is no JavaScript/TypeScript to deploy ... add `main = ...`
+#             veya `[assets] directory = ...`
+# yani Workers Builds daha frontend derlenmeden YAPILANDIRMA adımında ölüyordu.
 #
-# Deployment:
-#   npx wrangler pages deploy frontend/dist
-#   (önce: npx wrangler pages secret put BACKEND_ORIGIN)
+# İKİ TİP BİR ARADA OLMUYOR (ölçüldü): `pages_build_output_dir` üst düzeyde
+# dururken wrangler yapılandırmayı Pages sayıyor ve
+#   ✘ [ERROR] The name 'ASSETS' is reserved in Pages projects.
+# hatası veriyor. Bu yüzden Pages yolu AYRI dosyaya taşındı: `wrangler.pages.toml`
+# (kullanımı: npx wrangler pages deploy -c wrangler.pages.toml frontend/dist).
 #
-# BACKEND_ORIGIN: FastAPI backendinin kökeni (örn. https://api.pineal.example.com).
-# SECRET olarak ayarlanır — varsayılan ortam değişkenine (vars) yazılmaz.
-# Ayarlı değilse proxy uçları dürüst 502 döndürür (aşağıya bakın).
+# Statik çıktı : frontend/dist  (kök `npm run build` üretir)
+# Worker girişi: worker.ts — /api/* ve /ws/* davranışı functions/ altındaki
+#                Pages handler'larından IMPORT edilir (kopya yok, tek sözleşme).
+#
+# BACKEND_ORIGIN: FastAPI backendinin kökeni. SECRET olarak ayarlanır
+# (vars'a yazılmaz): npx wrangler secret put BACKEND_ORIGIN
+# Ayarlı değilse proxy uçları uydurma davranış GÖSTERMEZ — 502 + açık hata kodu.
 
 name = "pineal-frontend"
 compatibility_date = "2026-09-01"
-pages_build_output_dir = "frontend/dist"
+main = "worker.ts"
+
+[assets]
+directory = "frontend/dist"
+binding = "ASSETS"

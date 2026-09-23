@@ -14,6 +14,20 @@ POS = {"harika", "mutlu", "güzel", "iyi", "süper", "happy", "great", "teşekk�
 NEG = {"yorgun", "bitkin", "stres", "kötü", "üzgün", "sad", "bıktım"}
 
 
+def event_id(kind: "SeismicKind", index: int, start, end) -> str:
+    """Deterministik olay kimliği: aynı girdi -> aynı kimlik.
+
+    [RÖNTGEN 2026-09-23] Eskiden kimlik rastgele UUID ile üretiliyordu:
+    "deterministik 7 motor" beyanına rağmen SEISMOS aynı veriyle her koşuda farklı event_id
+    üretiyordu (ölçüldü: PYTHONHASHSEED'den bağımsız, koşudan koşuya değişti).
+    Bu, kanıt mühürlerinin (SHA-256) ve yeniden-üretim karşılaştırmalarının
+    anlamsızlaşması demekti. Kimlik artık olay türü + sıra + pencereden türer.
+    """
+    kind_value = getattr(kind, "value", str(kind))
+    raw = f"{kind_value}|{index}|{start.isoformat()}|{end.isoformat()}"
+    return "sez_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
 def polarity(t):
     w = re.findall(r"[^\W\d_]+", t.lower())
     p = sum(x in POS for x in w)
@@ -50,7 +64,7 @@ class SeismosEngine:
                 r = g / max(med, 1)
                 events.append(
                     SeismicEvent(
-                        event_id="sez_" + hashlib.sha256(f"gap_{a.isoformat()}_{b.isoformat()}_{i}".encode()).hexdigest()[:12],
+                        event_id=event_id(SeismicKind.SILENCE_GAP, i, a, b),
                         kind=SeismicKind.SILENCE_GAP,
                         intensity=float(np.clip(1 + 9 * (1 - np.exp(-r / 4)), 1, 10)),
                         timestamp=a + (b - a) / 2,
@@ -74,7 +88,7 @@ class SeismosEngine:
             if abs(delta) >= self.tone_delta_threshold:
                 events.append(
                     SeismicEvent(
-                        event_id="sez_" + hashlib.sha256(f"tone_{s[i][0].isoformat()}_{s[i+2*w-1][0].isoformat()}_{i}_{delta:.4f}".encode()).hexdigest()[:12],
+                        event_id=event_id(SeismicKind.TONE_SHIFT, i, s[i][0], s[i + 2 * w - 1][0]),
                         kind=SeismicKind.TONE_SHIFT,
                         intensity=float(
                             np.clip(1 + 9 * (1 - np.exp(-(abs(delta) / self.tone_delta_threshold) / 4)), 1, 10)
@@ -89,7 +103,9 @@ class SeismosEngine:
                         evidence_refs=[f"post:{s[i + w][0].isoformat()}"],
                     )
                 )
-        events.sort(key=lambda e: -e.intensity)
+        # Eşit yoğunlukta olaylar giriş sırasına düşemez: kimlik kırıcı olarak
+        # kullanılır (deterministik çıktı).
+        events.sort(key=lambda e: (-e.intensity, e.event_id))
         mx = max((e.intensity for e in events), default=0)
         return SeismosReport(
             status=EvidenceStatus.OBSERVED if events else EvidenceStatus.WEAK,

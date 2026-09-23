@@ -292,11 +292,15 @@ def model_substitution_allowed(requested: str, actual: str) -> bool:
     # 9Router multi-provider lane combos return member models
     if req.startswith("pineal-") or req.endswith("-lane"):
         return True
-    # Allow provider prefix differences (e.g. kr/auto -> auto, groq/x -> x)
-    if req.split("/")[-1] == act.split("/")[-1]:
-        return True
-    if act == req.split("/")[-1] or req == act.split("/")[-1]:
-        return True
+    # [RÖNTGEN 2026-09-23] Sağlayıcı-farkı toleransı YALNIZCA iki taraf da
+    # "sağlayıcı/model" biçimindeyse geçerlidir: aynı modelin başka bir
+    # sağlayıcı kaydından dönmesi ikame değildir
+    # (ör. anthropic/gpt-oss-120b -> openai/gpt-oss-120b, 9Router çok-sağlayıcılı
+    # şeritler). ÇIPLAK model adı bu toleranstan yararlanamaz: "gpt-oss-120b"
+    # yanıtı hangi sağlayıcının hangi ağırlığını çalıştırdığını SÖYLEMEZ — bu
+    # sessiz ikamenin açık kapısıydı (eski kod True dönüyordu).
+    if "/" in req and "/" in act:
+        return req.split("/")[-1] == act.split("/")[-1]
     return False
 
 

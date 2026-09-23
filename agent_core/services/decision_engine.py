@@ -33,6 +33,16 @@ class DecisionEngine:
         summary = getattr(run, "output_summary", None) or {}
         if isinstance(summary, dict) and summary.get("data_confidence") is False:
             reasons.append("data_confidence=False")
+        # [RÖNTGEN 2026-09-23] GÖREV TAMAMLANDI ≠ KARAR ÜRETİLDİ:
+        # `completed_no_decision` koşusu (veya `decision_grade=False`) ajanın
+        # KENDİSİNİN "bu çıktı karar değil" beyanıdır. Özet alanında
+        # `data_confidence` taşımasa bile bu koşu karar-Grade sayılmaz —
+        # yani hüküm yalnız payload'a değil koşu durumuna da bağlıdır.
+        if (
+            getattr(run, "status", None) == "completed_no_decision"
+            or getattr(run, "decision_grade", True) is False
+        ):
+            reasons.append("completed_no_decision")
         code = getattr(run, "error_code", None)
         if code and str(code).upper() in ("NO_TARGET_IDENTITY", "TARGET_IDENTITY_MISSING"):
             reasons.append(str(code))
