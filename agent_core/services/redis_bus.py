@@ -74,6 +74,18 @@ class RedisBus:
         self._use_redis = False
         self._connected = False
 
+    def connection_state(self) -> str:
+        """Gerçek taşıyıcı durumu: ``redis_bus`` | ``in_memory``.
+
+        [RÖNTGEN 2026-09-23] Agent Rack'in KAYNAK satırı eskiden yalnız
+        "tracker nesnesi var mı"ya bakıyordu: Redis'e hiç bağlanamamış bir
+        süreç bile UI'ya ``redis_bus`` diye beyan ediliyordu (etiket sahte,
+        veri gerçek). Bu metod ``connect()`` içinde PING ile doğrulanmış
+        bağlantı bayrağını okur — UI kaynağı taşıyıcının kendisine kadar
+        izlenebilir.
+        """
+        return "redis_bus" if (self._use_redis and self._connected) else "in_memory"
+
     async def connect(self) -> bool:
         if not HAS_REDIS:
             logger.info("Redis kutuphanesi yok, in-memory bus kullaniliyor")

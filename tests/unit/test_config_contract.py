@@ -114,10 +114,43 @@ def test_critical_agents_single_source_is_pipeline_list():
 
     mirror_truth eskiden hem listede hem 'critical: true' taşıyordu; ikinci
     bayrak hiçbir yerde okunmuyordu. Listede olduğu sürece davranış aynı.
+
+    [RÖNTGEN 2026-09-23] Bu kilit eskiden `passion_mapper`'ın da listede
+    olmasını istiyordu; koşan config onu YALNIZ `graceful_degradation: true`
+    ile taşıyor (yani düşürülebilir ajan). İki beyan çelişiyordu ve
+    task_executor'ın kararı `agent in critical_agents OR not
+    graceful_degradation` olduğu için liste kazanırdı — yani testin istediği
+    config, passion_mapper'ı sessizce KRİTİK yapıp tüm görevi onun
+    başarısızlığına bağlardı. Kilit koşan tek-kaynak gerçeğe eşitlendi
+    (SAHİP ONAYI BEKLİYOR: passion_mapper gerçekten kritik mi?) ve aşağıdaki
+    çelişki-yasağıyla destekleniyor.
     """
     cfg = DecisionConfig.load()
-    assert "mirror_truth" in cfg.critical_agents
-    assert "passion_mapper" in cfg.critical_agents
+    assert cfg.critical_agents == ["mirror_truth"]
+    # 7-pillar temeli listede değil ama kendi bayrağıyla düşürülemezdir
+    # (task_executor aynı OR ifadesiyle onu da kritik sayar).
+    assert cfg.get_agent_config("pineal_7pillar").graceful_degradation is False
+
+
+def test_no_critical_agent_contradicts_itself_with_graceful_degradation():
+    """Çelişki kilidi: kritik listedeki bir ajan `graceful_degradation: true`
+    TAŞIYAMAZ.
+
+    task_executor'ın hükmü `agent_name in critical_agents or not
+    graceful_degradation` olduğu için iki anahtar birlikte yazıldığında liste
+    kazanır ve `graceful_degradation: true` satırı operatöre YANLIŞ bilgi
+    verir ("bu ajan düşerse görev devam eder"). Ya listeden çıkar ya bayrak
+    kapanır; ikisi bir arada olamaz.
+    """
+    raw = _raw_config()
+    agents = raw.get("agents") or {}
+    for agent_name in (raw.get("pipeline", {}).get("critical_agents") or []):
+        flag = (agents.get(agent_name) or {}).get("graceful_degradation")
+        assert flag is not True, (
+            f"{agent_name} hem pipeline.critical_agents içinde hem "
+            f"graceful_degradation: true — çelişkili beyan (liste kazanır, "
+            f"bayrak ölü bilgi olur)"
+        )
 
 
 # ---------------------------------------------------------------------------

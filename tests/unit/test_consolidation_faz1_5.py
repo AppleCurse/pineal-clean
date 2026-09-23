@@ -93,6 +93,14 @@ class TestMaigretSingletonLock:
         """[SAĞLAMLAŞTIRMA] Eşzamanlı taramalarda 3302 sitelik DB tam bir
         kez yüklenir (kilitli singleton; eski kodda yarış iki tam yük üretebilir)."""
         monkeypatch.setenv("ENABLE_MAIGRET", "true")
+        # [RÖNTGEN 2026-09-23] SIRALAMA SIZINTISI KAPATILDI: `_db_singleton`
+        # modül globali. Başka bir test (maigret kuruluysa test_maigret_scanner
+        # gerçek 3302 sitelik DB'yi yüklüyor) singleton'u doldurmuşsa bu
+        # testte yükleyici HİÇ çağrılmıyor ve kilit testi "assert 0 == 1" ile
+        # kırmızıya düşüyordu — yani ölçülen şey KİLİT değil TEST SIRASIydı.
+        # monkeypatch ile sıfırla: kilit gerçekten ölçülür ve global test
+        # sonunda eski değerine döner (yeni sızıntı üretmez).
+        monkeypatch.setattr(maigret_scanner, "_db_singleton", None)
         calls = {"n": 0}
         load_lock = threading.Lock()
 

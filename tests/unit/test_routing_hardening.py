@@ -72,12 +72,34 @@ def env(monkeypatch):
         monkeypatch.delenv(k, raising=False)
 
 
-def _gw(fake):
-    monkey = gwl
-    monkey.AsyncOpenAI = lambda **kw: fake.factory(**kw)
+def _gw(fake, monkeypatch):
+    """Sahte AsyncOpenAI dikişini KURAR ve test sonunda GERİ ALDIRIR.
+
+    [RÖNTGEN 2026-09-23] Eski hâlde bu fonksiyon `gwl.AsyncOpenAI` modül
+    niteliğini doğrudan eziyordu ve HİÇ geri almıyordu: sahte istemci sınıfı
+    süreç boyunca kalıyordu. Sonuç = test sızıntısı. Ölçülen etki: rastgele
+    sıralamada `test_multi_provider_routing.py::
+    test_gemini_client_uses_openai_compat_transport` ve cross-stack e2e
+    koşusu, `_client_for_route`'un GERÇEK `AsyncOpenAI` döndürmesini
+    beklerken bu sahte sınıfı bulup kırmızıya düşüyordu. Yani bu dosya
+    yeşil kalırken başka dosyaların dürüstlüğünü bozuyordu.
+    `monkeypatch` ile sızıntı kapanır (fixture testi bitirince geri alır).
+    """
+    monkeypatch.setattr(gwl, "AsyncOpenAI", lambda **kw: fake.factory(**kw))
     gw = LLMGateway()
     gw.live_unlocked = True
     return gw
+
+
+def test_fake_client_stitch_does_not_leak_into_module_state(monkeypatch):
+    """Kilit: sahte dikiş modül durumunda kalıcı olamaz."""
+    real = gwl.AsyncOpenAI
+    _gw(FakeHttp(), monkeypatch)
+    assert gwl.AsyncOpenAI is not real, "dikiş kurulmadıysa test anlamsız"
+    monkeypatch.undo()
+    assert gwl.AsyncOpenAI is real, (
+        "sahte AsyncOpenAI modülde kaldı -> sonraki testler kirlenir"
+    )
 
 
 # ------------------------------------------ 1) structured substitution denial
@@ -86,7 +108,7 @@ def test_denial_record_carries_structured_models(env, monkeypatch):
     monkeypatch.setenv("NOUS_API_KEY", "nous")
     monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
     fake = FakeHttp(returned_model="baska/model")
-    gw = _gw(fake)
+    gw = _gw(fake, monkeypatch)
     with pytest.raises(RuntimeError, match="MODEL_SUBSTITUTION_DENIED"):
         run(gw.query_chain("p", task="depth", agent_name="friction_detector"))
     rec = gw.call_log[-1]
@@ -114,7 +136,7 @@ def test_transient_failures_cool_provider_and_recover(env, monkeypatch):
     monkeypatch.setenv("PINEAL_PROVIDER_COOLDOWN_SECONDS", "1")
     state = {"groq": True}
     fake = FakeHttp(failures={"api.groq.com": lambda: state["groq"]})
-    gw = _gw(fake)
+    gw = _gw(fake, monkeypatch)
     # 1) groq duser -> transient -> cerebras (paid, escalation) basarili
     out = run(gw.query_chain("p", task="dialogue", agent_name="hard_tester"))
     assert out == '{"a": 1}'
@@ -144,7 +166,7 @@ def test_cerebras_paid_not_offered_without_escalation(env, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or")
     monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.setenv("CEREBRAS_API_KEY", "c")
-    gw = _gw(FakeHttp())
+    gw = _gw(FakeHttp(), monkeypatch)
     laddered = gw.agent_route_variants("openai/gpt-oss-120b")
     offered = [r.provider_id for r in laddered if r is not None]
     assert "cerebras" not in offered
@@ -165,7 +187,8 @@ def test_auth_and_denial_never_count_toward_cooldown(env, monkeypatch):
                 err = RuntimeError("401 unauthorized")
                 err.status_code = 401
                 raise err
-    gwl.AsyncOpenAI = lambda **kw: _C401(kw["base_url"])
+    # Aynı sızıntı burada da vardı: kalıcı atama yerine monkeypatch.
+    monkeypatch.setattr(gwl, "AsyncOpenAI", lambda **kw: _C401(kw["base_url"]))
     gw = LLMGateway()
     gw.live_unlocked = True
     with pytest.raises(RuntimeError, match="401"):
@@ -182,7 +205,7 @@ def test_ladder_respects_declared_route_capabilities(env, monkeypatch):
     # merdiveni paid yedeği escalation ile birlikte test eder (P1 uyumu).
     monkeypatch.setenv("PINEAL_ALLOW_PAID_ESCALATION", "1")
     fake = FakeHttp()
-    gw = _gw(fake)
+    gw = _gw(fake, monkeypatch)
     m = "openai/gpt-oss-120b"
     plain = [r.provider_id for r in gw.agent_route_variants(m, required=frozenset({"chat"}))
              if r is not None]

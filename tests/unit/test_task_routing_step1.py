@@ -151,8 +151,14 @@ def test_gateway_matrix_and_task_fallback_untouched(tmp_path, monkeypatch):
     monkeypatch.setenv("PINEAL_TASK_ROUTING_PATH", str(path))
     gw = LLMGateway()
 
+    # [RÖNTGEN 2026-09-23] Snapshot koşan matrise eşitlendi: friction_detector
+    # (heavy) zincirinde gemini-3.7-flash ikinci basamak olarak YAŞIYOR (tier
+    # kapısı heavy'de paid'e izin verir; RUNBOOK tablosu da aynı üç basamağı
+    # belgeliyor). Bu testin konusu öncelik sırasıdır — env/task_routing
+    # verilmediğinde matrix'e düşülmesi.
     assert gw.get_agent_chain("friction_detector", "depth") == [
         "anthropic/claude-sonnet-5",
+        "google/gemini-3.7-flash",
         "deepseek/deepseek-v4-pro",
     ]
     assert gwl._active_chain_source.get() == "agent_matrix"

@@ -24,7 +24,29 @@ pub struct VerificationResult {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VerifierReport {
     pub verifications: Vec<VerificationResult>,
+    /// DOĞRULANMIŞ iddia oranı (confirmed/total) — Python sözleşmesiyle aynı
+    /// (agent_core/agents/autonomous_verifier.py). Eski kod burada
+    /// `verifications.len() / 3.0` yazıyordu: üç arama SONUCU döndüğünde,
+    /// tek bir iddia bile eşleştirilmemişken "otantiklik 1.0" üretiliyordu.
+    /// Teminat (kaç kaynak çekildi) kanıt DEĞİLDİR.
     pub overall_authenticity_score: f32,
+    /// Arama teminatı ölçüsü (dönen kaynak / hedef 3). Otantiklik skoruyla
+    /// karıştırılmaması için AYRI alandır.
+    pub evidence_coverage: f32,
+    /// Rapor hükmü. Rust hattında jüri + kanıt kapısı (entailment) YOKTUR;
+    /// bu yüzden buradan asla "VERIFIED" çıkamaz.
+    pub status: String,
+}
+
+/// Deterministik otantiklik skoru: yalnız DOĞRULANMIŞ iddialar sayılır.
+/// `total == 0` -> 0.0 (kanıt yoksa skor da yok). Çekilen kaynak SAYISI skoru
+/// asla yükseltmez.
+pub fn authenticity_score(confirmed: usize, total: usize) -> f32 {
+    if total == 0 {
+        0.0
+    } else {
+        confirmed as f32 / total as f32
+    }
 }
 
 pub struct AutonomousVerifier {
@@ -137,20 +159,57 @@ impl AgentNode for AutonomousVerifier {
             tracing::warn!("[AutonomousVerifier] {}", reason);
         }
 
-        // Skor: teminat kapsamı (0 sonuç -> 0.0). Kanıt yoksa uncertainty
-        // motoru ([006]) boş listeyi HALT eder — sıfır kanıtla %100 imkânsız.
-        let overall_score = (verifications.len() as f32 / 3.0).min(1.0);
+        // [RÖNTGEN 2026-09-23] Skor sözleşmesi Python ile aynı hâle getirildi:
+        //   overall_authenticity_score = doğrulanmış iddia / toplam iddia
+        //   evidence_coverage          = dönen kaynak / hedef (yalnız teminat)
+        // Rust hattı iddia eşleştirmesi YAPMAZ (tüm kayıtlar UNVERIFIED), yani
+        // bu skor bugün daima 0.0'dır ve aşağıdaki kanıt kapısı görevi durdurur.
+        let source_count = verifications.len();
+        let confirmed = verifications
+            .iter()
+            .filter(|v| v.truth_status == "DOĞRULANDI")
+            .count();
+        let overall_score = authenticity_score(confirmed, verifications.len());
+        let evidence_coverage = (verifications.len() as f32 / 3.0).min(1.0);
+        let status = if confirmed > 0 && confirmed == verifications.len() {
+            "VERIFIED".to_string()
+        } else {
+            "UNVERIFIED".to_string()
+        };
 
         let report = VerifierReport {
             verifications,
             overall_authenticity_score: overall_score,
+            evidence_coverage,
+            status,
         };
+
+        // KANIT KAPISI (fail-closed, Python parity): doğrulanmış iddia yoksa
+        // hüküm üretilemez. Teminat (çekilen kaynak sayısı) onay sayılmaz.
+        if confirmed == 0 {
+            let reason = format!(
+                "DOĞRULANMIŞ iddia yok: {} kaynak çekildi ama hiçbiri bir iddiayla \
+                 eşleştirilmedi (Rust hattında jüri/entailment katmanı yoktur)",
+                source_count
+            );
+            tracing::warn!("[AutonomousVerifier] {}", reason);
+            let _ = self.event_bus.publish(AgentEvent::ErrorHalt {
+                task_id,
+                agent_name: self.name().to_string(),
+                error_code: "NO_VERIFIED_CLAIM".to_string(),
+                error_message: reason.clone(),
+                severity: Severity::Critical,
+            });
+            return Err(HaltReason::InsufficientEvidence(reason));
+        }
 
         let llm_json_str = serde_json::to_string(&report).unwrap();
 
         let required_fields = vec![
             "verifications".to_string(),
             "overall_authenticity_score".to_string(),
+            "evidence_coverage".to_string(),
+            "status".to_string(),
         ];
         
         let engine = UncertaintyEngine::new(task_id, required_fields);
@@ -192,8 +251,43 @@ impl AgentNode for AutonomousVerifier {
         });
 
         Ok(AnalysisResult {
+            // Güven = doğrulanmış iddia oranı (teminat değil).
             confidence: overall_score,
             payload: llm_json_str,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Skor TEMİNAT değil DOĞRULAMA ölçüsüdür: üç kaynak çekmek skoru 1.0
+    /// yapmaz (eski kusur), doğrulanmış iddia oranı yapar.
+    #[test]
+    fn authenticity_score_is_confirmed_ratio_not_fetch_coverage() {
+        assert_eq!(authenticity_score(0, 0), 0.0);
+        assert_eq!(authenticity_score(0, 3), 0.0);
+        assert_eq!(authenticity_score(1, 2), 0.5);
+        assert_eq!(authenticity_score(3, 3), 1.0);
+    }
+
+    #[test]
+    fn report_never_claims_verified_without_confirmed_claims() {
+        let report = VerifierReport {
+            verifications: vec![VerificationResult {
+                claim_text: "başlık".to_string(),
+                truth_status: "UNVERIFIED".to_string(),
+                evidence_url: "https://kaynak.test".to_string(),
+                contradiction_detail: "snippet".to_string(),
+            }],
+            overall_authenticity_score: authenticity_score(0, 1),
+            evidence_coverage: 1.0 / 3.0,
+            status: "UNVERIFIED".to_string(),
+        };
+        assert_eq!(report.status, "UNVERIFIED");
+        assert_eq!(report.overall_authenticity_score, 0.0);
+        // Teminat ile otantiklik skoru ayrı alanlardır (karıştırılamaz).
+        assert!(report.evidence_coverage > report.overall_authenticity_score);
     }
 }
