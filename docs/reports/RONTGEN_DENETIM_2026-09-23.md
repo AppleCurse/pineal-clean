@@ -26,8 +26,8 @@ yeniden üretilebilir). Ortam bu turda CI'ın kurduğu ağacın KENDİSİYLE
 | 3 | 12 ajan kablolaması | Rack slotları **ödünç** veriliyordu: 7-sütun motoru ve görsel analizi `PATTERN INTERRUPT` slotunu, shadow `DEPTH ANALYST` slotunu boyuyordu | Bire-bir eşleme; slotu olmayan adım hiçbir slotu boyamaz | `test_agent_rack_wiring.py` (7) |
 | 4 | 7 motor determinizmi | `GRAVITY.dominant_attractor` aynı veride koşudan koşuya değişiyordu ('uzun' / 'düşündüm' / 'hakkında'); `SEISMOS.event_id` rastgeleydi | Hash-tohumundan bağımsız bayt-bayt aynı çıktı; deterministik `event_id` | `test_engine_determinism.py` (12) |
 | 5 | Telemetri gerçekliği | `simulate_processing()` demo koşusu; açılışta 12/12 READY; UI `READY = gerçek \|\| 12`; sabit "REDIS PUB/SUB"; bayat telemetri; kurgu operatör profili | Simülasyon silindi; açılış WAIT; sayaçlar render edilen slotlardan; kaynak satırı backend beyanından (`redis_bus\|in_memory\|fallback\|error\|unreachable\|none`) | `test_status_source_honesty.py` (31) + `svelte-check` 0 hata |
-| 6 | Rust | `set_all_ready()` (Python'daki kusurun ikizi); doğrulayıcı skoru = `çekilen sonuç / 3` → 3 arama sonucu = **%100 otantiklik** | Toplu READY silindi; skor = doğrulanmış iddia oranı, teminat ayrı alan, `NO_VERIFIED_CLAIM` → fail-closed halt | `rust_core` 2 unit test (**DERLENMEDİ**, bkz. §6.4) |
-| 7 | Android | Hayalet ajan durumları (`mirror_truth`/`autonomous_verifier`/`human_behavior` RUNNING); "KASA • AKTİF (MÜHÜRLENDİ)"; "şifreli keystore" etiketi; sistem güveni = modelin kendi rezonans skoru | Durum kimliği gerçek hatta çekildi; kasa/güven etiketleri dürüst; kanıt modeli **YOK** (remediation planı §7.3) | Kotlin **DERLENMEDİ** (§7.4) |
+| 6 | Rust | `set_all_ready()` (Python'daki kusurun ikizi); doğrulayıcı skoru = `çekilen sonuç / 3` → 3 arama sonucu = **%100 otantiklik** | Toplu READY silindi; skor = doğrulanmış iddia oranı, teminat ayrı alan, `NO_VERIFIED_CLAIM` → fail-closed halt | CI `rust-core`: `cargo check --all-targets` + `cargo test --locked` → **success** (§6.4) |
+| 7 | Android | Hayalet ajan durumları (`mirror_truth`/`autonomous_verifier`/`human_behavior` RUNNING); "KASA • AKTİF (MÜHÜRLENDİ)"; "şifreli keystore" etiketi; sistem güveni = modelin kendi rezonans skoru | Durum kimliği gerçek hatta çekildi; kasa/güven etiketleri dürüst; kanıt modeli **YOK** (remediation planı §7.3) | CI `android`: `lintDebug` + `testDebugUnitTest` + `assembleDebug` → **success** (§7.4) |
 
 **Test durumu (2. tur — CI ağacında ölçüldü):** denetim öncesi `33 failed / 1225 passed`
 → 1. tur `24 failed / 1305 passed / 4 skipped` → **2. tur: `1342 passed / 2 skipped /
@@ -409,14 +409,26 @@ eşleştirilmemişken, tüm kayıtlar `truth_status = "UNVERIFIED"` iken. Yani
 * 2 unit test: `authenticity_score_is_confirmed_ratio_not_fetch_coverage`,
   `report_never_claims_verified_without_confirmed_claims`.
 
-### 6.4 DÜRÜSTLÜK NOTU — Rust değişiklikleri DERLENMEDİ
+### 6.4 DÜRÜSTLÜK NOTU — Rust: sandbox'ta DERLENMEDİ, **CI'da DERLENDİ ve YEŞİL**
 
-Bu sandbox'ta `cargo`/`rustc`/`rustfmt` **yok** ve crates.io'ya ağ erişimi yok
-(ölçüldü). Rust düzenlemeleri elle gözden geçirildi (ownership/`format!` sözdizimi,
-feature-gate simetrisi, yeni alanların başka yerde inşa edilmediği doğrulandı) ama
-**derleyici kanıtı üretilmedi**. CI'ın `rust` job'ı bu iki dosyayı doğrulamalı:
-`rust_core/src/redis_bridge.rs`, `rust_core/src/agents/autonomous_verifier.rs`.
-"Derlendi/yeşil" iddiası bu raporda YOKTUR.
+Bu sandbox'ta `cargo`/`rustc` **yok**; Rust düzenlemeleri elle gözden geçirildi
+(ownership/`format!` sözdizimi, feature-gate simetrisi, yeni alanların başka yerde
+inşa edilmediği) ve commit'e "derlendi" iddiası YAZILMADAN gönderildi.
+
+**Derleyici kanıtı CI'dan alındı** (push sonrası ölçüldü, commit `4954121`):
+[CI run 35857108006](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006) → job **`rust-core` = success**, adım adım:
+
+| Adım | Sonuç |
+|---|---|
+| `dtolnay/rust-toolchain@stable` | success |
+| `cargo check --all-targets` (core, tauri feature'sız) | **success** |
+| `cargo test --locked` | **success** |
+
+Yani `rust_core/src/redis_bridge.rs` (`set_all_ready` kaldırıldı) ve
+`rust_core/src/agents/autonomous_verifier.rs` (skor = doğrulanmış iddia oranı,
+`NO_VERIFIED_CLAIM` → fail-closed halt) **derleniyor ve Rust testleri geçiyor**.
+Not: bu kanıt derleme + mevcut Rust testlerini kapsar; §6.5'teki `Evidence.score = 100`
+bulgusu hâlâ AÇIK (sahip kararı).
 
 ### 6.5 AÇIK bulgu: `UncertaintyEngine::evaluate` → `Evidence.score = 100`
 
@@ -480,13 +492,26 @@ Sahip onayıyla sırayla:
 6. **Kasa:** Android Keystore + EncryptedSharedPreferences; `_vault_bears_key_material`
    eşdeğeri doğrulama; "mühürlendi" ancak gerçek mühür (hash + saklama) varsa.
 
-### 7.4 DÜRÜSTLÜK NOTU — Kotlin değişiklikleri DERLENMEDİ
+### 7.4 DÜRÜSTLÜK NOTU — Kotlin: sandbox'ta DERLENMEDİ, **CI'da DERLENDİ ve YEŞİL**
 
 Sandbox'ta Android SDK/Gradle yok; üç dosyada yalnız **string literal, log metni ve
 yorum** düzeyinde değişiklik yapıldı (tip/imza değişikliği YOK), süslü parantez ve
-literal dengesi mekanik olarak doğrulandı. CI'ın `android` job'ı derleme kanıtını
-üretmelidir. Dosyalar: `engine/PinealAnalyzerEngine.kt`, `i18n/I18n.kt`,
-`ui/PinealViewModel.kt`.
+literal dengesi mekanik olarak doğrulandı ve commit'e "derlendi" iddiası yazılmadı.
+
+**Derleme kanıtı CI'dan alındı** (commit `4954121`): [CI run 35857108006](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006) →
+job **`android` = success**, adım adım:
+
+| Adım | Sonuç |
+|---|---|
+| JDK 17 (temurin) + Gradle 8.10.2 | success |
+| `gradle lintDebug` | **success** |
+| `gradle testDebugUnitTest` | **success** |
+| `gradle assembleDebug` | **success** |
+
+Dosyalar: `engine/PinealAnalyzerEngine.kt`, `i18n/I18n.kt`, `ui/PinealViewModel.kt`.
+Kapsam dürüstlüğü: bu, **dürüstlük düzeltmelerinin** (§7.2) derlendiğini/lint'i
+geçtiğini kanıtlar. Android'de kanıt modeli (ağ istemcisi + kapı + jüri) hâlâ YOK —
+o iş §7.3 remediation planı ve §8.6 sahip kararıdır; CI yeşili o eksikliği kapatmaz.
 
 ---
 
@@ -506,11 +531,10 @@ literal dengesi mekanik olarak doğrulandı. CI'ın `android` job'ı derleme kan
 
 ## 9. BİLİNÇLİ OLARAK YAPILMAYANLAR (dürüstlük kaydı)
 
-* **Rust ve Kotlin derlenmedi** — sandbox'ta `cargo`/`rustc` ve `gradle`/Android SDK yok.
-  "Derlendi", "CI yeşil" gibi iddialar üretilmedi; ilgili bölümler (§6.4, §7.4) işaretli.
-  CI'da `rust-core` (`cargo check --all-targets`, `cargo test --locked`) ve `android`
-  (`gradle lintDebug`, `testDebugUnitTest`, `assembleDebug`) job'ları TANIMLI; bu
-  commit'in o iki katman için tek gerçek kanıtı bu job'ların sonucu olacak.
+* **Rust ve Kotlin bu sandbox'ta derlenmedi** — `cargo`/`rustc` ve `gradle`/Android SDK yok.
+  Commit'e "derlendi" iddiası yazılmadı; kanıt CI'dan alındı: [run 35857108006](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006)
+  → `rust-core` ve `android` job'ları **success** (adım adım tablolar §6.4, §7.4).
+  **Sandbox'ta derlenemeyen katman için "yeşil" denmedi; CI ölçümüyle dendi.**
 * ~~**`holehe`, `maigret`, `playwright_stealth`, `invisible_playwright` kurulmadı.**~~
   **2. turda KAPANDI:** sandbox sıfırlanınca venv baştan kuruldu ve bu turda CI'ın
   kullandığı `requirements.lock` ağacı birebir kuruldu. 24 kırmızının tamamı yeşile
@@ -520,7 +544,7 @@ literal dengesi mekanik olarak doğrulandı. CI'ın `android` job'ı derleme kan
   `completed_no_decision` yolu eklendi (§1.6). Görev akışının geri kalanı değişmedi:
   `no_decision` opt-in, yalnız `resonance_calc` + `data_confidence=False` durumunda
   üretiliyor; genel `LOW_CONFIDENCE`/`SUSPICIOUS_EVIDENCE` kapıları aynen duruyor.
-* **Rust ve Kotlin hâlâ derlenmedi** (aşağıda, değişmedi).
+* ~~Rust ve Kotlin hâlâ derlenmedi~~ → **CI'da derlendi** (§6.4, §7.4).
 * Hiçbir yerde **örnek/placeholder veriyle üretilmiş "başarılı" kanıt** bu rapora
   yazılmadı; tüm sayılar bu sandbox'ta koşulan komutların çıktısıdır.
 
@@ -686,5 +710,6 @@ gerçekten ölçülür ve global test sonunda eski değerine döner (yeni sızı
 | `ruff check .` | All checks passed |
 | `generate_routing_shadows.py` + `git diff --exit-code` | fark yok |
 | `svelte-check` / `vite build` / `PINEAL-HERETIC` | 0 hata / derlendi / var |
-| `cargo check` / `cargo test` | **KOŞULAMADI** — toolchain yok (§6.4) |
-| `gradle lintDebug` / `testDebugUnitTest` / `assembleDebug` | **KOŞULAMADI** — SDK yok (§7.4) |
+| `cargo check --all-targets` / `cargo test --locked` | sandbox'ta KOŞULAMADI → **CI `rust-core`: success** ([run](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006), §6.4) |
+| `gradle lintDebug` / `testDebugUnitTest` / `assembleDebug` | sandbox'ta KOŞULAMADI → **CI `android`: success** ([run](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006), §7.4) |
+| CI (5 job: backend, frontend, smoke, rust-core, android) | **success** — commit `4954121`, [run 35857108006](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006) |
