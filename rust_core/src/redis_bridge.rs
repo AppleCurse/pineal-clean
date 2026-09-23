@@ -118,13 +118,6 @@ pub mod live {
             Ok(())
         }
 
-        pub async fn set_all_ready(&self) -> Result<(), redis::RedisError> {
-            let agents = crate::redis_bridge::all_agent_ids();
-            for agent_id in agents {
-                self.set_agent_status(agent_id, "Ready", None).await?;
-            }
-            Ok(())
-        }
     }
 }
 
@@ -151,9 +144,6 @@ pub mod live {
             Ok(())
         }
         pub async fn set_all_wait(&self) -> Result<(), std::io::Error> {
-            Ok(())
-        }
-        pub async fn set_all_ready(&self) -> Result<(), std::io::Error> {
             Ok(())
         }
     }

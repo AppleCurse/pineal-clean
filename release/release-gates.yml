@@ -9,7 +9,7 @@ name: Release Gates
 #   Gate B  docker_chromium_smoke    →  gerçek imaj build (docker compose) +
 #                                     konteyner İÇİNDE Playwright/Chromium
 #
-# Geçiş kriterleri: RELEASE_EVIDENCE.md Bölüm 8 (Gate A) ve Bölüm 12 (kapsam).
+# Geçiş kriterleri: docs/reports/RELEASE_EVIDENCE.md Bölüm 8 (Gate A) ve Bölüm 12 (kapsam).
 # Fail-closed: secret yoksa Gate A reddedilir; health 200 gelmezse Gate B düşer.
 
 on:
@@ -46,7 +46,7 @@ jobs:
             echo "Settings → Secrets and variables → Actions → OPENROUTER_API_KEY tanimlanmali."
             exit 1
           fi
-      - name: Canli LLM E2E gate (RELEASE_EVIDENCE Bölüm 8 kriterleri)
+      - name: Canli LLM E2E gate (docs/reports/RELEASE_EVIDENCE Bölüm 8 kriterleri)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           LIVE_LLM_E2E: "1"

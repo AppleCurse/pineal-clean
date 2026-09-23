@@ -72,7 +72,6 @@ class RedisBus:
         self._pubsub: Optional[Any] = None
         self._fallback = InMemoryBus()
         self._use_redis = False
-        self._connected = False
 
     async def connect(self) -> bool:
         if not HAS_REDIS:
@@ -90,13 +89,11 @@ class RedisBus:
                 self._client = sync_redis.from_url(self.redis_url, decode_responses=True)
                 self._client.ping()
             self._use_redis = True
-            self._connected = True
             logger.info(f"Redis baglandi: {self.redis_url}")
             return True
         except Exception as e:
             logger.warning(f"Redis baglanamadi ({self.redis_url}): {e}, in-memory fallback")
             self._use_redis = False
-            self._connected = False
             return False
 
     async def publish(self, channel: str, message: Dict[str, Any]) -> int:
@@ -144,15 +141,6 @@ class RedisBus:
         await self.publish("pineal:events", msg)
         return msg
 
-    async def publish_telemetry(self, telemetry: Dict[str, Any]):
-        msg = {
-            "type": "telemetry_update",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "data": telemetry,
-        }
-        await self.publish("pineal:telemetry", msg)
-        return msg
-
     async def subscribe(self, channel: str, callback: Callable):
         if self._use_redis and self._client and aioredis:
             try:
@@ -184,16 +172,6 @@ class RedisBus:
         except Exception as e:
             logger.warning(f"Redis listener durdu: {e}")
 
-    async def get_all_agent_statuses(self) -> Dict[str, Any]:
-        # Try to get from fallback store first (which holds latest)
-        if self._use_redis and self._client:
-            try:
-                # Scan for agent status keys - simplified
-                return {}
-            except Exception:
-                pass
-        return {}
-
     async def disconnect(self):
         try:
             if self._pubsub and aioredis:
@@ -203,7 +181,6 @@ class RedisBus:
                 await self._client.close()
         except Exception:
             pass
-        self._connected = False
 
 
 # Global singleton

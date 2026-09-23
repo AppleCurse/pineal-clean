@@ -109,10 +109,6 @@ class AgentStatusTracker:
     async def set_wait(self, agent_id: str):
         return await self.update_status(agent_id, AgentStatus.WAIT.value)
 
-    async def set_all_ready(self):
-        for agent in AGENT_DEFINITIONS:
-            await self.set_ready(agent["id"])
-
     async def set_all_wait(self):
         for agent in AGENT_DEFINITIONS:
             await self.set_wait(agent["id"])

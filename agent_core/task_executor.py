@@ -164,9 +164,6 @@ class PinealExecutor:
         except Exception:
             pass
 
-    def _rack_update_sync(self, agent_name: str, status: str):
-        self._rack_update(agent_name, status)
-
     @staticmethod
     def _finding_core(result: Any, limit: int = 280) -> str:
         """[FIX #3] Ajan çıktısından deterministik kanıt çekirdeği üretir.

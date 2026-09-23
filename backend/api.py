@@ -73,13 +73,12 @@ _tool_output_optimizer = TokenOptimizer()
 
 # v5.0 - Redis Pub/Sub + Agent Rack canlı köprüsü
 try:
-    from agent_core.services.redis_bus import get_redis_bus, init_redis_bus
+    from agent_core.services.redis_bus import get_redis_bus
     from agent_core.services.agent_status_tracker import get_tracker, init_tracker, AGENT_DEFINITIONS
     HAS_AGENT_RACK = True
 except ImportError:
     HAS_AGENT_RACK = False
     get_redis_bus = None
-    init_redis_bus = None
     get_tracker = None
     init_tracker = None
     AGENT_DEFINITIONS = []
@@ -148,16 +147,13 @@ async def lifespan(application: FastAPI):
                 tracker = await init_tracker(redis_url)
                 bus = tracker.redis_bus
                 application.state.redis_bus = bus
-                application.state.agent_tracker = tracker
                 transport = "redis" if getattr(bus, "_use_redis", False) else "in-memory"
                 logger.info(f"Agent Rack aktif (telemetri taşıyıcı: {transport})")
             except Exception as e:
                 logger.warning(f"Agent Rack init hatasi (fallback): {e}")
                 application.state.redis_bus = None
-                application.state.agent_tracker = None
         else:
             application.state.redis_bus = None
-            application.state.agent_tracker = None
 
     except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()

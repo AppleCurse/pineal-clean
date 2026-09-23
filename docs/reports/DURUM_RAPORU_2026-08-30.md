@@ -151,10 +151,10 @@ Hız-katmanı denemesi: ajan portları (`mirror_truth`, `resonance_calculator`, 
 ## 12. Betikler ve kapılar
 
 - `scripts/run_task.py`: uçtan uca CLI görev koşucusu
-- `scripts/e2e_test.py`, `scripts/test_e2e_fixture.py`: uçtan uca prova
-- `scripts/analyze_target_instagram.py`: tek-profil canlı demo (Chrome ister)
+- `scripts/archive/e2e_test.py`, `scripts/archive/test_e2e_fixture.py`: uçtan uca prova
+- `scripts/archive/analyze_target_instagram.py`: tek-profil canlı demo (Chrome ister)
 - `live_llm_gate.py`: **gerçek** LLM anahtarıyla hakemli uçtan uca doğrulama (sahte çağrı reddedilir)
-- `scripts/benchmark_download.py`: indirme kıyaslaması
+- `scripts/archive/benchmark_download.py`: indirme kıyaslaması
 
 **Testler:** Yerel keşif bu checkoutta 454 test topluyor; son koşu 452 passed, 2 skipped — birim + entegrasyon + e2e + WS sıra/güvenlik/protokol. Kalıcı korumalar: production'da mock yasağı (AST-bazlı), default-kapı sözleşmesi (tüm deneysel uçlar kapalıyken `disabled` der), beyan→kurulu kütüphane zinciri, ölü-dosya yasağı, psutil çalışma-zamanı sözleşmesi.
 
@@ -181,6 +181,6 @@ Hız-katmanı denemesi: ajan portları (`mirror_truth`, `resonance_calculator`, 
 | `scripts/` + `live_llm_gate.py` | Otomasyon, prova ve gerçek-LLM kabul kapısı |
 | `tests/` | Sözleşmelerin kalıcı garantisi (450 test; yanlışlıkla geri adım anında görünür) |
 
-*Rapor: `DURUM_RAPORU.md` — kod okumasından üretildi; bakım sırasında kod değişince bu belge de güncellenmelidir.*
+*Rapor: `DURUM_RAPORU_2026-08-30.md` — kod okumasından üretildi; bakım sırasında kod değişince bu belge de güncellenmelidir.*
 
 **Olay kaydi (venv sizmasi):** kullanici makinesinden yapilan push'ta (d887ed38) noktasiz `venv/` klasorunun tamami (~20 bin dosya, 144 MB, 88 MB'lik node.exe dahil) yanlikla depoya islenip GitHub'a gitti. Kok neden: .gitignore yalniz `.venv/` kapsiyordu; baslat.bat ise noktasiz `venv\` yaratiyor. Cozum: `venv/` .gitignore'a eklendi + `git rm -r --cached venv` ile takipten cikarma. Not: 144 MB git-gecmisinde kalir; gecmisin temizlenmesi ayri bir history-rewrite isidir (zorla-itme gerektirir, talep uzerine).
