@@ -208,12 +208,53 @@ class PinealExecutor:
                     parts.append(v)
         return " | ".join(parts)[:limit]
 
-    @staticmethod
-    def _hash_evidence_result(result: BaseModel) -> str:
-        """Canonical SHA-256 hash for a single typed agent result."""
+    # [RÖNTGEN 2026-09-23 / SAHİP KARARI §8.7] Kanıt mührünün (SHA-256)
+    # girdisinden ÇIKARILAN duvar saati alanları. Ölçülen eski kusur:
+    # `computed_at` (ve benzerleri) hash'e girdiği için AYNI kanıt koşudan
+    # koşuya farklı mühür üretiyordu — yani mühür tekrar-üretilemiyordu ve
+    # bağımsız doğrulama/yeniden-üretim karşılaştırması yapılamıyordu.
+    # Mühür artık KANITIN KİMLİĞİDİR: aynı kanıt → aynı mühür.
+    # Zaman damgası KAYBOLMAZ, yalnız mühür girdisinden çıkar: koşu kaydında
+    # (`AgentRun.started_at/completed_at`) ve olay zamanında ayrıca taşınır.
+    _WALL_CLOCK_FIELDS = frozenset({
+        "computed_at", "created_at", "updated_at", "generated_at",
+        "measured_at", "observed_at", "started_at", "completed_at",
+        "timestamp", "ts", "time", "date",
+    })
+
+    @classmethod
+    def _seal_payload(cls, result: Any) -> Dict[str, Any]:
+        """Mühür girdisi: kanıt alanları (duvar saati alanları iç içe dahil çıkarılır)."""
+        dump = result.model_dump() if hasattr(result, "model_dump") else result
+        if not isinstance(dump, dict):
+            return {}
+
+        def _strip(node: Any) -> Any:
+            if isinstance(node, dict):
+                return {
+                    k: _strip(v) for k, v in node.items()
+                    if k not in cls._WALL_CLOCK_FIELDS
+                }
+            if isinstance(node, list):
+                return [_strip(v) for v in node]
+            return node
+
+        return _strip(dump)
+
+    @classmethod
+    def _hash_evidence_result(cls, result: BaseModel) -> str:
+        """Canonical SHA-256 hash for a single typed agent result.
+
+        TEKRAR-ÜRETİLEBİLİR: duvar saati alanları mühür girdisinde değildir
+        (`_WALL_CLOCK_FIELDS`, sahip kararı §8.7). Aynı kanıt → aynı mühür;
+        farklı kanıt → farklı mühür.
+        """
         import hashlib
         import json
-        canonical = json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        canonical = json.dumps(
+            cls._seal_payload(result), ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), default=str,
+        )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     # LLM çağrısı yapmayan tamamen deterministik ajanlar. Bu listede olmayan

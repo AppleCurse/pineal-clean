@@ -34,7 +34,11 @@ pub enum Severity {
 /// Başarılı kanıt - eldeki veriyi taşır
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Evidence {
-    pub score: u8, // 0-100 arası tip-güvenli skor
+    /// 0-100 tip-güvenli ÖLÇÜLMÜŞ kanıt kalitesi (`UncertaintyEngine::data_score`).
+    /// [§8.5] Eskiden PASS durumunda SABİT 100 yazılıyordu: "zorunlu alanlar var"
+    /// = "payload tamamen kanıt" varsayımı. Artık oran ölçülür; metadata skoru
+    /// şişiremez, placeholder yükseltemez, aday alan yoksa 0'dır.
+    pub score: u8,
     pub data_points: Vec<String>,
     pub verified_at: chrono::DateTime<chrono::Utc>,
 }
@@ -107,13 +111,63 @@ impl UncertaintyEngine {
             }));
         }
 
-        // Tüm zorunlu alanlar gerçek kanıt taşıyor - PASS
+        // Tüm zorunlu alanlar gerçek kanıt taşıyor - PASS.
+        // [RÖNTGEN 2026-09-23 / SAHİP KARARI §8.5] score SABİT 100 DEĞİL:
+        // Python'daki `data_score`'un karşılığıyla ÖLÇÜLÜR (kanıt taşıyan alan /
+        // aday alan, runtime metadata hariç). "Zorunlu alanlar geçti" demek
+        // "payload'ın tamamı kanıt" demek değildir; eskisi bunu varsayıyordu.
         let data_points: Vec<String> = obj.keys().cloned().collect();
+        let score = Self::data_score(obj);
         Ok(ConfidenceLevel::Pass(Evidence {
-            score: 100, // Tüm zorunlu alanlar doğrulandı
+            score,
             data_points,
             verified_at: chrono::Utc::now(),
         }))
+    }
+
+    /// Skor üretimini ŞİŞİREN runtime metadata alanları (Python
+    /// `UncertaintyEngine.RUNTIME_METADATA_FIELDS` ile aynı sözleşme + §8.7
+    /// duvar saati alanları). Bunlar KANIT DEĞİLDİR: model adı, sağlayıcı,
+    /// süre, token, ajan adı, iz kimliği, zaman damgası, sürüm.
+    pub const RUNTIME_METADATA_FIELDS: &[&str] = &[
+        "confidence", "data_confidence", "fallback_reason",
+        "model", "model_name", "provider", "source_provider",
+        "usage", "tokens", "token_usage", "metrics",
+        "duration_ms", "elapsed_ms", "latency_ms", "elapsed",
+        "agent", "agent_name", "request_id", "task_id", "trace_id",
+        "version",
+        // duvar saati: mühür/skor girdisi olamaz (§8.7)
+        "created_at", "timestamp", "ts", "computed_at", "updated_at",
+        "generated_at", "measured_at", "observed_at", "started_at",
+        "completed_at",
+    ];
+
+    /// Kanıt KALİTESİ ölçüsü (0-100): kanıt taşıyan alan / aday alan.
+    ///
+    /// Python'daki `data_score` basit-oran yolunun Rust karşılığı. Metadata
+    /// alanları aday kümesine GİRMEZ (skoru şişiremez); placeholder/boş/null
+    /// değerler kanıt SAYILMAZ (skoru yükseltemez). Aday alan yoksa 0 döner —
+    /// yani "ölçülecek kanıt yok" dürüstçe 0'dır, 100 değildir.
+    pub fn data_score(obj: &serde_json::Map<String, serde_json::Value>) -> u8 {
+        let candidates: Vec<&serde_json::Value> = obj
+            .iter()
+            .filter(|(k, _)| !Self::RUNTIME_METADATA_FIELDS.contains(&k.as_str()))
+            .map(|(_, v)| v)
+            .collect();
+
+        if candidates.is_empty() {
+            return 0;
+        }
+
+        let bearing = candidates
+            .iter()
+            .filter(|v| Self::value_bears_evidence(*v))
+            .count();
+
+        // Tam sayı yuvarlaması (en yakın yüzde), 0-100 aralığına kırpılır.
+        let total = candidates.len();
+        let pct = (bearing * 100 + total / 2) / total;
+        pct.min(100) as u8
     }
 
     /// Bir JSON değeri gerçek kanıt taşıyor mu? ([006] sözleşmesi)
@@ -225,6 +279,87 @@ mod tests {
             ConfidenceLevel::Halt(e) => assert_eq!(e.missing_fields.len(), 2),
             ConfidenceLevel::Pass(_) => panic!("boş dizi/null PASS olamaz"),
         }
+    }
+
+    // --------------------------------------------------------------------- //
+    // [RÖNTGEN §8.5] score ÖLÇÜLÜR, sabit 100 değil
+    // --------------------------------------------------------------------- //
+    #[test]
+    fn score_is_measured_ratio_not_constant_100() {
+        let engine = UncertaintyEngine::new(
+            uuid::Uuid::new_v4(),
+            vec!["vec".to_string(), "anchors".to_string()],
+        );
+        // Zorunlu iki alan kanıt taşıyor, ama payload'da placeholder bir alan
+        // daha var: 2/3 -> 67. Eski davranış: 100.
+        let data = serde_json::json!({
+            "vec": { "depth": 0.9 },
+            "anchors": ["ritüel uyumu"],
+            "note": "bilinmiyor"
+        });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Pass(e) => {
+                assert_eq!(e.score, 67);
+                assert!(e.score < 100, "placeholder alan skoru 100 yapamaz");
+            },
+            ConfidenceLevel::Halt(_) => panic!("zorunlu alanlar kanıt taşıyor"),
+        }
+    }
+
+    #[test]
+    fn metadata_fields_cannot_inflate_score() {
+        let engine = UncertaintyEngine::new(
+            uuid::Uuid::new_v4(),
+            vec!["vec".to_string()],
+        );
+        // Metadata + duvar saati alanları ADAY kümesine girmez: skor yalnız
+        // gerçek kanıt alanından ölçülür (1/1 -> 100), metadata şişirmez.
+        let data = serde_json::json!({
+            "vec": { "depth": 0.9 },
+            "model": "gpt-x", "provider": "openrouter", "duration_ms": 12,
+            "task_id": "t-1", "computed_at": "2026-09-23T12:00:00Z", "version": "v1"
+        });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Pass(e) => assert_eq!(e.score, 100),
+            ConfidenceLevel::Halt(_) => panic!("kanıt var"),
+        }
+
+        // Aynı payload'a placeholder eklenirse skor DÜŞER (metadata korumaz):
+        let data2 = serde_json::json!({
+            "vec": { "depth": 0.9 },
+            "model": "gpt-x",
+            "note": "veri yok"
+        });
+        match engine.evaluate(&data2).unwrap() {
+            ConfidenceLevel::Pass(e) => assert_eq!(e.score, 50),
+            ConfidenceLevel::Halt(_) => panic!("zorunlu alan kanıt taşıyor"),
+        }
+    }
+
+    #[test]
+    fn no_candidate_field_scores_zero_not_hundred() {
+        // Zorunlu alan yoksa gate PASS der ama ÖLÇÜLECEK kanıt da yoktur:
+        // dürüst skor 0'dır (eski hâlde 100 olurdu).
+        let engine = UncertaintyEngine::new(uuid::Uuid::new_v4(), vec![]);
+        let data = serde_json::json!({ "model": "gpt-x", "duration_ms": 5 });
+        match engine.evaluate(&data).unwrap() {
+            ConfidenceLevel::Pass(e) => assert_eq!(e.score, 0),
+            ConfidenceLevel::Halt(_) => panic!("zorunlu alan yok -> HALT olmamalı"),
+        }
+    }
+
+    #[test]
+    fn data_score_is_a_pure_measured_ratio() {
+        let mut map = serde_json::Map::new();
+        map.insert("a".to_string(), serde_json::json!("somut kanıt"));
+        map.insert("b".to_string(), serde_json::json!("unknown"));
+        map.insert("c".to_string(), serde_json::json!(null));
+        map.insert("d".to_string(), serde_json::json!(0.42));
+        // aday: a,b,c,d (4); kanıt: a,d (2) -> 50
+        assert_eq!(UncertaintyEngine::data_score(&map), 50);
+
+        let empty = serde_json::Map::new();
+        assert_eq!(UncertaintyEngine::data_score(&empty), 0);
     }
 
     #[test]

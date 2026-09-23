@@ -151,6 +151,10 @@ impl AgentNode for MirrorTruthAgent {
         });
 
         // Güven sabit 0.95 DEĞİL: uncertainty kanıt skorundan türetilir.
+        // [RÖNTGEN §8.5] `Evidence.score` artık SABİT 100 değil, ÖLÇÜLMÜŞ kanıt
+        // kalitesi (kanıt taşıyan alan / aday alan, metadata hariç). Yani bu
+        // güven de ölçümden gelir: placeholder/metadata şişkin bir payload
+        // PASS etse bile güven 1.0 olamaz.
         let confidence = match engine.evaluate(&llm_data) {
             Ok(ConfidenceLevel::Pass(evidence)) => evidence.score as f32 / 100.0,
             _ => 0.0,

@@ -30,8 +30,8 @@ yeniden üretilebilir). Ortam bu turda CI'ın kurduğu ağacın KENDİSİYLE
 | 7 | Android | Hayalet ajan durumları (`mirror_truth`/`autonomous_verifier`/`human_behavior` RUNNING); "KASA • AKTİF (MÜHÜRLENDİ)"; "şifreli keystore" etiketi; sistem güveni = modelin kendi rezonans skoru | Durum kimliği gerçek hatta çekildi; kasa/güven etiketleri dürüst; kanıt modeli **YOK** (remediation planı §7.3) | CI `android`: `lintDebug` + `testDebugUnitTest` + `assembleDebug` → **success** (§7.4) |
 
 **Test durumu (2. tur — CI ağacında ölçüldü):** denetim öncesi `33 failed / 1225 passed`
-→ 1. tur `24 failed / 1305 passed / 4 skipped` → **2. tur: `1342 passed / 2 skipped /
-0 failed`**, kapsam **%83.36** (CI eşiği %80). 1. turdaki 24 kırmızının tamamı eksik
+→ 1. tur `24 failed / 1305 passed / 4 skipped` → **2. tur: `1346 passed / 2 skipped /
+0 failed`**, kapsam **%83.37** (CI eşiği %80). 1. turdaki 24 kırmızının tamamı eksik
 bağımlılıktı (`holehe, maigret, playwright_stealth, invisible_playwright`); ortam CI'ın
 kurduğu `requirements.lock` ağacıyla yeniden kurulunca hepsi YEŞİL oldu — yani "kod
 kusuru değil" tespiti doğrulandı. Kalan 2 skip meşru: `crawl4ai` (2. adım dosyası) ve
@@ -48,8 +48,9 @@ kusuru değil" tespiti doğrulandı. Kalan 2 skip meşru: `crawl4ai` (2. adım d
 toolchain/SDK olmadığı için derlenemedi (§6.4, §7.4). CI'da `rust-core` ve `android`
 job'ları var; bu commit'in yeşil kanıtı o job'lardan alınacak — **burada "yeşil" denmiyor.**
 
-**Yeni kilit test sayısı: 81** (15 + 10 güncellenen jüri fake'i hariç + 31 + 12 + 7 + 5 + 10
-`no_decision` + 1 sızıntı kilidi).
+**Yeni kilit test sayısı: 85 Python + 4 Rust** (15 entailment + 31 status_source + 12 determinizm
++ 10 `no_decision` + 7 rack wiring + 5 uncertainty gate + 4 kanıt mührü (§8.7) + 1 sızıntı kilidi;
+Rust: 4 `data_score` testi — derleme kanıtı CI'dan).
 
 ---
 
@@ -314,10 +315,24 @@ Motorlar `numpy` + regex + sözlük ile çalışıyor; determinizm beyanı artı
 **süreçler-arası çıktı karşılaştırmasıyla** kilitli
 (`test_bundle_identical_across_python_hash_seeds`).
 
-**Sahip notu (kusur değil, tasarım sonucu):** `computed_at` kanıt hash'ine
-(SHA-256 mühür) girdiği için mühür koşudan koşuya **tekrar-üretilemez**. Yeniden-üretim
-karşılaştırması isteniyorsa hash girdisinden duvar saati alanlarının çıkarılması gerekir
-(bugünkü mühür "bu koşunun mührü" anlamında doğrudur).
+**Sahip kararı §8.7 ile KAPANDI (2026-09-23):** `computed_at` kanıt hash'ine (SHA-256
+mühür) girdiği için mühür koşudan koşuya **tekrar-üretilemiyordu**; yani mühür kanıtın
+kimliği değil "bu koşunun mührü"ydü ve bağımsız yeniden-üretim karşılaştırması
+yapılamıyordu. Sahip kararı: duvar saati alanları mühür girdisinden ÇIKARILSIN.
+
+Uygulama (`agent_core/task_executor.py`):
+
+* `_WALL_CLOCK_FIELDS` = `computed_at, created_at, updated_at, generated_at, measured_at,
+  observed_at, started_at, completed_at, timestamp, ts, time, date`.
+* `_seal_payload(result)` kanıt alanlarını **iç içe de** (dict/list recursion) bu
+  alanlardan arındırır; `_hash_evidence_result` artık bu payload'ı mühürler.
+* Zaman damgası **KAYBOLMAZ**: kayıtta (`AgentRun.started_at/completed_at`,
+  `computed_at`) durur, yalnız mühür girdisinden çıkar.
+
+Ölçülen sonuç: aynı kanıtı taşıyan iki `PillarBundle` (kök + iç içe `VoidReport`
+`computed_at`'i 7 saat 13 dakika farklı) **aynı mührü** veriyor; `global_absence_index`
+0.75 → 0.31 değişince mühür **değişiyor**. Kilit:
+`tests/unit/test_evidence_hash_and_fallback_gate.py` (+4 test).
 
 ---
 
@@ -430,14 +445,44 @@ Yani `rust_core/src/redis_bridge.rs` (`set_all_ready` kaldırıldı) ve
 Not: bu kanıt derleme + mevcut Rust testlerini kapsar; §6.5'teki `Evidence.score = 100`
 bulgusu hâlâ AÇIK (sahip kararı).
 
-### 6.5 AÇIK bulgu: `UncertaintyEngine::evaluate` → `Evidence.score = 100`
+### 6.5 KAPANDI (sahip kararı §8.5): `Evidence.score` artık ÖLÇÜLÜYOR
 
-`rust_core/src/uncertainty.rs`: `[006]` düzeltmesi alan-varlığı denetimini
-gerçekten sıkılaştırmış (boş obje/dizi, placeholder metin, NaN → HALT ✓), ancak PASS
-durumunda `score: 100` **salt alan varlığından** üretiliyor — kalite ölçüsü yok.
-Python tarafındaki `data_score` (alan ağırlıkları + boş-liste cezası) ile aynı şey değil.
-Paylaşılan semantik olduğu ve Rust hattı bugün ürün yolunda olmadığı için bu turda
-değiştirilmedi; sahip kararı bekliyor.
+**Ölçülen eski durum:** `rust_core/src/uncertainty.rs`'te `[006]` düzeltmesi
+alan-varlığı denetimini gerçekten sıkılaştırmıştı (boş obje/dizi, placeholder metin,
+NaN → HALT ✓), ancak PASS durumunda `score: 100` **salt alan varlığından** üretiliyordu —
+kalite ölçüsü yoktu. Python tarafındaki `data_score` ile aynı semantik değildi.
+Bu skor ayrıca `mirror_truth.rs:155`'te `confidence = score / 100` olarak
+türetildiği için, şişkin bir payload PASS ettiğinde güven otomatik 1.0 oluyordu.
+
+**Sahip kararı:** Python benzeri kalite ölçüsüne geçir.
+
+**Uygulama:**
+
+* `UncertaintyEngine::RUNTIME_METADATA_FIELDS` (Python'daki kümenin Rust karşılığı +
+  §8.7 duvar saati alanları): `confidence, model, provider, duration_ms, task_id,
+  version, computed_at, timestamp, …` — bunlar **aday kümesine girmez**, yani skoru
+  şişiremez.
+* `UncertaintyEngine::data_score(obj) -> u8`: `kanıt taşıyan alan / aday alan`
+  (en yakın yüzdeye yuvarlanır, 0-100'e kırpılır). Placeholder/boş/null değerler
+  `value_bears_evidence` ile kanıt sayılmaz. **Aday alan yoksa 0** — "ölçülecek kanıt
+  yok" dürüstçe 0'dır, 100 değil.
+* `evaluate(...)` PASS dalında `score: 100` → `score: Self::data_score(obj)`.
+* `mirror_truth.rs`'teki türetilmiş güvenin yanına §8.5 notu eklendi: güven artık
+  ölçülmüş kanıt kalitesidir (metadata/placeholder şişkin payload 1.0 güven alamaz).
+
+**Kilit (Rust unit test, 4 yeni):** `score_is_measured_ratio_not_constant_100`
+(2 kanıt + 1 placeholder → 67), `metadata_fields_cannot_inflate_score`
+(metadata hariç 1/1 → 100; placeholder eklenince 1/2 → 50),
+`no_candidate_field_scores_zero_not_hundred` (zorunlu alan yok → PASS ama skor 0),
+`data_score_is_a_pure_measured_ratio` (4 aday / 2 kanıt → 50, boş map → 0).
+Mevcut `test_valid_evidence_passes` (2/2 → 100) değişmeden geçiyor.
+
+**DÜRÜSTLÜK NOTU — derleme kanıtı:** bu sandbox'ta Rust toolchain KURULAMADI
+(ölçüldü: `sh.rustup.rs` ve `static.rust-lang.org` → `SSL_ERROR_SYSCALL`,
+`deb.debian.org` → boş yanıt; `cargo`/`rustc` yok). Kod elle gözden geçirildi
+(tip/lifetime/deref: `filter(|v| value_bears_evidence(*v))`, `usize` yuvarlaması,
+`min(100) as u8`) ve **derleyici kanıtı CI `rust-core` job'ından alınacak**
+(`cargo check --all-targets` + `cargo test --locked`). Bu raporda "derlendi" denmiyor.
 
 ---
 
@@ -515,17 +560,17 @@ o iş §7.3 remediation planı ve §8.6 sahip kararıdır; CI yeşili o eksikli�
 
 ---
 
-## 8. SAHİP KARARI BEKLEYEN MADDELER
+## 8. SAHİP KARARLARI — 2026-09-23'TE KARARA BAĞLANDI (kapanış kaydı §13)
 
 | # | Madde | Bugünkü koşan gerçek | Alternatif | Neden dokunulmadı |
 |---|---|---|---|---|
-| 8.1 | `pipeline.critical_agents` | `["mirror_truth"]`; `passion_mapper` yalnız `graceful_degradation: true` ile düşürülebilir | Test eskiden `passion_mapper`'ı da kritik istiyordu | Executor hükmü `kritik OR NOT graceful` olduğu için iki beyan çelişiyordu; liste kazanır ve passion_mapper tüm görevi kendi başarısızlığına bağlardı. Kilit koşan gerçeğe eşitlendi + **çelişki yasağı** testi eklendi (`test_no_critical_agent_contradicts_itself_with_graceful_degradation`). Passion gerçekten kritikse config'e eklenmeli, bayrak kapatılmalı. |
-| 8.2 | `osint_investigator` birincil modeli | `gemini-3.7-flash → grok-4.6 → deepseek-v4-pro` (heavy, üçü de ÇALIŞIR) | Test `grok-4.6` birincil istiyordu | Üretim rota seçimini sessizce değiştirmemek için snapshot koşan gerçeğe eşitlendi ve gerekçe teste yazıldı. Grok birincillik isteniyorsa `AGENT_CHAINS` + kilit birlikte güncellenmeli. |
-| 8.3 | `friction_detector` zinciri | `claude-sonnet-5 → gemini-3.7-flash → deepseek-v4-pro` | Test 2 basamaklı snapshot taşıyordu | Heavy tier'da paid basamak meşru; RUNBOOK tablosu (üretilmiş) ile kod uyumlu. Snapshot eşitlendi. |
+| 8.1 ✅ **KAPANDI: koşan gerçek onaylandı** | `pipeline.critical_agents` | `["mirror_truth"]`; `passion_mapper` yalnız `graceful_degradation: true` ile düşürülebilir | Test eskiden `passion_mapper`'ı da kritik istiyordu | Executor hükmü `kritik OR NOT graceful` olduğu için iki beyan çelişiyordu; liste kazanır ve passion_mapper tüm görevi kendi başarısızlığına bağlardı. Kilit koşan gerçeğe eşitlendi + **çelişki yasağı** testi eklendi (`test_no_critical_agent_contradicts_itself_with_graceful_degradation`). Passion gerçekten kritikse config'e eklenmeli, bayrak kapatılmalı. |
+| 8.2 ✅ **KAPANDI: koşan gerçek onaylandı** | `osint_investigator` birincil modeli | `gemini-3.7-flash → grok-4.6 → deepseek-v4-pro` (heavy, üçü de ÇALIŞIR) | Test `grok-4.6` birincil istiyordu | Üretim rota seçimini sessizce değiştirmemek için snapshot koşan gerçeğe eşitlendi ve gerekçe teste yazıldı. Grok birincillik isteniyorsa `AGENT_CHAINS` + kilit birlikte güncellenmeli. |
+| 8.3 ✅ **KAPANDI: koşan gerçek onaylandı** | `friction_detector` zinciri | `claude-sonnet-5 → gemini-3.7-flash → deepseek-v4-pro` | Test 2 basamaklı snapshot taşıyordu | Heavy tier'da paid basamak meşru; RUNBOOK tablosu (üretilmiş) ile kod uyumlu. Snapshot eşitlendi. |
 | 8.4 | ~~`resonance_calc` 0.75 güven tabanı~~ **KAPANDI (2. tur)** | ~~uydurma taban~~ → taban kaldırıldı; koşu `completed_no_decision`, `decision_grade=False`, çıktı + `state=inference_gap` korunuyor; DecisionEngine bunu kanıt saymıyor; UI `NO-DECISION` (amber) | — | Sahip "görev tamamlandı ≠ karar üretildi" ayrımını onayladı; §1.6'da uygulandı ve `test_no_decision_run_status.py` (10) ile kilitlendi. |
-| 8.5 | Rust `Evidence.score = 100` | alan varlığı = 100 | Python `data_score` benzeri kalite ölçüsü | Paylaşılan semantik; Rust hattı ürün yolunda değil (§6.5). |
-| 8.6 | Android kanıt modeli | tek LLM çağrısı | §7.3 planı | Yeni katman (ağ istemcisi + kapı + jüri) gerektiriyor. |
-| 8.7 | Kanıt mühüründe `computed_at` | mühür koşuya özgü, tekrar-üretilemez | hash girdisinden duvar saati alanlarını çıkar | Yeniden-üretim karşılaştırması isteniyorsa gerekir (§4.4). |
+| 8.5 ✅ **KAPANDI: kalite ölçüsüne geçirildi** | ~~Rust `Evidence.score = 100`~~ → `data_score(obj)` ölçülmüş oran; metadata şişiremez, aday yoksa 0 | uygulandı (§6.5) | — | Derleme kanıtı CI `rust-core` job'ında (sandbox'ta cargo kurulamadı). |
+| 8.6 ⏸ **ERTELENDİ (sahip direktifi: "şimdi yeni özellik yok")** | Android kanıt modeli: tek LLM çağrısı | §7.3 planı | Yeni katman (ağ istemcisi + kapı + jüri) gerektiriyor; bu turun kapsamı "kararları kapat + CI yeşil + push". |
+| 8.7 ✅ **KAPANDI: duvar saati mühür girdisinden çıktı** | ~~mühür koşuya özgü~~ → aynı kanıt = aynı mühür; zaman damgası kayıtta duruyor | uygulandı (§4.4) | — | Kilit: `test_evidence_hash_and_fallback_gate.py` (+4). |
 
 ---
 
@@ -557,7 +602,7 @@ o iş §7.3 remediation planı ve §8.6 sahip kararıdır; CI yeşili o eksikli�
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements.lock \
   && .venv/bin/pip install ruff pytest pytest-asyncio pytest-cov
 
-# Tam suite (2. tur, CI komutu): 1342 passed / 2 skipped / 0 failed, kapsam %83.36
+# Tam suite (CI komutu): 1346 passed / 2 skipped / 0 failed, kapsam %83.37
 PYTHONPATH=$PWD .venv/bin/python -m pytest -q -p no:cacheprovider \
   --cov=agent_core --cov=backend --cov-report=term-missing:skip-covered --cov-fail-under=80
 
@@ -615,7 +660,8 @@ kaldırıldı, `UncertaintyReport.no_decision`),
 **2. tur:** `completed_no_decision` yolu — ana döngü + gecikmiş ajan yolu,
 `decision_grade` bayrağı),
 `agent_core/domain/memory_models.py` (**2. tur:** `AgentRun.status` sözlüğü belgelendi,
-`decision_grade` alanı),
+`decision_grade` alanı), **§8.7:** `agent_core/task_executor.py` — `_WALL_CLOCK_FIELDS`,
+`_seal_payload()`, tekrar-üretilebilir `_hash_evidence_result()`,
 `agent_core/engines/{gravity,seismos,void}_engine.py` (determinizm),
 `backend/api.py` (kasa mandalı, rack kaynağı, initiate WAIT).
 
@@ -627,7 +673,9 @@ tamamlanmış koşul sayılıyor ama karar değil),
 `src/components/visualizers/{AgentOrchestrator,WaterHoseVisualizer}.svelte` **SİLİNDİ**
 (simülasyon görselleştirmeleri; 5. adım).
 
-**Rust:** `rust_core/src/redis_bridge.rs`, `rust_core/src/agents/autonomous_verifier.rs`.
+**Rust:** `rust_core/src/redis_bridge.rs`, `rust_core/src/agents/autonomous_verifier.rs`,
+**§8.5:** `rust_core/src/uncertainty.rs` (`RUNTIME_METADATA_FIELDS`, `data_score`,
+PASS dalında ölçülmüş `score`), `rust_core/src/agents/mirror_truth.rs` (türetilmiş güven notu).
 
 **Android:** `engine/PinealAnalyzerEngine.kt`, `i18n/I18n.kt`, `ui/PinealViewModel.kt`.
 
@@ -638,7 +686,9 @@ tamamlanmış koşul sayılıyor ama karar değil),
 `tests/unit/test_status_source_honesty.py` (31), `tests/unit/test_engine_determinism.py` (12),
 `tests/integration/test_agent_rack_wiring.py` (7),
 `tests/unit/test_uncertainty_data_confidence_gate.py` (5),
-**2. tur:** `tests/unit/test_no_decision_run_status.py` (9).
+**2. tur:** `tests/unit/test_no_decision_run_status.py` (10); **§8.7 kilidi:**
+`tests/unit/test_evidence_hash_and_fallback_gate.py` (+4); **§8.5 kilidi (Rust):**
+`rust_core/src/uncertainty.rs` `mod tests` (+4).
 
 **Güncellenen testler:** `tests/unit/test_verifier_jury_panel.py` (gerçek kaynak kümesi +
 gerekçeli negatif oylar), `tests/integration/test_p2_release_gate.py` (uydurma `evidence_url`
@@ -703,9 +753,9 @@ gerçekten ölçülür ve global test sonunda eski değerine döner (yeni sızı
 
 | Koşu | Sonuç |
 |---|---|
-| CI komutu (deterministik sıra, `requirements.lock` ağacı, kapsam eşiği %80) | **1342 passed / 2 skipped / 0 failed**, kapsam %83.36 |
+| CI komutu (deterministik sıra, `requirements.lock` ağacı, kapsam eşiği %80) | **1346 passed / 2 skipped / 0 failed**, kapsam %83.37 |
 | `--randomly-seed=12345` | **0 failed** (düzeltme öncesi: 2 failed) |
-| `--randomly-seed=777` | **0 failed** |
+| `--randomly-seed=777` | **0 failed** (2. ve 3. turda yeniden koşuldu) |
 | `--randomly-seed=20260923` | **0 failed** |
 | `ruff check .` | All checks passed |
 | `generate_routing_shadows.py` + `git diff --exit-code` | fark yok |
@@ -713,3 +763,34 @@ gerçekten ölçülür ve global test sonunda eski değerine döner (yeni sızı
 | `cargo check --all-targets` / `cargo test --locked` | sandbox'ta KOŞULAMADI → **CI `rust-core`: success** ([run](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006), §6.4) |
 | `gradle lintDebug` / `testDebugUnitTest` / `assembleDebug` | sandbox'ta KOŞULAMADI → **CI `android`: success** ([run](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006), §7.4) |
 | CI (5 job: backend, frontend, smoke, rust-core, android) | **success** — commit `4954121`, [run 35857108006](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35857108006) |
+
+---
+
+## 13. SAHİP KARARLARI — KAPANIŞ KAYDI (2026-09-23)
+
+§8'deki 7 madde sahibe tek tek soruldu; kararlar ve uygulaması:
+
+| # | Sahip kararı | Kodda ne değişti | Kilit | Doğrulama |
+|---|---|---|---|---|
+| 8.1 | **Koşan gerçek kalsın** | HİÇBİR ŞEY: `critical_agents = ["mirror_truth"]`, `passion_mapper` `graceful_degradation: true` ile düşebilir | `test_config_contract.py` (çelişki yasağı dahil) | yerel suite + CI `backend` |
+| 8.2 | **osint zinciri koşan gerçek kalsın** | HİÇBİR ŞEY: `gemini-3.7-flash → grok-4.6 → deepseek-v4-pro` | `test_agent_model_policy.py`, `test_routing_shadows.py` | CI `backend` (rota gölgeleri taze) |
+| 8.3 | **friction_detector 3 basamak kalsın** | HİÇBİR ŞEY: `claude-sonnet-5 → gemini-3.7-flash → deepseek-v4-pro` | `test_task_routing_step1.py` | CI `backend` |
+| 8.4 | **Görev tamamlandı ≠ karar üretildi** (önceki turda onaylandı) | 0.75 uydurma taban kaldırıldı → `UncertaintyReport.no_decision`, executor'da `completed_no_decision` + `decision_grade=False`, UI'da `NO-DECISION` (§1.6) | `test_no_decision_run_status.py` (10) | yerel suite + CI `backend`/`frontend` |
+| 8.5 | **Rust'ta Python benzeri kalite ölçüsü** | `Evidence.score` sabit 100 → `UncertaintyEngine::data_score()` (ölçülmüş oran; metadata şişiremez, aday yoksa 0) (§6.5) | Rust unit test (+4) | **CI `rust-core`** (sandbox'ta cargo kurulamadı) |
+| 8.6 | **Ertele** — "şimdi yeni özellik yok" direktifi | HİÇBİR ŞEY: Android kanıt modeli §7.3 remediation planı olarak duruyor | — | — |
+| 8.7 | **Duvar saatini mühür girdisinden çıkar** | `_seal_payload()` + `_WALL_CLOCK_FIELDS`; mühür artık tekrar-üretilebilir, zaman damgası kayıtta duruyor (§4.4) | `test_evidence_hash_and_fallback_gate.py` (+4) | yerel suite + CI `backend` |
+
+**Kapanış ölçümü (bu tur, `requirements.lock` ağacı):**
+
+```text
+pytest (CI komutu, deterministik)   : 1346 passed / 2 skipped / 0 failed, kapsam %83.37
+pytest --randomly-seed=12345        : 0 failed
+pytest --randomly-seed=777          : 0 failed
+ruff check .                        : All checks passed
+svelte-check                        : 0 hata / 0 uyarı
+cargo / gradle                      : sandbox'ta KURULAMADI → CI job'ları (rust-core, android)
+```
+
+**Bilinçli olarak DEĞİŞMEYENLER:** 8.1/8.2/8.3 (sahip koşan gerçeği onayladı),
+8.6 (yeni katman = yeni özellik; direktif gereği ertelendi). Rust `data_score` portu
+derlenmeden "çalışıyor" sayılmadı: derleme kanıtı CI `rust-core` job'ından alınacak.
