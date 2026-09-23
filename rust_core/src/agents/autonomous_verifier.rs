@@ -137,9 +137,16 @@ impl AgentNode for AutonomousVerifier {
             tracing::warn!("[AutonomousVerifier] {}", reason);
         }
 
-        // Skor: teminat kapsamı (0 sonuç -> 0.0). Kanıt yoksa uncertainty
-        // motoru ([006]) boş listeyi HALT eder — sıfır kanıtla %100 imkânsız.
-        let overall_score = (verifications.len() as f32 / 3.0).min(1.0);
+        // Skor: doğrulanmış iddia oranı (0 doğrulanmış veya 0 sonuç -> 0.0).
+        let verified_count = verifications
+            .iter()
+            .filter(|v| v.truth_status == "VERIFIED" || v.truth_status == "DOĞRULANDI")
+            .count();
+        let overall_score = if verifications.is_empty() {
+            0.0
+        } else {
+            verified_count as f32 / verifications.len() as f32
+        };
 
         let report = VerifierReport {
             verifications,

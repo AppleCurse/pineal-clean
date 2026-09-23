@@ -127,24 +127,6 @@ class AgentStatusTracker:
         """Frontend icin liste formati"""
         return list(self._statuses.values())
 
-    async def simulate_processing(self, planned_agents: list):
-        """Belirli bir plan icin ajanlari sirayla Active yap - demo"""
-        await self.set_all_wait()
-        await asyncio.sleep(0.2)
-        for agent_id in planned_agents:
-            if agent_id in self._statuses:
-                await self.set_ready(agent_id)
-        await asyncio.sleep(0.3)
-        for agent_id in planned_agents:
-            await self.set_active(agent_id)
-            await asyncio.sleep(0.8)
-            await self.set_done(agent_id)
-        # Kalanlar Ready
-        for agent in AGENT_DEFINITIONS:
-            if agent["id"] not in planned_agents:
-                await self.set_ready(agent["id"])
-
-
 # Global singleton
 _tracker: Optional[AgentStatusTracker] = None
 
@@ -161,5 +143,6 @@ async def init_tracker(redis_url: Optional[str] = None) -> AgentStatusTracker:
     from .redis_bus import init_redis_bus
     bus = await init_redis_bus(redis_url)
     _tracker = AgentStatusTracker(bus)
-    await _tracker.set_all_ready()
+    # Ajanlar baslangicta beklemede (Wait); sahte Ready durumu uretilmez
+    await _tracker.set_all_wait()
     return _tracker

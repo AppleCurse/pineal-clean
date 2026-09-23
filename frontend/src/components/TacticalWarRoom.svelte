@@ -97,10 +97,14 @@
       }
       if (id === 'autonomous_verifier') {
         const vCount = run.output_summary?.verifications?.length || 0;
-        return `${vCount} adli iddia 3 jürili panelce incelendi`;
+        const jCount = run.output_summary?.jurors?.length || (run.output_summary?.dropped_juror?.length !== undefined ? Math.max(0, 3 - run.output_summary.dropped_juror.length) : null);
+        const jText = jCount !== null ? `${jCount} jürili` : 'jüri';
+        return `${vCount} adli iddia ${jText} panelce incelendi`;
       }
       if (id === 'human_behavior') {
-        return `Aşil Skoru: ${run.output_summary?.achilles_score ?? 15} · ${run.output_summary?.micro_signals?.length || 0} mikro sinyal`;
+        const achilles = run.output_summary?.achilles_score;
+        const achillesText = achilles !== undefined && achilles !== null ? achilles : 'ölçülmedi';
+        return `Aşil Skoru: ${achillesText} · ${run.output_summary?.micro_signals?.length || 0} mikro sinyal`;
       }
       if (id === 'passion_mapper') {
         const p = (run.output_summary?.core_passions || []).slice(0, 2).join(', ');
@@ -114,8 +118,9 @@
         return `Ton: ${run.output_summary?.communication_tone || 'Sade'} · Karmaşıklık: ${run.output_summary?.complexity_level || 'Normal'}`;
       }
       if (id === 'resonance_calc') {
-        const comp = run.output_summary?.compatibility_score ?? 1.0;
-        return `Vektörel Benzerlik: ${(comp * 100).toFixed(0)}% · ${run.output_summary?.state || 'Analiz'}`;
+        const comp = run.output_summary?.compatibility_score;
+        const compText = comp !== undefined && comp !== null ? `${(comp * 100).toFixed(0)}%` : 'ölçülmedi';
+        return `Vektörel Benzerlik: ${compText} · ${run.output_summary?.state || 'Analiz'}`;
       }
       if (id === 'pattern_interrupt') {
         return `Kanca üretildi: "${(run.output_summary?.message || '').slice(0, 35)}..."`;
@@ -124,7 +129,8 @@
         return `Temas Başlığı: ${run.output_summary?.authentic_opening_topic || 'Sahici Köprü'}`;
       }
       if (id === 'depth_analyst') {
-        return `Gerçeklik Endeksi: ${realityIndex ?? 0.88} · Öz çıkarıldı`;
+        const rIndexText = realityIndex !== undefined && realityIndex !== null ? realityIndex.toFixed(2) : 'ölçülmedi';
+        return `Gerçeklik Endeksi: ${rIndexText} · Öz çıkarıldı`;
       }
       return 'Tamamlandı';
     }
@@ -146,9 +152,9 @@
           client_id: $clientId,
           url: q,
           scraper_type: scraperType,
-          rituals: 'Morning cold exposure, strategic deep work, journaling',
-          playlist: 'Max Richter, Nils Frahm, Olafur Arnalds',
-          envies: 'Enduring intellectual architects who never compromise sovereignty'
+          rituals: '',
+          playlist: '',
+          envies: ''
         })
       });
     } catch (e: any) {

@@ -115,7 +115,7 @@
   <div class="rack-footer">
     <div class="footer-stat">
       <span class="stat-label">READY</span>
-      <span class="stat-value">{Object.values(statuses).filter((s:any)=>statusLabel(s.status)==='READY').length || AGENT_DEFINITIONS.length}</span>
+      <span class="stat-value">{Object.values(statuses).filter((s:any)=>statusLabel(s.status)==='READY').length}</span>
     </div>
     <div class="footer-stat">
       <span class="stat-label">ACTIVE</span>

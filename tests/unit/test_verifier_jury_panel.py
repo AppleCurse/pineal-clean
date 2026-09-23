@@ -44,7 +44,10 @@ class _PanelGateway:
         if str(agent_name).startswith("pineal_juror"):
             status = self.verdicts.get(agent_name, "BİLİNMİYOR")
             return VerificationResult(
-                claim_text="x", truth_status=status, evidence_url=f"https://{agent_name}.test"
+                claim_text="x",
+                truth_status=status,
+                evidence_url="https://kanit.test",
+                evidence_quote="stratejist olduğu yazıyor",
             )
         raise AssertionError(f"beklenmeyen çağrı: {agent_name}")
 

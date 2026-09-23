@@ -2022,9 +2022,9 @@ class InitiatePayload(BaseModel):
     # Bellek/istismar yüzeyini daraltmak için katı alan tavanları:
     client_id: str = Field(max_length=_MAX_CLIENT_ID_LENGTH)
     url: str = Field(max_length=8_192)
-    rituals: str = Field(max_length=32_000)
-    playlist: str = Field(max_length=32_000)
-    envies: str = Field(max_length=32_000)
+    rituals: str = Field(default="", max_length=32_000)
+    playlist: str = Field(default="", max_length=32_000)
+    envies: str = Field(default="", max_length=32_000)
     scraper_type: str = Field(default="instagram", max_length=64)
     # ASPASIA TRUE CHIEF LAYER: kullanicinin AMACI (goal id'leri) görev
     # verisiyle birlikte tasinir — ama AJAN SECIMI degil; sozlesme tek
@@ -2474,13 +2474,11 @@ async def api_initiate(req: InitiatePayload, request: Request):
         )
     task_id = _new_task_id()
     _lifecycle(room).transition(task_id, "processing")
-    # Agent Rack: planlanan ajanları Ready yap
+    # Agent Rack: Görev başlangıcında tüm ajanlar Wait (Beklemede); gerçek geçişler executor tarafından yürütülür
     if HAS_AGENT_RACK and get_tracker:
         try:
             tracker = get_tracker()
             await tracker.set_all_wait()
-            # Tahmini plan - gerçek plan executor'da
-            await tracker.set_all_ready()
         except Exception:
             pass
     mission = asyncio.create_task(run_mission(req, task_id))

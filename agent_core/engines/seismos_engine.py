@@ -1,8 +1,8 @@
 """SEISMOS behavioral fracture detector."""
 
 import asyncio
+import hashlib
 import re
-import uuid
 
 import numpy as np
 
@@ -50,7 +50,7 @@ class SeismosEngine:
                 r = g / max(med, 1)
                 events.append(
                     SeismicEvent(
-                        event_id="sez_" + uuid.uuid4().hex[:12],
+                        event_id="sez_" + hashlib.sha256(f"gap_{a.isoformat()}_{b.isoformat()}_{i}".encode()).hexdigest()[:12],
                         kind=SeismicKind.SILENCE_GAP,
                         intensity=float(np.clip(1 + 9 * (1 - np.exp(-r / 4)), 1, 10)),
                         timestamp=a + (b - a) / 2,
@@ -74,7 +74,7 @@ class SeismosEngine:
             if abs(delta) >= self.tone_delta_threshold:
                 events.append(
                     SeismicEvent(
-                        event_id="sez_" + uuid.uuid4().hex[:12],
+                        event_id="sez_" + hashlib.sha256(f"tone_{s[i][0].isoformat()}_{s[i+2*w-1][0].isoformat()}_{i}_{delta:.4f}".encode()).hexdigest()[:12],
                         kind=SeismicKind.TONE_SHIFT,
                         intensity=float(
                             np.clip(1 + 9 * (1 - np.exp(-(abs(delta) / self.tone_delta_threshold) / 4)), 1, 10)
