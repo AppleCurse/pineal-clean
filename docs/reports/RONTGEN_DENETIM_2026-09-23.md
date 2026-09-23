@@ -477,12 +477,21 @@ türetildiği için, şişkin bir payload PASS ettiğinde güven otomatik 1.0 ol
 `data_score_is_a_pure_measured_ratio` (4 aday / 2 kanıt → 50, boş map → 0).
 Mevcut `test_valid_evidence_passes` (2/2 → 100) değişmeden geçiyor.
 
-**DÜRÜSTLÜK NOTU — derleme kanıtı:** bu sandbox'ta Rust toolchain KURULAMADI
-(ölçüldü: `sh.rustup.rs` ve `static.rust-lang.org` → `SSL_ERROR_SYSCALL`,
-`deb.debian.org` → boş yanıt; `cargo`/`rustc` yok). Kod elle gözden geçirildi
-(tip/lifetime/deref: `filter(|v| value_bears_evidence(*v))`, `usize` yuvarlaması,
-`min(100) as u8`) ve **derleyici kanıtı CI `rust-core` job'ından alınacak**
-(`cargo check --all-targets` + `cargo test --locked`). Bu raporda "derlendi" denmiyor.
+**DÜRÜSTLÜK NOTU — derleme sandbox'ta YAPILAMADI, kanıt CI'dan alındı:** bu sandbox'ta
+Rust toolchain KURULAMADI (ölçüldü: `sh.rustup.rs` ve `static.rust-lang.org` →
+`SSL_ERROR_SYSCALL`, `deb.debian.org` → boş yanıt; `cargo`/`rustc` yok). Kod elle
+gözden geçirildi (tip/lifetime/deref: `filter(|v| value_bears_evidence(*v))`, `usize`
+yuvarlaması, `min(100) as u8`) ve commit'e "derlendi" iddiası YAZILMADAN gönderildi.
+
+**Derleyici + test kanıtı (push sonrası ölçüldü, commit `9c95e29`):**
+[CI run 35869787922](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35869787922) → job **`rust-core` = success**:
+
+| Adım | Sonuç |
+|---|---|
+| `cargo check --all-targets` (core, tauri feature'sız) | **success** |
+| `cargo test --locked` (4 yeni `data_score` testi dahil) | **success** |
+
+Aynı koşuda `backend`, `frontend`, `smoke`, `android` job'ları da **success**.
 
 ---
 
@@ -776,7 +785,7 @@ gerçekten ölçülür ve global test sonunda eski değerine döner (yeni sızı
 | 8.2 | **osint zinciri koşan gerçek kalsın** | HİÇBİR ŞEY: `gemini-3.7-flash → grok-4.6 → deepseek-v4-pro` | `test_agent_model_policy.py`, `test_routing_shadows.py` | CI `backend` (rota gölgeleri taze) |
 | 8.3 | **friction_detector 3 basamak kalsın** | HİÇBİR ŞEY: `claude-sonnet-5 → gemini-3.7-flash → deepseek-v4-pro` | `test_task_routing_step1.py` | CI `backend` |
 | 8.4 | **Görev tamamlandı ≠ karar üretildi** (önceki turda onaylandı) | 0.75 uydurma taban kaldırıldı → `UncertaintyReport.no_decision`, executor'da `completed_no_decision` + `decision_grade=False`, UI'da `NO-DECISION` (§1.6) | `test_no_decision_run_status.py` (10) | yerel suite + CI `backend`/`frontend` |
-| 8.5 | **Rust'ta Python benzeri kalite ölçüsü** | `Evidence.score` sabit 100 → `UncertaintyEngine::data_score()` (ölçülmüş oran; metadata şişiremez, aday yoksa 0) (§6.5) | Rust unit test (+4) | **CI `rust-core`** (sandbox'ta cargo kurulamadı) |
+| 8.5 | **Rust'ta Python benzeri kalite ölçüsü** | `Evidence.score` sabit 100 → `UncertaintyEngine::data_score()` (ölçülmüş oran; metadata şişiremez, aday yoksa 0) (§6.5) | Rust unit test (+4) | **CI `rust-core` = success** ([run 35869787922](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35869787922): `cargo check --all-targets` + `cargo test --locked`) |
 | 8.6 | **Ertele** — "şimdi yeni özellik yok" direktifi | HİÇBİR ŞEY: Android kanıt modeli §7.3 remediation planı olarak duruyor | — | — |
 | 8.7 | **Duvar saatini mühür girdisinden çıkar** | `_seal_payload()` + `_WALL_CLOCK_FIELDS`; mühür artık tekrar-üretilebilir, zaman damgası kayıtta duruyor (§4.4) | `test_evidence_hash_and_fallback_gate.py` (+4) | yerel suite + CI `backend` |
 
@@ -793,4 +802,5 @@ cargo / gradle                      : sandbox'ta KURULAMADI → CI job'ları (ru
 
 **Bilinçli olarak DEĞİŞMEYENLER:** 8.1/8.2/8.3 (sahip koşan gerçeği onayladı),
 8.6 (yeni katman = yeni özellik; direktif gereği ertelendi). Rust `data_score` portu
-derlenmeden "çalışıyor" sayılmadı: derleme kanıtı CI `rust-core` job'ından alınacak.
+derlenmeden "çalışıyor" sayılmadı: önce commit'lendi, kanıt sonra CI'dan alındı
+([run 35869787922](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35869787922) → `rust-core` **success**; aynı koşuda 5 job'ın 5'i yeşil).
