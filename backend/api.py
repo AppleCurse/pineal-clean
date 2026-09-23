@@ -2022,9 +2022,11 @@ class InitiatePayload(BaseModel):
     # Bellek/istismar yüzeyini daraltmak için katı alan tavanları:
     client_id: str = Field(max_length=_MAX_CLIENT_ID_LENGTH)
     url: str = Field(max_length=8_192)
-    rituals: str = Field(max_length=32_000)
-    playlist: str = Field(max_length=32_000)
-    envies: str = Field(max_length=32_000)
+    # [main 481edb8'den taşındı] Alanlar opsiyonel: `default=""` olmadan istemci
+    # bu üç alanı göndermezse 422 alıyordu. Bellek tavanı (max_length) korunur.
+    rituals: str = Field(default="", max_length=32_000)
+    playlist: str = Field(default="", max_length=32_000)
+    envies: str = Field(default="", max_length=32_000)
     scraper_type: str = Field(default="instagram", max_length=64)
     # ASPASIA TRUE CHIEF LAYER: kullanicinin AMACI (goal id'leri) görev
     # verisiyle birlikte tasinir — ama AJAN SECIMI degil; sozlesme tek
