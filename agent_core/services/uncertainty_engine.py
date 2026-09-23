@@ -12,6 +12,13 @@ class UncertaintyReport(BaseModel):
     reason: str
     data_score: float = 0.0
     breakdown: Dict[str, Any] = {}
+    #: [RÖNTGEN 2026-09-23] GÖREV TAMAMLANDI ≠ KARAR ÜRETİLDİ.
+    #: True ise ajan koştu ve çıktı verdi ama bu çıktı KARAR DEĞİL: ajanın
+    #: kendi sözleşmesi `data_confidence=False` diyor. Executor böyle bir
+    #: koşuyu `completed_no_decision` olarak kaydeder — ne "halted" (ajan
+    #: gerçekten çalıştı) ne de karar-Grade "completed". Güven UYDURULMAZ
+    #: (eski resonance_calc 0.75 tabanı).
+    no_decision: bool = False
     model_config = ConfigDict(extra="forbid")
 
 class UncertaintyEngine:
@@ -245,12 +252,39 @@ class UncertaintyEngine:
         # Check conditions
         if not data_conf_flag:
             if agent_name == "resonance_calc":
-                comp_score = float(getattr(result, 'compatibility_score', 0.0) or 0.0)
-                conf = max(0.75, comp_score)
+                # [RÖNTGEN 2026-09-23] UYDURMA 0.75 TABANI KALDIRILDI.
+                # Eski kod `conf = max(0.75, comp_score)` dönüyordu: ajanın
+                # KENDİ sözleşmesi "data_confidence=False => çıktı KARAR
+                # DEĞİLDİR (fail-closed)" derken (resonance_calculator.py:111)
+                # burada ÖLÇÜLMEYEN bir güven üretiliyor ve executor'ın
+                # LOW_CONFIDENCE kapısı atlatılıyordu.
+                # Tabanı kaldırmanın naif bedeli de vardı: güven 0.0 olunca
+                # koşu "halted" yazılıyor ve çıktısı status'a İŞLENMİYORDU,
+                # yani `state=inference_gap` bilgisi kayboluyordu.
+                # Çözüm = üçüncü durum: `no_decision=True`. Executor koşuyu
+                # `completed_no_decision` olarak KAYBEDER (çıktı ve state
+                # raporda kalır) ama karar-Grade saymaz. DecisionEngine zaten
+                # `data_confidence=False` taşıyan kaydı kanıt kabul etmiyor
+                # (`_run_bears_evidence`) ve görevi PARTIALLY_COMPLETED'a
+                # düşürüyor — "görev tamamlandı ≠ karar üretildi" uçtan uca
+                # tutarlı. Kilit: tests/unit/test_no_decision_run_status.py
+                _raw_score = getattr(result, 'compatibility_score', None)
+                if _raw_score is None and isinstance(result, dict):
+                    _raw_score = result.get('compatibility_score')
+                comp_score = float(_raw_score or 0.0)
+                _raw_state = getattr(result, 'state', None)
+                if _raw_state is None and isinstance(result, dict):
+                    _raw_state = result.get('state')
+                state_label = _raw_state or 'inference_gap' 
                 return UncertaintyReport(
                     is_suspicious=False,
-                    confidence=conf,
-                    reason=f"Rezonans analizi tamamlandı ({getattr(result, 'state', 'inference_gap')}).",
+                    confidence=comp_score,
+                    no_decision=True,
+                    reason=(
+                        "Rezonans çıktısı KARAR DEĞİL (data_confidence=False, "
+                        f"state={state_label}); "
+                        f"ölçülen benzerlik {comp_score:.2f}, güven uydurulmadı."
+                    ),
                     data_score=data_score,
                     breakdown=breakdown
                 )

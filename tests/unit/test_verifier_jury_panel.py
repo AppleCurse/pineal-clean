@@ -4,6 +4,13 @@ Röntgen bulgusu: README ve UI "3 farklı model ailesinden jüri; üreten model 
 çıktısını onaylayamaz; Claude jüriden otomatik çıkarılır" diyordu; kodda ise tek
 zincir çağrısı vardı (autonomous_verifier → Claude). Jüri rotaları yalnız sözlükte
 duruyordu. Bu dosya kuralı kilitler.
+
+[RÖNTGEN 2026-09-23 güncellemesi] Bu dosyanın sahte gateway'i eskiden jüriye
+KENDİ uydurduğu adresi (`https://pineal_juror_google.test`) yazdırıyordu ve kod
+bunu kanıt sayıyordu — yani testler "uydurma URL ile onay" yolunu YEŞİL tutuyordu.
+Kanıt kapısı geldiği için sahte jüri artık gerçek arama sonucunun URL'sini ve o
+kaynaktan birebir alıntıyı döndürüyor (SOURCE_URL/SOURCE_TEXT). Kapının red
+yolunu ayrıca kilitleyen dosya: tests/unit/test_verifier_entailment_gate.py.
 """
 
 from __future__ import annotations
@@ -18,15 +25,30 @@ from agent_core.services.llm_gateway import LLMGateway, model_family
 PROMPT = "<UNTRUSTED_CLAIM>x</UNTRUSTED_CLAIM>"
 
 
+#: Kanıt kapısının beklediği GERÇEK kaynak: arama sonucundan gelen URL ve metin.
+SOURCE_URL = "https://kanit.test"
+SOURCE_TEXT = "Ada Kıdemli Stratejist olarak çalışıyor"
+SOURCES = [(SOURCE_URL, SOURCE_TEXT)]
+
+
 class _PanelGateway:
-    """Q Şemasına göre yanıt veren sahte gateway (çağrıları kaydeder)."""
+    """Q Şemasına göre yanıt veren sahte gateway (çağrıları kaydeder).
+
+    [RÖNTGEN 2026-09-23] Jüri yanıtı artık kanıt kapısından geçer: koltuk,
+    GERÇEKTEN dönen arama sonucunun URL'sini ve o kaynaktan BİREBİR alıntıyı
+    vermek zorundadır. Uydurma URL/alıntı ile onay üretilemez
+    (bkz. tests/unit/test_verifier_entailment_gate.py).
+    """
 
     def __init__(self, producer_model: str = "anthropic/claude-sonnet-5", verdicts: dict | None = None,
-                 extract_claims: list | None = None, chain: list | None = None):
+                 extract_claims: list | None = None, chain: list | None = None,
+                 evidence_url: str = SOURCE_URL, evidence_quote: str = "Kıdemli Stratejist olarak çalışıyor"):
         self.producer_model = producer_model
         self.verdicts = verdicts or {}
         self.extract_claims = extract_claims or []
         self.chain = chain
+        self.evidence_url = evidence_url
+        self.evidence_quote = evidence_quote
         self.calls: list[str] = []
 
     def get_agent_chain(self, agent_name, task):
@@ -44,10 +66,10 @@ class _PanelGateway:
         if str(agent_name).startswith("pineal_juror"):
             status = self.verdicts.get(agent_name, "BİLİNMİYOR")
             return VerificationResult(
-                claim_text="x",
-                truth_status=status,
-                evidence_url="https://kanit.test",
-                evidence_quote="stratejist olduğu yazıyor",
+                claim_text="x", truth_status=status,
+                evidence_url=self.evidence_url, evidence_quote=self.evidence_quote,
+                # Olumsuz oy gerekçesiz sayılmaz (kanıt kapısı kuralı).
+                contradiction_detail="Kaynak unvanı farklı veriyor" if status in {"YALAN", "ÇELİŞKİLİ"} else "",
             )
         raise AssertionError(f"beklenmeyen çağrı: {agent_name}")
 
@@ -60,7 +82,7 @@ class _FakeSearch:
     async def search(self, query, num_results=2):
         return SimpleNamespace(
             available=True,
-            results=[SimpleNamespace(source_url="https://kanit.test", content="stratejist olduğu yazıyor")],
+            results=[SimpleNamespace(source_url=SOURCE_URL, content=SOURCE_TEXT)],
         )
 
 
@@ -69,7 +91,7 @@ async def test_panel_asks_all_seats_when_producer_family_unknown():
     gw = _PanelGateway(producer_model="", verdicts={})  # aile bilinmiyor
     verifier = AutonomousVerifier(search_engine=_FakeSearch())
 
-    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
 
     assert sorted(gw.calls) == sorted(AutonomousVerifier.PANEL_AGENTS)
     assert result.dropped_juror == []
@@ -82,7 +104,7 @@ async def test_producing_family_seat_is_dropped():
     gw = _PanelGateway(verdicts={"pineal_juror_google": "DOĞRULANDI", "pineal_juror_open": "BİLİNMİYOR"})
     verifier = AutonomousVerifier(search_engine=_FakeSearch())
 
-    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
 
     assert "pineal_juror_claude" in result.dropped_juror
     assert "pineal_juror_claude" not in gw.calls, "düşürülen koltuk yine de çağrıldı"
@@ -106,7 +128,7 @@ async def test_chain_backup_family_seat_is_dropped(monkeypatch):
     gw = _PanelGateway(chain=["anthropic/claude-sonnet-5", "x-ai/grok-4.6"])
     verifier = AutonomousVerifier(search_engine=_FakeSearch())
 
-    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
 
     assert "pineal_juror_grok" in result.dropped_juror, "zincir yedeğinin ailesi panelde kaldı"
     assert "pineal_juror_grok" not in gw.calls, "şüpheli aile koltuğu yine de çağrıldı"
@@ -136,7 +158,7 @@ async def test_producer_record_path_drops_actual_family(monkeypatch):
 
     token = gw_mod._active_call_scope.set(scope)
     try:
-        result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+        result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
     finally:
         gw_mod._active_call_scope.reset(token)
 
@@ -166,7 +188,7 @@ async def test_majority_rule_decides_with_two_seats():
     gw = _PanelGateway(verdicts={"pineal_juror_google": "YALAN", "pineal_juror_open": "YALAN"})
     verifier = AutonomousVerifier(search_engine=_FakeSearch())
 
-    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
 
     assert result.truth_status == "YALAN"
     assert result.decision_rule == "panel_cogunluk"
@@ -178,7 +200,7 @@ async def test_tie_is_honestly_unknown():
     gw = _PanelGateway(verdicts={"pineal_juror_google": "DOĞRULANDI", "pineal_juror_open": "YALAN"})
     verifier = AutonomousVerifier(search_engine=_FakeSearch())
 
-    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
 
     assert result.truth_status == "BİLİNMİYOR"
     assert result.decision_rule == "panel_berabere"
@@ -193,7 +215,7 @@ async def test_no_independent_seat_never_approves(monkeypatch):
     gw = _PanelGateway(verdicts={"pineal_juror_claude": "DOĞRULANDI"})
     verifier = AutonomousVerifier(search_engine=_FakeSearch())
 
-    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw)
+    result = await verifier._verify_with_panel(PROMPT, "Stratejist", gw, sources=SOURCES)
 
     assert result.truth_status == "BİLİNMİYOR"
     assert result.decision_rule == "panel_bagimsiz_uyesi_yok"

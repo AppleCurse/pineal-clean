@@ -3,8 +3,8 @@
   import { get } from 'svelte/store';
   import {
     apiToken, currentApiToken, apiFetch, clientId, wsUrl, logs, taskStatus,
-    isProcessing, powerEngaged, recordEngaged, agentStatuses, agentTransport, vaultLocked,
-    activeViewMode
+    isProcessing, powerEngaged, recordEngaged, agentStatuses, vaultLocked,
+    activeViewMode, agentStatusSource
   } from './store';
   import { uplinkState } from './lib/telemetry';
   import AtlasPinealCockpit from './components/AtlasPinealCockpit.svelte';
@@ -21,9 +21,13 @@
   let tauriUnlisteners: (() => void)[] = [];
 
   async function fetchTelemetry() {
+    // [RÖNTGEN 2026-09-23] Başarısız okumada telemetryData ESKİ değeriyle
+    // kalıyordu: pano "canlı" görünen BAYAT veriyi basmaya devam ediyordu.
+    // Sözleşme: okuma yoksa veri de yok (null) → pano OFFLINE basar.
     try {
       const res = await apiFetch('/api/telemetry');
-      if (res.ok) {
+      if (!res.ok) throw new Error('http ' + res.status);
+      {
         telemetryData = await res.json();
         // Vault kilit durumu
         if (telemetryData.vault_locked !== undefined) {
@@ -35,7 +39,7 @@
           for (const [k, v] of Object.entries(telemetryData.agent_statuses)) {
             const val: any = v;
             mapped[k] = {
-              status: val.status || val.status || 'Wait',
+              status: val.status || 'Wait',
               updatedAt: Date.now(),
               metadata: val.metadata || {}
             };
@@ -46,7 +50,9 @@
           }
         }
       }
-    } catch (_e) {}
+    } catch (_e) {
+      telemetryData = null;
+    }
   }
 
   function recording(): boolean {
@@ -235,8 +241,15 @@
         const res = await apiFetch('/api/agents/status');
         if (res.ok) {
           const data = await res.json();
-          // Canlı taşıyıcı bildirimi (redis_bus | in_memory | ...) — raf başlığı buradan beslenir.
-          if (typeof data.source === 'string') agentTransport.set(data.source);
+          // Backend kaynağı beyan eder (redis_bus / in_memory / fallback /
+          // error): UI bunu basar, süs etiketi basmaz. Tanımadığı bir kaynak
+          // adı 'unreachable' olarak düşer (sessizce "gerçek" sayılmaz).
+          agentStatusSource.set(
+            data.source === 'redis_bus' || data.source === 'in_memory'
+              || data.source === 'fallback' || data.source === 'error'
+              ? data.source
+              : 'unreachable'
+          );
           if (data.agents && data.agents.length > 0) {
             const mapped: Record<string, any> = {};
             for (const agent of data.agents) {
@@ -248,8 +261,12 @@
             }
             agentStatuses.set(mapped);
           }
+        } else {
+          agentStatusSource.set('unreachable');
         }
-      } catch {}
+      } catch {
+        agentStatusSource.set('unreachable');
+      }
     }, 3000);
 
     const unsubPower = powerEngaged.subscribe((on) => {

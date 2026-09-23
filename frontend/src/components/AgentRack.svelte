@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
-  import { agentStatuses, agentTransport, isProcessing } from '../store';
+  import { agentStatuses, agentStatusSource, isProcessing } from '../store';
 
   const dispatch = createEventDispatcher();
 
@@ -46,7 +46,9 @@
       case 'active': return 'ACTIVE';
       case 'processing': return 'ACTIVE';
       case 'ready': return 'READY';
-      case 'idle': return 'READY';
+      // [RÖNTGEN 2026-09-23] 'idle' eskiden READY'ye çevriliyordu: boşta
+      // duran ajan "hazır/kanıt üretti" gibi görünüyordu. Boşta = bekliyor.
+      case 'idle': return 'WAIT';
       case 'wait': return 'WAIT';
       case 'waiting': return 'WAIT';
       case 'queued': return 'WAIT';
@@ -64,31 +66,38 @@
     dispatch('select', { agentId: id });
   }
 
-  // Taşıyıcı etiketi backend'in CANLI bildiriminden gelir (`/api/agents/status`
-  // `source`); Redis bağlı değilse "REDIS PUB/SUB" iddia edilmez.
-  function transportLabel(source: string): string {
-    switch ((source || '').toLowerCase()) {
-      case 'redis_bus': return 'REDIS PUB/SUB';
-      case 'in_memory': return 'IN-MEMORY BUS';
-      case 'fallback': return 'BUS OFFLINE';
-      case 'error': return 'BUS ERROR';
-      default: return 'PROBING BUS…';
-    }
-  }
-
-  // Sayaçlar YALNIZCA görüntülenen 12 slotu sayar; tracker'daki yardımcı
-  // slotlar (shadow_executor, pineal_7pillar, vision_analyzer) toplamı şişirmez.
-  function rackCount(label: string): number {
-    return AGENT_DEFINITIONS.filter((a) => statusLabel(statuses[a.id]?.status) === label).length;
-  }
-
   $: statuses = $agentStatuses || {};
+
+  // [RÖNTGEN 2026-09-23] Sayaçlar slotlarla AYNI kaynaktan sayılır.
+  // Eski kod: `READY = gerçek_ready || 12` — hiç ajan READY değilken (hatta
+  // backend'den tek kayıt gelmemişken) ekrana "READY 12" basıyordu; yani
+  // ölçülmeyen bir durum uydurma sayıyla gösteriliyordu.
+  $: slotLabels = AGENT_DEFINITIONS.map((a) => statusLabel((statuses[a.id] || { status: 'Wait' }).status));
+  $: readyCount = slotLabels.filter((l) => l === 'READY').length;
+  $: activeCount = slotLabels.filter((l) => l === 'ACTIVE').length;
+  $: waitCount = slotLabels.filter((l) => l === 'WAIT').length;
+  $: errorCount = slotLabels.filter((l) => l === 'ERROR').length;
+  $: hasBackendStatus = Object.keys(statuses).length > 0;
+
+  // Durum kaynağı backend beyanından gelir; süs etiketi basılmaz.
+  // Etiketler backend'in `/api/agents/status` → `source` alanının birebir
+  // karşılığıdır (redis_bus.connection_state() dahil): her satır gerçek bir
+  // taşıyıcı durumuna izlenebilir, süs etiketi yok.
+  const SOURCE_LABELS: Record<string, string> = {
+    redis_bus: 'REDIS PUB/SUB',
+    in_memory: 'YEREL BELLEK (REDIS YOK)',
+    fallback: 'TRACKER YÜKLÜ DEĞİL',
+    error: 'TRACKER HATASI',
+    unreachable: 'API ERİŞİLEMEDİ',
+    none: 'KAYNAK YOK',
+  };
+  $: busLabel = SOURCE_LABELS[$agentStatusSource] || 'KAYNAK YOK';
 </script>
 
 <div class="agent-rack {compact ? 'compact' : ''}" role="region" aria-label="Agent Rack">
   <div class="rack-header">
     <div class="rack-title">AGENT RACK</div>
-    <div class="rack-subtitle">12 AUTONOMOUS NODES · {transportLabel($agentTransport)}</div>
+    <div class="rack-subtitle">12 AUTONOMOUS NODES · {busLabel}</div>
     <div class="rack-live-dot" class:live={$isProcessing}></div>
   </div>
 
@@ -133,15 +142,22 @@
   <div class="rack-footer">
     <div class="footer-stat">
       <span class="stat-label">READY</span>
-      <span class="stat-value">{rackCount('READY')}</span>
+      <span class="stat-value">{readyCount}</span>
     </div>
     <div class="footer-stat">
       <span class="stat-label">ACTIVE</span>
-      <span class="stat-value active">{rackCount('ACTIVE')}</span>
+      <span class="stat-value active">{activeCount}</span>
     </div>
     <div class="footer-stat">
       <span class="stat-label">WAIT</span>
-      <span class="stat-value wait">{rackCount('WAIT')}</span>
+      <span class="stat-value wait">{waitCount}</span>
+    </div>
+    <div class="footer-stat">
+      <span class="stat-label">ERROR</span>
+      <span class="stat-value error">{errorCount}</span>
+    </div>
+    <div class="footer-source" title="Durum kaynağı backend beyanıdır">
+      {hasBackendStatus ? `KAYNAK: ${busLabel}` : 'KAYNAK YOK — HİÇBİR AJAN DURUMU OKUNMADI'}
     </div>
   </div>
 </div>
@@ -166,6 +182,21 @@
     padding-bottom: 8px;
     border-bottom: 1px solid rgba(212, 175, 55, 0.15);
     position: relative;
+  }
+
+  .stat-value.error {
+    color: #ef4444;
+  }
+
+  .footer-source {
+    width: 100%;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(212, 175, 55, 0.1);
+    font-size: 7px;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    text-align: center;
   }
 
   .rack-title {
@@ -341,6 +372,8 @@
 
   .rack-footer {
     display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
     justify-content: space-between;
     margin-top: 10px;
     padding-top: 8px;

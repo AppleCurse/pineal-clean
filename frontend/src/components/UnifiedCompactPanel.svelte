@@ -691,7 +691,7 @@
           {@const run = runs[agent.id]}<!-- [BOSS-10] 'depth_forensics' ölü anahtardı:
              backend koşu kaydını 'depth_analyst' adıyla yazar; ölü anahtar
              yüzünden derinlik ajanı HER durumda statik etiketi gösteriyordu. -->
-          {@const isCompleted = run?.status === 'completed'}
+          {@const isCompleted = run?.status === 'completed' || run?.status === 'completed_no_decision'}
           {@const isRunning = currentAgent === agent.id && ($isProcessing || taskState === 'processing')}
           {@const isHalted = run?.status === 'halted' || run?.status === 'failed'}
           {@const liveModel = run?.model || agent.primaryModel}

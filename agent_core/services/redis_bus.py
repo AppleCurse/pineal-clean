@@ -54,6 +54,19 @@ class RedisBus:
         self._client: Optional[Any] = None
         self._fallback = InMemoryBus()
         self._use_redis = False
+        self._connected = False
+
+    def connection_state(self) -> str:
+        """Gerçek taşıyıcı durumu: ``redis_bus`` | ``in_memory``.
+
+        [RÖNTGEN 2026-09-23] Agent Rack'in KAYNAK satırı eskiden yalnız
+        "tracker nesnesi var mı"ya bakıyordu: Redis'e hiç bağlanamamış bir
+        süreç bile UI'ya ``redis_bus`` diye beyan ediliyordu (etiket sahte,
+        veri gerçek). Bu metod ``connect()`` içinde PING ile doğrulanmış
+        bağlantı bayrağını okur — UI kaynağı taşıyıcının kendisine kadar
+        izlenebilir.
+        """
+        return "redis_bus" if (self._use_redis and self._connected) else "in_memory"
 
     async def connect(self) -> bool:
         if not HAS_REDIS:
@@ -71,11 +84,13 @@ class RedisBus:
                 self._client = sync_redis.from_url(self.redis_url, decode_responses=True)
                 self._client.ping()
             self._use_redis = True
+            self._connected = True
             logger.info(f"Redis baglandi: {self.redis_url}")
             return True
         except Exception as e:
             logger.warning(f"Redis baglanamadi ({self.redis_url}): {e}, in-memory fallback")
             self._use_redis = False
+            self._connected = False
             return False
 
     async def publish(self, channel: str, message: Dict[str, Any]) -> int:
@@ -129,6 +144,7 @@ class RedisBus:
                 await self._client.close()
         except Exception:
             pass
+        self._connected = False
 
 
 # Global singleton

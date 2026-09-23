@@ -62,9 +62,15 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
         )
     elif name == "VerifierReport":
         return VerifierReport(
-            verifications=[VerificationResult(claim_text="test", truth_status="TRUE", evidence_url="http", contradiction_detail="none")],
-            overall_authenticity_score=0.85,
-            status="VERIFIED"
+            verifications=[VerificationResult(
+                claim_text="Sadece pozitif enerji",
+                truth_status="DOĞRULANDI",
+                evidence_url="http://mock.com",
+                evidence_quote="Sadece pozitif enerji",
+            )],
+            overall_authenticity_score=1.0,
+            status="VERIFIED",
+            confidence=1.0,
         )
     elif name == "DigitalColdReading":
         return DigitalColdReading(
@@ -93,8 +99,18 @@ async def mock_query_json(prompt, schema=None, response_model=None, **kwargs):
         from agent_core.agents.autonomous_verifier import Claim
         return model(claims=[Claim(claim_text="Sadece pozitif enerji", category="bio")])
     elif name == "VerificationResult":
+        # [RÖNTGEN 2026-09-23] Jüri yanıtı kanıt kapısından geçer: evidence_url
+        # GERÇEKTEN dönen arama sonucu olmalı ve evidence_quote o kaynağın
+        # metninde birebir bulunmalı. Eskiden buraya "http" gibi çöp bir adres
+        # yazılıyordu ve kod bunu kanıt sayıp VERIFIED üretiyordu (uydurma
+        # kanıtla onay). Fixture artık gerçek arama sonucunu taklit ediyor:
+        # search mock'u http://mock.com + "Sadece pozitif enerji" döndürüyor.
         return VerificationResult(
-            claim_text="test", truth_status="DOĞRULANDI", evidence_url="http", contradiction_detail="none"
+            claim_text="Sadece pozitif enerji",
+            truth_status="DOĞRULANDI",
+            evidence_url="http://mock.com",
+            evidence_quote="Sadece pozitif enerji",
+            contradiction_detail="",
         )
     elif name == "AuthenticVectorResult":
         return model(

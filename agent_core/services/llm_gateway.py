@@ -399,13 +399,23 @@ def _failure_reason(exc: BaseException) -> str:
     return type(exc).__name__.upper()
 
 
-def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
+def _is_fallback_allowed(
+    exc: BaseException, *, json_mode: bool, route_scoped: bool = False
+) -> bool:
     """Decide whether a chain may move to the next model after ``exc``.
 
     Fallback is allowed for transient transport errors (timeout,
-    connection, 408/429/5xx), upstream 401/auth failures on a specific route,
-    and — in JSON mode — for genuine parse/schema failures. Auth, spend-cap,
-    unknown-pricing, paid-escalation, and model-unavailable rejections are guarded.
+    connection, 408/429/5xx), upstream 401/auth failures **on a specific
+    route**, and — in JSON mode — for genuine parse/schema failures. Auth on
+    the master (route-less) key, spend-cap, unknown-pricing, paid-escalation,
+    and model-unavailable rejections are guarded.
+
+    ``route_scoped``: hata belirli bir sağlayıcı rotasından mı geldi
+    (``route is not None``)? [RÖNTGEN 2026-09-23] Eskiden 401 koşulsuz
+    "geçici" sayılıyordu: OpenRouter MASTER anahtarı reddedildiğinde zincir
+    sıradaki 3 modeli de aynı geçersiz anahtarla deniyordu (ölçüldü: 3 çağrı).
+    Oysa `_is_retryable_error` 401/403'ü zaten KALICI sınıflandırıyor — iki
+    sınıflandırıcı çelişiyordu. Master anahtar hatası artık anında yükselir.
     """
     err = str(exc).lower()
     if isinstance(exc, SpendCapExceeded):
@@ -414,8 +424,14 @@ def _is_fallback_allowed(exc: BaseException, *, json_mode: bool) -> bool:
         return True
     if any(marker in err for marker in _FALLBACK_GUARD_MARKERS):
         return False
-    if any(marker in err for marker in ("401", "unauthorized", "invalid_api_key", "high demand", "overloaded")):
+    if any(marker in err for marker in ("high demand", "overloaded")):
         return True
+    if any(marker in err for marker in ("401", "unauthorized", "invalid_api_key")):
+        # Rota-kapsamlı auth hatası: o sağlayıcının KENDİ anahtarı geçersiz —
+        # başka taşıyıcı/rota gerçekten çalışabilir. Rota yoksa (master
+        # OpenRouter anahtarı) aynı anahtar zincirdeki tüm modeller için
+        # geçersizdir: düşmek yalnız zaman/kota yakar ve kök nedeni gizler.
+        return route_scoped
     if json_mode and isinstance(exc, (ValueError, TypeError, KeyError)):
         return True
     return LLMGateway._is_retryable_error(exc)
@@ -535,9 +551,13 @@ class LLMGateway:
             MODEL_REGISTRY["deepseek_v4_flash"],
         ],
         "friction_detector": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["deepseek_v4_pro"]],
+        # [RÖNTGEN 2026-09-23] simple tier = free-only (FAZ-2 ENFORCE, sahip Q2).
+        # Zincirdeki `google/gemini-3.7-flash` basamağı ÇALIŞAMAZ: tier kapısı
+        # onu `simple_non_free` gerekçesiyle reddediyor (ölçüldü: 0 rota teklifi).
+        # Yani RUNBOOK üç basamaklı bir merdiven belgelerken ortadaki basamak
+        # hiçbir koşulda koşmuyordu — ölü rota silindi.
         "passion_mapper": [
             MODEL_REGISTRY["gpt_oss_120b"],
-            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
         # FAZ-2-P3 (sahip onayı 2026-09-08, araştırma): resonance_synthesizer
@@ -555,16 +575,18 @@ class LLMGateway:
         "pineal_juror_google": [MODEL_REGISTRY["pineal_juror_google"]],
         "pineal_juror_claude": [MODEL_REGISTRY["pineal_juror_claude"]],
         "pineal_juror_open": [MODEL_REGISTRY["pineal_juror_open"]],
+        # [RÖNTGEN 2026-09-23] aynı gerekçe: simple tier'da paid gemini
+        # basamağı ölüydü (tier kapısı reddediyordu). Free-only zincir geri kuruldu.
         "autonomous_verifier_extract": [
             MODEL_REGISTRY["gpt_oss_120b"],
-            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
         "osint_investigator": [MODEL_REGISTRY["gemini_3_7_flash"], MODEL_REGISTRY["grok_4_6"], MODEL_REGISTRY["deepseek_v4_pro"]],
         "aspasia": [MODEL_REGISTRY["claude_sonnet_5"], MODEL_REGISTRY["gemini_3_7_flash"]],
+        # [RÖNTGEN 2026-09-23] simple tier: ölü paid basamak kaldırıldı
+        # (yukarıdaki passion_mapper notuyla aynı gerekçe).
         "lilith_growth": [
             MODEL_REGISTRY["gpt_oss_120b"],
-            MODEL_REGISTRY["gemini_3_7_flash"],
             MODEL_REGISTRY["laguna_s_2_1_free"],
         ],
         "authenticity_auditor": [
@@ -3088,7 +3110,9 @@ class LLMGateway:
                             self._note_route_health(route.provider_id, ok=True)
                         return result
                     except Exception as e:
-                        if not _is_fallback_allowed(e, json_mode=False):
+                        if not _is_fallback_allowed(
+                            e, json_mode=False, route_scoped=route is not None
+                        ):
                             self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
                             raise
                         if route is not None:
@@ -3157,7 +3181,9 @@ class LLMGateway:
                             self._note_route_health(route.provider_id, ok=True)
                         return result
                     except Exception as e:
-                        if not _is_fallback_allowed(e, json_mode=True):
+                        if not _is_fallback_allowed(
+                            e, json_mode=True, route_scoped=route is not None
+                        ):
                             self._annotate_most_recent(tried, fallback_reason=_failure_reason(e))
                             raise
                         if route is not None:

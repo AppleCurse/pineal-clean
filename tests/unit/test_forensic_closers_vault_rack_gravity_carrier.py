@@ -4,13 +4,12 @@ Kilitler:
   V1. `_check_vault_interlock` dosya VARLIĞIYLA açılmaz; gerçek anahtar
       malzemesi ister, placeholder fail-closed reddedilir.
   V2. `/api/vault` placeholder anahtarı 400 ile reddeder, bayrak kurmaz.
-  R1. `_AGENT_RACK_MAP` birebirdir: hiçbir raf slotuna iki ajan yazmaz;
-      yardımcılar (shadow/7pillar/vision) kendi slotunu boyar.
-  R2. `_rack_update` senkron-yedek yolu gerçekten yazar (ölü kod değil).
+  R1/R2. (main birleşmesinde taşındı: tests/integration/test_agent_rack_wiring.py
+      None-eşleme + döngüsüz-log sözleşmelerini kilitler.)
   G1. GRAVITY eşit (pull, mass) durumunda alfabetik tie-breaker uygular;
       çıktı PYTHONHASHSEED'den bağımsızdır (alt-süreç kanıtı).
-  T1. `/api/agents/status` `source` alanı canlı ping'e bağlıdır:
-      Redis yanıt veriyorsa `redis_bus`, vermiyorsa `in_memory`.
+  T1. `/api/agents/status` `source` alanı taşıyıcının `connection_state()`
+      beyanına bağlıdır: `redis_bus` | `in_memory` (+ `fallback`/`error`).
 """
 
 import json
@@ -24,7 +23,6 @@ import pytest
 
 import backend.api as api
 from agent_core.engines.gravity_engine import GravityEngine
-from agent_core.task_executor import PinealExecutor
 
 
 # ---------------------------------------------------------------- V1: interlock
@@ -190,38 +188,7 @@ async def test_api_vault_skips_placeholder_provider_keys(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------- R1/R2: raf kablolama
-
-def test_rack_map_is_one_to_one_no_borrowed_slots():
-    from agent_core.services.agent_status_tracker import AGENT_DEFINITIONS
-
-    rack_ids = {a["id"] for a in AGENT_DEFINITIONS}
-    assert len(rack_ids) == 12
-    mapping = PinealExecutor._AGENT_RACK_MAP
-    writers: dict = {}
-    for agent, slot in mapping.items():
-        writers.setdefault(slot, []).append(agent)
-    for slot in rack_ids:
-        assert len(writers.get(slot, [])) <= 1, (
-            f"raf slotu '{slot}' birden fazla yazar taşıyor: {writers[slot]}")
-    # Yardımcılar kendi slotunu boyar; raf slotlarını ödünç almaz.
-    assert mapping["shadow_executor"] == "shadow_executor"
-    assert mapping["pineal_7pillar"] == "pineal_7pillar"
-    assert mapping["vision_analyzer"] == "vision_analyzer"
-    # Gerçek sahipler slotlarında.
-    assert mapping["depth_analyst"] == "depth_analyst"
-    assert mapping["pattern_interrupt"] == "pattern_interrupt"
-
-
-def test_rack_update_sync_fallback_writes_known_slot():
-    from agent_core.services.agent_status_tracker import AgentStatusTracker
-
-    executor = PinealExecutor.__new__(PinealExecutor)
-    tracker = AgentStatusTracker.__new__(AgentStatusTracker)
-    tracker._statuses = {"depth_analyst": {"status": "Wait"}}
-    executor._agent_tracker = tracker
-    # Senkron testte çalışan loop YOKTUR -> yedek yol devreye girer.
-    executor._rack_update("depth_analyst", "active")
-    assert tracker._statuses["depth_analyst"]["status"] == "active"
+# (main birleşmesinde taşındı: tests/integration/test_agent_rack_wiring.py.)
 
 
 # ------------------------------------------------------- G1: gravity determinizmi
@@ -291,55 +258,6 @@ def test_gravity_stable_across_hash_seeds(tmp_path):
 
 # ------------------------------------------------------- T1: taşıyıcı dürüstlüğü
 
-async def test_redis_transport_live_ping_matrix():
-    assert await api._redis_transport_live(None) is False
-
-    class NoRedis:
-        _use_redis = False
-        _client = object()
-
-    assert await api._redis_transport_live(NoRedis()) is False
-
-    class NoClient:
-        _use_redis = True
-        _client = None
-
-    assert await api._redis_transport_live(NoClient()) is False
-
-    class Dead:
-        _use_redis = True
-
-        class Client:
-            def ping(self):
-                raise ConnectionError("down")
-
-        _client = Client()
-
-    assert await api._redis_transport_live(Dead()) is False
-
-    class AsyncLive:
-        _use_redis = True
-
-        class Client:
-            async def ping(self):
-                return True
-
-        _client = Client()
-
-    assert await api._redis_transport_live(AsyncLive()) is True
-
-    class SyncLive:
-        _use_redis = True
-
-        class Client:
-            def ping(self):
-                return True
-
-        _client = Client()
-
-    assert await api._redis_transport_live(SyncLive()) is True
-
-
 async def test_agents_status_reports_in_memory_without_redis():
     assert api.HAS_AGENT_RACK and api.get_tracker is not None
     tracker = api.get_tracker()
@@ -359,19 +277,14 @@ async def test_agents_status_reports_in_memory_without_redis():
     assert resp["count"] >= 12
 
 
-async def test_agents_status_reports_redis_bus_when_ping_ok():
+async def test_agents_status_reports_redis_bus_when_bus_declares_redis():
     assert api.HAS_AGENT_RACK and api.get_tracker is not None
     tracker = api.get_tracker()
     original_bus = tracker.redis_bus
 
     class LiveBus:
-        _use_redis = True
-
-        class Client:
-            async def ping(self):
-                return True
-
-        _client = Client()
+        def connection_state(self):
+            return "redis_bus"
 
     tracker.redis_bus = LiveBus()
     try:

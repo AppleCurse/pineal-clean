@@ -118,6 +118,10 @@ pub mod live {
             Ok(())
         }
 
+        // [RÖNTGEN 2026-09-23] `set_all_ready` KALDIRILDI: hiçbir ajan
+        // koşmadan 12 slotu birden "Ready" ilan etmek ölçülmeyen bir durum
+        // iddiasıdır (Python tarafındaki AgentStatusTracker.set_all_ready ile
+        // aynı kusur). Ready yalnız gerçek bir ajan geçişinde yazılır.
     }
 }
 
