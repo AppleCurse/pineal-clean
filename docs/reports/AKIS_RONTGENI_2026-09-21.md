@@ -2,11 +2,11 @@
 
 **Tarih:** 2026-09-21 · **HEAD:** `2edc9bb` (main) · **Çalışma dalı:** `arena/01a0c190-pineal-clean`
 **Kapsam:** Beş kritik geçiş noktası, kod + çalıştırma kanıtı. **Hiçbir üretim kodu değiştirilmedi.**
-**Ölçüm aracı:** `scripts/flow_roentgen.py` (bu raporla birlikte repoda; canlı LLM çağrısı yapmaz,
+**Ölçüm aracı:** `scripts/archive/flow_roentgen.py` (bu raporla birlikte repoda; canlı LLM çağrısı yapmaz,
 üretim belleğine yazmaz, tüm durumu geçici dizine kurar).
 
 ```bash
-python scripts/flow_roentgen.py --mode all --out /tmp/rontgen.json
+python scripts/archive/flow_roentgen.py --mode all --out /tmp/rontgen.json
 ```
 
 **Ortam doğrulaması:** `pytest tests/unit tests/integration` → **1037 passed, 4 skipped, 0 failed**.
@@ -490,7 +490,7 @@ entities" senaryosu) — reponun "sahte veri üretme" doktriniyle çelişiyor.
   preflight ölçümlerinden alıntı), Playwright kazıma, Tauri/Android istemcileri, gerçek
   üretim `.env` değerleri.
 - **Değiştirilmedi:** hiçbir üretim dosyası. Eklenen iki dosya: bu rapor +
-  `scripts/flow_roentgen.py` (teşhis aracı, üretim kodundan bağımsız çalışır).
+  `scripts/archive/flow_roentgen.py` (teşhis aracı, üretim kodundan bağımsız çalışır).
 
 ## 8. KANIT KOMUTLARI (yeniden üretilebilir)
 
@@ -501,7 +501,7 @@ entities" senaryosu) — reponun "sahte veri üretme" doktriniyle çelişiyor.
 python scripts/generate_routing_shadows.py && git diff --exit-code  # temiz
 
 # Ölçüm (canlı LLM yok, üretim belleğine yazmaz)
-python scripts/flow_roentgen.py --mode all --out /tmp/rontgen.json
+python scripts/archive/flow_roentgen.py --mode all --out /tmp/rontgen.json
 
 # Bu raporun başlıca statik izleri
 grep -rn "pineal-web-search\|pineal-verifier-panel\|pineal-osint-pipeline\|local-numpy" --include=*.py .

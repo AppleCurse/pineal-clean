@@ -77,6 +77,15 @@ def _append_upstream_finding(input_data: dict, agent: str, core: str) -> None:
 
 class PinealExecutor:
     # v5.0 Agent Rack mapping - task_executor agent names to Agent Rack IDs
+    # [FORENSIC RACK-WIRING] BİREBİR slot eşlemesi. Eskiden `shadow_executor`
+    # DEPTH ANALYST slotunu, `pineal_7pillar` + `vision_analyzer` ise PATTERN
+    # INTERRUPT slotunu boyuyordu (ödünç slot): o ajanların gerçek durumları
+    # ekrandan izlenemiyor, bir ajanın aktivitesi başka ajanın slotunda
+    # görünüyordu. Artık her yürütücü KENDİ slotunu boyar; yardımcılar
+    # tracker'da kendi dinamik slotlarını açar, 12'li rafın slotlarını
+    # ASLA ezmez.
+    # (`resonance_calc` -> `resonance_calculator` gerçek bir 1:1 yeniden
+    # adlandırmadır; o slota başka ajan yazmaz.)
     _AGENT_RACK_MAP = {
         "mirror_truth": "mirror_truth",
         "autonomous_verifier": "autonomous_verifier",
@@ -183,9 +192,6 @@ class PinealExecutor:
             )
         except Exception as exc:
             self._log("WARNING", f"Agent Rack güncellenemedi ({rack_id}): {exc}")
-
-    def _rack_update_sync(self, agent_name: str, status: str):
-        self._rack_update(agent_name, status)
 
     @staticmethod
     def _finding_core(result: Any, limit: int = 280) -> str:
