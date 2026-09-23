@@ -804,3 +804,94 @@ cargo / gradle                      : sandbox'ta KURULAMADI → CI job'ları (ru
 8.6 (yeni katman = yeni özellik; direktif gereği ertelendi). Rust `data_score` portu
 derlenmeden "çalışıyor" sayılmadı: önce commit'lendi, kanıt sonra CI'dan alındı
 ([run 35869787922](https://github.com/AppleCurse/pineal-epifiz/actions/runs/35869787922) → `rust-core` **success**; aynı koşuda 5 job'ın 5'i yeşil).
+
+---
+
+## 14. 3. TUR — `main` İLE BİRLEŞME, `main`'İN KIRMIZI ÖLÇÜMÜ VE CLOUDFLARE WORKERS BUILDS
+
+### 14.1 Paralel denetim `main`'e girmişti: 10 dosyada çakışma, çözüm politikası
+
+Bu dal `91c3545`'ten açıldı; denetim sürerken `main` **bağımsız koşan paralel bir
+denetimin** iki commit'ini aldı: `ce1ac74` (telemetry simülasyonunun silinmesi) ve
+`481edb8` (entailment kapısı + determinizm). Aynı kusurlar iki kez düzeltildiği için
+10 dosyada çakışma çıktı. Çözüm kör `ours/theirs` DEĞİL, dosya dosya karşılaştırmaydı
+(tam gerekçeler merge commit `79580ec` mesajında):
+
+* 9 dosyada bu dalın sürümü **kanıtlanmış üst-küme**. Örnek ölçüler: entailment destek
+  oranı eşiği **0.50** (main: 0.20 token örtüşmesi), koltuk başına denetim izi
+  (`vote_audit` / `invalid_votes` / `seat_errors` — sessiz yutma yok), entailment kilidi
+  **15 test** (main: 7), determinizm kilidi **12 test** (main: 1), Rust'ta
+  `evidence_coverage` + `NO_VERIFIED_CLAIM` fail-closed halt.
+* `backend/api.py`'de **main'den tek parça taşındı**: `InitiatePayload`
+  `rituals/playlist/envies` → `default=""`. Bu dalda o default yoktu; istemci bu üç
+  alanı göndermezse **422** alıyordu. (Davranış düzeltmesi, taviz değil.)
+* `frontend/src/components/visualizers/NeuralTelemetryBoard.svelte`: iki tarafın sürümü
+  **bayt bayt aynı** (`git diff HEAD origin/main -- …` → 0 satır). `AgentOrchestrator.svelte`
+  ve `WaterHoseVisualizer.svelte` iki tarafta da silinmiş. Yani iki denetim aynı sonuca
+  bağımsız ulaştı — bu, bulguların doğruluğu için ek kanıttır.
+
+### 14.2 Ölçüm: `main` KIRMIZI, bu dal YEŞİL
+
+`main` HEAD'inde (`481edb8`) GitHub Actions `backend` job'ı **failure** (bu yüzden
+`smoke` skipped). Job logu bu sandbox'tan indirilemedi
+(`results-receiver.actions.githubusercontent.com` → `EOF`), bu yüzden kırmızı
+**yerelde yeniden üretildi**: `git worktree add … 481edb8` + CI'ın kurduğu ağacın
+kendisi (`requirements.lock`) + CI komutu.
+
+| Ağaç | Sonuç |
+|---|---|
+| `main` @ `481edb8` | **7 failed / 1260 passed / 2 skipped** |
+| bu dal @ `79580ec` (main ile birleşmiş) | **0 failed / 1346 passed / 2 skipped**, kapsam %83.38 |
+
+`main`'deki 7 kırmızı ve bu daldaki karşılığı:
+
+| `main`'de kırmızı | Kök neden | Bu dalda |
+|---|---|---|
+| `test_auditor_round2_findings::test_extract_username_accepts_real_profile` | `@handle` kısayolu P1-6 regresyonu (host'suz girdi Instagram hedefi sayılıyordu) | `platform_registry` fail-closed (§2.3) |
+| `test_config_contract::test_critical_agents_single_source_is_pipeline_list` | `critical_agents` ↔ `graceful_degradation` çelişkisi | çelişki yasağı kilidi + **sahip kararı 8.1** |
+| `test_agent_model_policy::test_specialist_agent_chains_are_explicit` | snapshot farklı birincil istiyordu | koşan gerçeğe eşitlendi + **sahip kararı 8.2** |
+| `test_task_routing_step1::test_gateway_matrix_and_task_fallback_untouched` | 2 basamaklı `friction_detector` snapshot'ı | **sahip kararı 8.3** + RUNBOOK gölgeleri yeniden üretildi |
+| `test_tier_variant_gate::test_t1_faz2_simple_chains_free_only_static_golden` | simple zincirlerde ölü paid basamak | ölü basamak silindi; CI'da `generate_routing_shadows.py` + `git diff --exit-code` yeşil |
+| `test_llm_gateway::test_model_substitution_allowed_semantics` | ikame toleransı gevşek | `final_routing_policy` sıkılaştırıldı |
+| `test_model_chains::test_query_chain_auth_error_does_not_fallback` | AUTH hatası fallback'e düşüyordu | AUTH fail-fast rota-kapsamlı |
+
+Dürüstlük ayrımı: 7 maddenin **3'ü** (8.1/8.2/8.3) test beklentisinin koşan gerçeğe
+eşitlenmesidir ve üçü de sahibe tek tek sorulup onaylandı (§13). Kalan **4'ü** davranış
+düzeltmesidir.
+
+### 14.3 Cloudflare `Workers Builds` kırmızısı: kök neden ölçüldü, depo tarafı düzeltildi
+
+PR'da `mergeStateStatus: UNSTABLE` görünüyor; sebebi GitHub Actions değil, iki
+Cloudflare check'i: `Workers Builds: pineal-clean` ve `Workers Builds: pineal-gland`.
+İkisi de **`main` HEAD'inde zaten failure** (ölçüldü: `481edb8` check-runs) — yani bu
+daldan bağımsız, önceden var olan bir durum. Cloudflare loglarına erişim yok, bu yüzden
+kök neden **yerelde ölçüldü**:
+
+| Ölçüm | Sonuç |
+|---|---|
+| kök `package.json` | VAR, adı `pineal-clean` (CF projesiyle aynı ad), `build`: `npm --prefix frontend install && … run build` |
+| kök `package-lock.json` | **YOK** → `npm ci` (kök) **sert hata** ile düşüyor. CF derlemesi `npm ci` kullanıyorsa ilk adımda ölür |
+| `.nvmrc` / `engines` | **YOK** → Node sürümü CF varsayılanına kalıyor. Ağaç `vite 6` + `svelte 5` + `typescript 6` istiyor (CI Node **22** ile derliyor) |
+| `wrangler pages functions build ./functions` | **"✨ Compiled Worker successfully"** → Pages Functions sağlıklı |
+| `wrangler deploy --dry-run` | **HATA**: "no code to deploy … add `main = "src/index.ts"` veya `[assets] directory`". Depo **Pages-tipi** yapılandırma (`pages_build_output_dir = "frontend/dist"`); Workers-tipi (static assets) bir proje bu depoyu derleyemez |
+| `pineal-gland` | depoda HİÇBİR izi yok (kök `package.json` adı `pineal-clean`) → bu projenin derleme ayarı yalnız CF panelinde |
+
+**Yapılan düzeltme (yalnız depo tarafı, ölçüldü):**
+
+* kök `package-lock.json` **üretildi** (lockfileVersion 3) → `npm ci` (kök) artık
+  **"up to date"** ile geçiyor (önceden sert hata).
+* kök `build` betiği deterministik yapıldı: `npm ci --prefix frontend && npm run build
+  --prefix frontend` (önceden `npm install` — çözümlenmemiş sürüm aralıkları).
+  `frontend/package-lock.json`'ın senkron olduğu CI'ın `npm ci` adımının yeşil olmasıyla
+  zaten kanıtlı.
+* `.nvmrc` = `22` + `package.json` `engines.node = ">=20.19 <23"` → CF derlemesi CI ile
+  aynı Node'a sabitlenir.
+* Ölçülen sonuç: kökte `npm ci && npm run build` → `frontend/dist` üretildi ve
+  `PINEAL-HERETIC` işareti dist içinde VAR.
+
+**İDDİA EDİLMEYEN:** "Workers Builds yeşile döndü" denmiyor — CF panelindeki derleme
+komutu ve proje tipi (Pages mi Workers mi) buradan görülemiyor. Kanıt, bu commit'in
+PR'daki check'lerinden alınacak. Eğer o projeler **Workers-tipi** ise depo tarafında
+`main` + `[assets]` gerekir (yukarıdaki `wrangler deploy --dry-run` hatası bunu söylüyor);
+bu, `pages_build_output_dir` + `functions/` ile çalışan Pages yolunu bozabileceği için
+**spekülatif olarak eklenmedi** — proje sahibinin CF panelinde tip seçmesi gerekir.
