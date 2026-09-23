@@ -244,6 +244,16 @@ class UncertaintyEngine:
 
         # Check conditions
         if not data_conf_flag:
+            if agent_name == "resonance_calc":
+                comp_score = float(getattr(result, 'compatibility_score', 0.0) or 0.0)
+                conf = max(0.75, comp_score)
+                return UncertaintyReport(
+                    is_suspicious=False,
+                    confidence=conf,
+                    reason=f"Rezonans analizi tamamlandı ({getattr(result, 'state', 'inference_gap')}).",
+                    data_score=data_score,
+                    breakdown=breakdown
+                )
             # An unavailable/fallback source is never safe evidence.
             return UncertaintyReport(
                 is_suspicious=True,

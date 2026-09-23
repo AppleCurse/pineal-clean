@@ -118,36 +118,38 @@ def test_prune_mixed_terminal_trimmed_active_kept():
 def test_initiate_rejected_when_room_saturated_of_active():
     """Doymuş oda (aktif > tavan) -> /api/initiate 503 ACTIVE_TASKS_FULL;
     terminal yoğunluğu doyma YARATMAZ."""
+    from unittest.mock import patch
     from agent_core.domain.memory_models import TaskSnapshot
     from backend import api
 
     api.app.state.rooms.clear()
     try:
-        with TestClient(api.app, raise_server_exceptions=False) as client:
-            room = api.get_room("n1-503")
-            room.setdefault("active_tasks", {})
-            room.setdefault("_active_tasks_ts", {})
-            for i in range(260):
-                snap = TaskSnapshot(task_id=f"op_p_{i:04d}", status="processing")
-                room["active_tasks"][snap.task_id] = snap
-                room["_active_tasks_ts"][snap.task_id] = time.monotonic()
-            r = client.post("/api/initiate", json={
-                "client_id": "n1-503", "url": "https://www.instagram.com/x",
-                "rituals": "", "playlist": "", "envies": "",
-            })
-            assert r.status_code == 503, f"doymuş oda 503 vermedi: {r.status_code} {r.text[:80]}"
-            assert r.json()["error"]["code"] == "ACTIVE_TASKS_FULL"
+        with patch("backend.api._check_vault_interlock", return_value=True):
+            with TestClient(api.app, raise_server_exceptions=False) as client:
+                room = api.get_room("n1-503")
+                room.setdefault("active_tasks", {})
+                room.setdefault("_active_tasks_ts", {})
+                for i in range(260):
+                    snap = TaskSnapshot(task_id=f"op_p_{i:04d}", status="processing")
+                    room["active_tasks"][snap.task_id] = snap
+                    room["_active_tasks_ts"][snap.task_id] = time.monotonic()
+                r = client.post("/api/initiate", json={
+                    "client_id": "n1-503", "url": "https://www.instagram.com/x",
+                    "rituals": "", "playlist": "", "envies": "",
+                })
+                assert r.status_code == 503, f"doymuş oda 503 vermedi: {r.status_code} {r.text[:80]}"
+                assert r.json()["error"]["code"] == "ACTIVE_TASKS_FULL"
 
-            room2 = api.get_room("n1-term")
-            room2.setdefault("active_tasks", {})
-            room2.setdefault("_active_tasks_ts", {})
-            for i in range(300):
-                snap = TaskSnapshot(task_id=f"op_t_{i:04d}", status="completed")
-                room2["active_tasks"][snap.task_id] = snap
-                room2["_active_tasks_ts"][snap.task_id] = time.monotonic()
-            assert api._active_tasks_full(room2) is False, (
-                "terminal yoğunluğu doyma yarattı (503 sızması)"
-            )
+                room2 = api.get_room("n1-term")
+                room2.setdefault("active_tasks", {})
+                room2.setdefault("_active_tasks_ts", {})
+                for i in range(300):
+                    snap = TaskSnapshot(task_id=f"op_t_{i:04d}", status="completed")
+                    room2["active_tasks"][snap.task_id] = snap
+                    room2["_active_tasks_ts"][snap.task_id] = time.monotonic()
+                assert api._active_tasks_full(room2) is False, (
+                    "terminal yoğunluğu doyma yarattı (503 sızması)"
+                )
     finally:
         api.app.state.rooms.clear()
         api._rooms_last_seen.clear()

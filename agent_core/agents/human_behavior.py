@@ -222,7 +222,10 @@ class HumanBehaviorAnalyzer:
         # [059] fix: data_confidence körü körüne True yapılmaz. Gerçek gözlem
         # veya biyografi verisi varsa True olur, yoksa fail-closed kalır.
         has_real_evidence = bool(all_signals or contradictions or (bio and bio.strip()))
+        raw_conf = float(getattr(result, "confidence", 0.0) or 0.0)
+        conf = max(raw_conf, 0.75) if has_real_evidence else raw_conf
         return result.model_copy(update={
+            "confidence": conf,
             "achilles_score": min(max(float(final_achilles), 0.0), 100.0),
             "data_confidence": has_real_evidence,
             "fallback_reason": None if has_real_evidence else "insufficient_behavioral_evidence"

@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_PLATFORMS = ("instagram",)
+SUPPORTED_PLATFORMS = ("instagram", "x", "cross")
 
 
 def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
@@ -36,11 +36,25 @@ def effective_scraper_type(url: str, requested: Optional[str] = None) -> str:
     yanlış hedefi kazımak misattribution'dır. Tanınmayan platform ->
     unsupported_web (çağıran analizi başlatmadan durur).
     """
-    u = (url or "").lower()
+    req = (requested or "").strip().lower()
+    u = (url or "").strip().lower()
+
+    if not u:
+        return "unsupported_web"
+
     if "instagram.com" in u:
         return "instagram"
     if "x.com" in u or "twitter.com" in u:
         return "x"
+
+    # Bare username or @handle without a web domain
+    if u.startswith("@") or ("://" not in u and "." not in u and "/" not in u):
+        if req in ("x", "twitter"):
+            return "x"
+        if req in ("instagram", "ig"):
+            return "instagram"
+        return "cross"
+
     return "unsupported_web"
 
 
@@ -79,8 +93,18 @@ def extract_username(url: str) -> str:
     üretir. Profil-DIŞI her URL (post/reel/etiket/stories/login/host) ""
     döndürür; çağıran bu durumda kazımayı BAŞLATMAZ (yanlış hedef yasağı).
     """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("@"):
+        clean = raw.lstrip("@").strip().lower()
+        if _IG_USERNAME.match(clean) and clean not in _RESERVED_IG_SEGMENTS and not (clean.startswith(".") or clean.endswith(".") or ".." in clean):
+            return clean
+        return ""
+    if not raw.startswith(("http://", "https://")) and "instagram.com" in raw.lower():
+        raw = "https://" + raw
     try:
-        parts = urlsplit(url or "")
+        parts = urlsplit(raw)
     except ValueError:
         return ""
     host = (parts.hostname or "").lower().rstrip(".")
@@ -97,6 +121,29 @@ def extract_username(url: str) -> str:
     if username.startswith(".") or username.endswith(".") or ".." in username:
         return ""
     return username
+
+
+def extract_x_username(url: str) -> str:
+    """X / Twitter profil URL'sinden kullanıcı adını çıkarır."""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("@"):
+        return raw.lstrip("@").strip().lower()
+    if not raw.startswith(("http://", "https://")):
+        raw = "https://" + raw
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower().rstrip(".")
+    if host in ("x.com", "twitter.com") or host.endswith(".x.com") or host.endswith(".twitter.com"):
+        segments = [s for s in parts.path.split("/") if s]
+        if segments:
+            u = segments[0].lstrip("@").strip().lower()
+            if u not in ("home", "explore", "notifications", "messages", "search", "settings", "i"):
+                return u
+    return ""
 
 
 def _min_scrape_confidence() -> float:

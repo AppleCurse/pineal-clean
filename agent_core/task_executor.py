@@ -76,6 +76,25 @@ def _append_upstream_finding(input_data: dict, agent: str, core: str) -> None:
 
 
 class PinealExecutor:
+    # v5.0 Agent Rack mapping - task_executor agent names to Agent Rack IDs
+    _AGENT_RACK_MAP = {
+        "mirror_truth": "mirror_truth",
+        "autonomous_verifier": "autonomous_verifier",
+        "human_behavior": "human_behavior",
+        "passion_mapper": "passion_mapper",
+        "friction_detector": "friction_detector",
+        "cognitive_profiler": "cognitive_profiler",
+        "resonance_calc": "resonance_calculator",
+        "pattern_interrupt": "pattern_interrupt",
+        "osint_investigator": "osint_investigator",
+        "authenticity_auditor": "authenticity_auditor",
+        "depth_analyst": "depth_analyst",
+        "resonance_synthesizer": "resonance_synthesizer",
+        "shadow_executor": "depth_analyst",  # shadow -> depth slot fallback
+        "pineal_7pillar": "pattern_interrupt",
+        "vision_analyzer": "pattern_interrupt",
+    }
+
     def __init__(self, log_callback=None, emit_event_callback=None, snapshot_callback=None):
         self._log = log_callback or (lambda level, msg: None)
         self._emit = emit_event_callback or (lambda evt: None)
@@ -104,14 +123,35 @@ class PinealExecutor:
             "shadow_executor": ShadowExecutor(llm_gateway=self.llm_gateway),
             "depth_analyst": DepthAnalyst(self.llm_gateway),
         }
-        # [SEC FIX] Interpreter (Open Interpreter kod-icra yığını) varsayılan
-        # registry'de YOKTUR; yalnızca açıkça ENABLE_INTERPRETER=true ile
-        # yüklenir. Ana pipeline rotası da bu ajanı artık planlamaz
-        # (cognitive_router). /api/experimental/interpreter/execute zaten
-        # aynı env kapısıyla varsayılan 403 döner.
-        import os as _os
-        if _os.getenv("ENABLE_INTERPRETER", "false").lower() == "true":
+        import os as _os2
+        if _os2.getenv("ENABLE_INTERPRETER", "false").lower() == "true":
             self.agents["interpreter"] = InterpreterAgent(self.llm_gateway)
+        # Agent Rack tracker - optional, graceful degrade
+        self._agent_tracker = None
+        try:
+            from agent_core.services.agent_status_tracker import get_tracker
+            self._agent_tracker = get_tracker()
+        except Exception:
+            self._agent_tracker = None
+
+    def _rack_update(self, agent_name: str, status: str):
+        """Agent Rack durum guncelle - sync wrapper for async tracker"""
+        rack_id = self._AGENT_RACK_MAP.get(agent_name, agent_name)
+        if self._agent_tracker is None:
+            return
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._agent_tracker.update_status(rack_id, status, {"task_agent": agent_name}))
+            except RuntimeError:
+                if hasattr(self._agent_tracker, 'statuses') and rack_id in self._agent_tracker.statuses:
+                    self._agent_tracker.statuses[rack_id].status = status
+        except Exception:
+            pass
+
+    def _rack_update_sync(self, agent_name: str, status: str):
+        self._rack_update(agent_name, status)
 
     @staticmethod
     def _finding_core(result: Any, limit: int = 280) -> str:
@@ -518,6 +558,7 @@ class PinealExecutor:
         raw_imgs = input_data.get("target_profile", {}).get("images", [])
         if raw_imgs and isinstance(raw_imgs, list) and len(raw_imgs) > 0 and isinstance(raw_imgs[0], str) and raw_imgs[0].startswith("http"):
             self._log("INFO", f"[{task_id}] MULTIMODAL VISION: {len(raw_imgs)} fotoğraf görsel zeka ile inceleniyor...")
+            self._rack_update("vision_analyzer", "active")
             try:
                 target_bio = input_data.get("target_profile", {}).get("bio", "")
                 with self._capture_llm_calls(task_id, "vision_analyzer") as vision_scope:
@@ -528,11 +569,13 @@ class PinealExecutor:
                     "vision_analyzer", visual_ev, vision_scope.records
                 )
                 self._log("INFO", f"[{task_id}] GÖRSEL KANIT: {visual_ev.visual_evidence_summary}")
+                self._rack_update("vision_analyzer", "ready")
                 # [FIX #3] Görsel kanıtları upstream bütçesine ekle.
                 _core = self._finding_core(visual_ev)
                 if _core:
                     _append_upstream_finding(input_data, "vision_analyzer", _core)
             except Exception as e:
+                self._rack_update("vision_analyzer", "wait")
                 self._log("WARNING", f"[{task_id}] Vision analizi atlandı: {str(e)[:80]}")
 
         # [FIX #1] OSINT DISCOVERY FAZINA TAŞINDI. Eski konum tüm ajan
@@ -544,6 +587,7 @@ class PinealExecutor:
         # gerektirmez), taşımak güvenli.
         _tp = input_data.get("target_profile", {}) or {}
         if _tp.get("username") or _tp.get("name"):
+            self._rack_update("osint_investigator", "active")
             try:
                 with self._capture_llm_calls(task_id, "osint_investigator") as osint_scope:
                     osint_result = await self.agents["osint_investigator"].execute(input_data)
@@ -568,11 +612,13 @@ class PinealExecutor:
                 # ajan promptları okuyabilir.
                 input_data["public_osint"] = status.osint_footprint
                 self._log("INFO", f"[{task_id}] DİJİTAL AYAK İZİ: Platform varlık skorlaması yapıldı (discovery)")
+                self._rack_update("osint_investigator", "ready")
                 # [FIX #3] OSINT bulgusunu upstream bütçesine ekle.
                 _core = self._finding_core(osint_result)
                 if _core:
                     _append_upstream_finding(input_data, "osint_investigator", _core)
             except Exception as e:
+                self._rack_update("osint_investigator", "wait")
                 status.agent_runs["osint_investigator"] = AgentRun(
                     task_id=task_id, agent_name="osint_investigator", status="failed",
                     started_at=datetime.now(timezone.utc), completed_at=datetime.now(timezone.utc),
@@ -583,6 +629,7 @@ class PinealExecutor:
         # GÖREV 2.3/2.4: psikodinamik derinlik motoru (deterministik).
         # Metin yoksa agirlik otomatik gorsel+zamansala kayar; motor ASLA
         # halt etmez (hic kanal yoksa no_evidence verdict'i doner).
+        self._rack_update("depth_analyst", "active")
         try:
             from agent_core.services.psychodynamic_depth import analyze_depth
             depth_res = analyze_depth(input_data)
@@ -596,7 +643,9 @@ class PinealExecutor:
                 f"telafi={depth_res.get('compensation_index')} "
                 f"reaksiyon={depth_res.get('reaction_formation_index')}"
             )
+            self._rack_update("depth_analyst", "ready")
         except Exception as e:
+            self._rack_update("depth_analyst", "wait")
             self._log("WARNING", f"[{task_id}] Derinlik motoru atlandı: {str(e)[:80]}")
 
         # HÜKÜM-MÜHÜR: derinlik özeti kanonik kanıta yazılır (salt-okur
@@ -643,6 +692,7 @@ class PinealExecutor:
         # --- PINEAL DETERMINISTIC 7-PILLAR ---
         pillar_start = datetime.now(timezone.utc)
         self._log("INFO", f"[{task_id}] 7-PILLAR analizi başlatılıyor...")
+        self._rack_update("pineal_7pillar", "active")
         try:
             from agent_core.engines.pillar_orchestrator import PillarOrchestrator
 
@@ -705,8 +755,10 @@ class PinealExecutor:
                 },
             )
             self._log("INFO", f"[{task_id}] 7-PILLAR tamamlandı ({elapsed_ms}ms)")
+            self._rack_update("pineal_7pillar", "ready")
             self._snapshot(status)
         except Exception as e:
+            self._rack_update("pineal_7pillar", "wait")
             error_time = datetime.now(timezone.utc)
             # [BOSS-8] Zaman aşımı ayrı kodla raporlanır.
             error_code = "AGENT_TIMEOUT" if isinstance(e, AgentTimeoutError) else type(e).__name__
@@ -763,6 +815,7 @@ class PinealExecutor:
                     raise KeyError("Bilinmeyen yetenek: " + agent_name)
                 status.current_agent = agent_name
                 self._log("WARNING", "[" + task_id + "] AGENT " + agent_name + ": calisiyor")
+                self._rack_update(agent_name, "active")
                 
                 run = AgentRun(
                     task_id=task_id,
@@ -809,6 +862,7 @@ class PinealExecutor:
                         run.error_code = type(e).__name__
                         self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
                     run.error_message = str(e)[:200]
+                    self._rack_update(agent_name, "wait")
 
                     if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                         status.status = "halted_critical"
@@ -837,6 +891,7 @@ class PinealExecutor:
                     run.status = "halted"
                     run.error_code = "LOW_CONFIDENCE"
                     run.error_message = halt_reason
+                    self._rack_update(agent_name, "wait")
                     
                     if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                         status.halted_reason = halt_reason
@@ -920,10 +975,9 @@ class PinealExecutor:
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
+                self._rack_update(agent_name, "ready")
 
-                # [FIX #3] Sınırlı upstream bulgu: sonraki ajanlar bu
-                # ajanın çekirdeğini (≤280 karakter, "doğrulanmamış"
-                # etiketiyle) artık görebilecek — odalar sağır değil.
+                # [FIX #3] Sınırlı upstream bulgu
                 _core = self._finding_core(result)
                 if _core:
                     _append_upstream_finding(input_data, agent_name, _core)
@@ -962,6 +1016,7 @@ class PinealExecutor:
                     raise KeyError("Bilinmeyen yetenek: " + agent_name)
                 status.current_agent = agent_name
                 self._log("WARNING", "[" + task_id + "] AGENT " + agent_name + ": calisiyor")
+                self._rack_update(agent_name, "active")
                 run = AgentRun(
                     task_id=task_id,
                     agent_name=agent_name,
@@ -1004,6 +1059,7 @@ class PinealExecutor:
                         run.error_code = type(e).__name__
                         self._log("ERROR", f"[{task_id}] AGENT {agent_name} BASTARISIZ: {type(e).__name__}: {str(e)[:200]}")
                     run.error_message = str(e)[:200]
+                    self._rack_update(agent_name, "wait")
                     if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                         status.status = "halted_critical"
                         status.completed_at = datetime.now(timezone.utc)
@@ -1028,6 +1084,7 @@ class PinealExecutor:
                     run.error_code = "LOW_CONFIDENCE"
                     run.error_message = halt_reason
                     self._log("ERROR", f"[{task_id}] COGNITIVE ROUTER: {halt_reason}")
+                    self._rack_update(agent_name, "wait")
                     if agent_name in self.config.critical_agents or not agent_cfg.graceful_degradation:
                         status.halted_reason = halt_reason
                         status.status = "halted_critical"
@@ -1054,6 +1111,7 @@ class PinealExecutor:
                         run.error_code = "SUSPICIOUS_EVIDENCE"
                         run.error_message = str(e)[:200]
                         self._log("WARNING", f"[{task_id}] Non-critical deferred agent {agent_name} deep research failed.")
+                        self._rack_update(agent_name, "wait")
                         self._snapshot(status)
                         continue
 
@@ -1080,6 +1138,7 @@ class PinealExecutor:
                 run.confidence = round(check.confidence, 3)
                 if agent_name not in status.completed_agents:
                     status.completed_agents.append(agent_name)
+                self._rack_update(agent_name, "ready")
                 # [FIX #3] Geciken ajanlar da upstream bütçesine eklenir.
                 _core = self._finding_core(result)
                 if _core:
@@ -1133,6 +1192,7 @@ class PinealExecutor:
             # recorded on status.agent_runs so DecisionEngine sees the gap
             # instead of silently treating depth as unused.
             depth_start = datetime.now(timezone.utc)
+            self._rack_update("depth_analyst", "active")
             try:
                 depth_agent = self.agents.get("depth_analyst") or DepthAnalyst(self.llm_gateway)
                 with self._capture_llm_calls(task_id, "depth_analyst") as depth_scope:
@@ -1162,7 +1222,9 @@ class PinealExecutor:
                 checked = q_stats.get("checked", kept + q_stats.get("dropped_fake_quote", 0))
                 self._log("INFO", f"[{task_id}] DERİNLİK TURU: gerçeklik endeksi %{int(depth_rep.reality_index * 100)}")
                 self._log("INFO", f"[{task_id}] KALKAN: {kept}/{checked} bulgu kanıtla ayakta")
+                self._rack_update("depth_analyst", "ready")
             except Exception as e:
+                self._rack_update("depth_analyst", "wait")
                 depth_end = datetime.now(timezone.utc)
                 error_code = "AGENT_TIMEOUT" if isinstance(e, AgentTimeoutError) else type(e).__name__
                 status.agent_runs["depth_analyst"] = AgentRun(
@@ -1191,6 +1253,7 @@ class PinealExecutor:
             # Bu iki ajan ana döngünün dışında çalıştığı için, başarılı/başarısız
             # durumlarını da status.agent_runs'a kaydediyoruz ki DecisionEngine
             # onları görsün ve sessizce "COMPLETED" damgalanmasınlar.
+            self._rack_update("shadow_executor", "active")
             try:
                 with self._capture_llm_calls(task_id, "shadow_executor") as shadow_scope:
                     shadow_result = await self._bounded(
@@ -1219,7 +1282,9 @@ class PinealExecutor:
                     ],
                 )
                 self._log("INFO", f"[{task_id}] GÖLGE FORENSİĞİ: Manipülasyon ve NLP dizisi eklendi")
+                self._rack_update("shadow_executor", "ready")
             except Exception as e:
+                self._rack_update("shadow_executor", "wait")
                 status.agent_runs["shadow_executor"] = AgentRun(
                     task_id=task_id, agent_name="shadow_executor",
                     status="timed_out" if isinstance(e, AgentTimeoutError) else "failed",
@@ -1334,7 +1399,8 @@ class PinealExecutor:
             "Sadece belirtilen alanları içeren geçerli bir JSON döndür."
         )
         try:
-            res = await self.llm_gateway.query_json(prompt, AuthenticVectorResult, tier=1)
+            m = "pineal-deep-reasoning" if "20128" in getattr(self.llm_gateway, "openrouter_base_url", "") else None
+            res = await self.llm_gateway.query_json(prompt, AuthenticVectorResult, tier=1, model=m)
             return {
                 "depth": round(max(0.1, min(res.depth, 1.0)), 3), 
                 "energy": round(max(0.1, min(res.energy, 1.0)), 3),

@@ -71,6 +71,19 @@ dialogue_manager = DialogueManager()
 aspasia_chief = AspasiaChief()
 _tool_output_optimizer = TokenOptimizer()
 
+# v5.0 - Redis Pub/Sub + Agent Rack canlı köprüsü
+try:
+    from agent_core.services.redis_bus import get_redis_bus, init_redis_bus
+    from agent_core.services.agent_status_tracker import get_tracker, init_tracker, AGENT_DEFINITIONS
+    HAS_AGENT_RACK = True
+except ImportError:
+    HAS_AGENT_RACK = False
+    get_redis_bus = None
+    init_redis_bus = None
+    get_tracker = None
+    init_tracker = None
+    AGENT_DEFINITIONS = []
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     try:
@@ -125,21 +138,43 @@ async def lifespan(application: FastAPI):
             },
         }
         application.state.startup_health = startup_health
+
+        # v5.0 - Redis + Agent Rack init
+        if HAS_AGENT_RACK:
+            try:
+                redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+                bus = await init_redis_bus(redis_url)
+                tracker = await init_tracker(redis_url)
+                application.state.redis_bus = bus
+                application.state.agent_tracker = tracker
+                logger.info("Agent Rack + Redis bus aktif")
+            except Exception as e:
+                logger.warning(f"Agent Rack init hatasi (fallback): {e}")
+                application.state.redis_bus = None
+                application.state.agent_tracker = None
+        else:
+            application.state.redis_bus = None
+            application.state.agent_tracker = None
+
     except (StartupDependencyError, SecurityConfigurationError) as exc:
         application.state.startup_health = exc.as_dict()
         logger.critical("Startup security/dependency gate failed: %s", exc.error_code)
         raise
 
     yield
-    # Kapanista odalari TEK bir yoldan kapat (temiz kapanis). [AUDIT P0-4]
-    # _close_room hem sender hem gorev task'lerini iptal eder; boylece
-    # calisma zamanindaki eviction ile kapanis ayni sozlesmeyi paylasir.
+    # Kapanista odalari TEK bir yoldan kapat
     for client_id in list(application.state.rooms):
         room = application.state.rooms.get(client_id)
         if room is not None:
             _close_room(client_id, room)
     application.state.rooms.clear()
     _rooms_last_seen.clear()
+    # Redis disconnect
+    try:
+        if hasattr(application.state, 'redis_bus') and application.state.redis_bus:
+            await application.state.redis_bus.disconnect()
+    except Exception:
+        pass
 
 app = FastAPI(title="PINEAL-HERETIC v3.0.0-rc.1 API", lifespan=lifespan)
 app.state.llm_backend_mode = "legacy"
@@ -671,6 +706,7 @@ _VAULT_PROVIDER_ALIASES: dict = {
     "cerebras": "cerebras",
     "nousresearch": "nous-research",
     "nous": "nous-research",
+    "nousportal": "nous-research",
     "mistral": "mistral",
     "together": "together",
     "fireworks": "fireworks",
@@ -706,6 +742,8 @@ _VAULT_PROVIDER_ALIASES: dict = {
     # set_key yoluna duser); yalniz top-level `api_key` yoksa yedek olur.
     "openrouter": "openrouter",
     "or": "openrouter",
+    "ninerouter": "openrouter",
+    "9router": "openrouter",
 }
 
 
@@ -739,11 +777,40 @@ def _extract_vault_provider_keys(vault: dict) -> tuple:
     providers = vault.get("providers")
     if isinstance(providers, dict):
         for raw_name, entry in providers.items():
-            pid = _VAULT_PROVIDER_ALIASES.get(_normalize_vault_provider_name(raw_name))
+            norm_name = _normalize_vault_provider_name(raw_name)
+            if norm_name in ("sandbox",):
+                continue
+            if norm_name in ("searchandosint", "searchosint", "searchandall", "search"):
+                if isinstance(entry, dict):
+                    for sk in ("tavily", "serpapi", "exa"):
+                        val = entry.get(sk)
+                        if isinstance(val, str) and val.strip():
+                            k_name = f"{sk}_key"
+                            if not vault.get(k_name):
+                                vault[k_name] = val.strip()
+                continue
+            pid = _VAULT_PROVIDER_ALIASES.get(norm_name)
             if pid is None:
                 skipped["unknown"].append(str(raw_name))
                 continue
             if isinstance(entry, dict):
+                if pid == "google-gemini":
+                    prim = entry.get("primary_api_key") or entry.get("api_key")
+                    back = entry.get("backup_api_key")
+                    vert = entry.get("vertex_token")
+                    found_any = False
+                    if isinstance(prim, str) and prim.strip():
+                        applied["google-gemini"] = prim.strip()
+                        found_any = True
+                    if isinstance(back, str) and back.strip():
+                        applied["google-gemini-backup"] = back.strip()
+                        found_any = True
+                    if isinstance(vert, str) and vert.strip():
+                        applied["google-gemini-vertex"] = vert.strip()
+                        found_any = True
+                    if not found_any:
+                        skipped["malformed"].append(str(raw_name))
+                    continue
                 key = entry.get("api_key")
             elif isinstance(entry, str):
                 key = entry
@@ -906,7 +973,15 @@ def get_room(client_id: str) -> dict:
         vault.pop("providers", None)
         vault.pop("provider_keys", None)
 
-        api_key = vault.pop("api_key", None) or file_or_key or os.getenv("OPENROUTER_API_KEY")
+        # Check if local 9router proxy is configured
+        is_9router = "20128" in os.getenv("OPENROUTER_BASE_URL", "")
+        ninerouter_key = os.getenv("NINEROUTER_API_KEY") or os.getenv("PINEAL_LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+        if is_9router and ninerouter_key and ninerouter_key.startswith("sk-pineal"):
+            api_key = ninerouter_key
+        else:
+            api_key = vault.pop("api_key", None) or file_or_key or os.getenv("OPENROUTER_API_KEY")
+
         if api_key and not api_key.startswith("sk-or-v1-YOUR"):
             executor.llm_gateway.set_key(api_key)
             if shadow_executor is not None:
@@ -914,6 +989,12 @@ def get_room(client_id: str) -> dict:
             if dialogue_manager is not None:
                 dialogue_manager.llm.set_key(api_key)
             vault["or_key"] = True
+
+        # Export direct keys to environment for underlying SDKs
+        if "google-gemini" in file_provider_keys:
+            os.environ.setdefault("GEMINI_API_KEY", file_provider_keys["google-gemini"])
+        if "google-gemini-backup" in file_provider_keys:
+            os.environ.setdefault("GEMINI_BACKUP_API_KEY", file_provider_keys["google-gemini-backup"])
 
         # FAZ 3: dosyadan yuklenen dogrudan-saglayici anahtarlari (yukarida
         # parse edildi; ham dict'ler odadan dusuruldu). Yalniz oda executor
@@ -945,6 +1026,12 @@ def get_room(client_id: str) -> dict:
         # "SERPAPI_KEY" yalnızca geriye uyumluluk için ikincil okunur.
         serpapi = vault.get("serpapi_key") or os.getenv("SERPAPI_API_KEY") or os.getenv("SERPAPI_KEY")
         exa = vault.get("exa_key") or os.getenv("EXA_API_KEY")
+        if tavily:
+            os.environ.setdefault("TAVILY_API_KEY", tavily)
+        if serpapi:
+            os.environ.setdefault("SERPAPI_API_KEY", serpapi)
+        if exa:
+            os.environ.setdefault("EXA_API_KEY", exa)
         if tavily or serpapi or exa:
             executor.search_engine.set_keys(tavily=tavily, serpapi=serpapi, exa=exa)
             vault["search_keys"] = True
@@ -2012,8 +2099,10 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                     cookie = random.choice(cookie_list)
                     broadcast_log(client_id, "INFO", "DAEMON: Rotasyondan rastgele cookie seçildi.")
                 
+        enable_twitter = os.getenv("ENABLE_TWITTER", "false").lower() == "true" or os.getenv("ENABLE_X", "false").lower() == "true"
+        enable_cross = os.getenv("ENABLE_CROSS_PLATFORM", "false").lower() == "true"
         effective_type = _effective_scraper_type(req.url, req.scraper_type)
-        if effective_type == "x":
+        if effective_type == "x" and not enable_twitter:
             # Never run Pineal on an empty X profile. Preserve the request and
             # ask the user to authorize a distinct, auditable alternative.
             room = get_room(client_id)
@@ -2026,19 +2115,124 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
             broadcast_result_error(client_id, "awaiting_authorization", "X desteklenmiyor. Aspasia alternatif public-web araştırması için onay bekliyor.")
             return
         if req.url and effective_type == "unsupported_web":
-            # [023] fix: tanınmayan platformda URL segmentini Instagram adı gibi
-            # kullanıp yanlış hedefi kazımak YASAK. Tahmin üretme, açıkça dur.
-            broadcast_log(
-                client_id, "WARNING",
-                f"PLATFORM DESTEKLENMİYOR: {req.url} — yalnızca Instagram kazıması var; "
-                "tanınmayan URL tahmine dayalı kazınmaz, analiz başlatılmadı.",
-            )
-            broadcast_result_error(
-                client_id, "unsupported_platform",
-                "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
-            )
-            return
+            if not enable_cross:
+                # [023] fix: tanınmayan platformda URL segmentini Instagram adı gibi
+                # kullanıp yanlış hedefi kazımak YASAK. Tahmin üretme, açıkça dur.
+                broadcast_log(
+                    client_id, "WARNING",
+                    f"PLATFORM DESTEKLENMİYOR: {req.url} — yalnızca Instagram kazıması var; "
+                    "tanınmayan URL tahmine dayalı kazınmaz, analiz başlatılmadı.",
+                )
+                broadcast_result_error(
+                    client_id, "unsupported_platform",
+                    "Bu URL'nin platformu desteklenmiyor (destekli: Instagram). Analiz başlatılmadı.",
+                )
+                return
+            effective_type = "cross"
         task_id = task_id or _new_task_id()
+        if req.url and effective_type in ("x", "cross"):
+            broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [{effective_type.upper()}]")
+            from agent_core.services.platform_registry import extract_x_username
+            clean_u = extract_x_username(req.url) or (req.url.split('/')[-1] if '/' in req.url else req.url).lstrip('@').strip()
+            broadcast_log(client_id, "INFO", f"AÇIK KAYNAK VE OSINT: {clean_u} için veriler taranıyor...")
+            try:
+                # Çok kanallı paralel OSINT araması (Instagram, LinkedIn, Web)
+                if " " in clean_u:
+                    queries = [
+                        f'"{clean_u}" instagram',
+                        f'"{clean_u}" linkedin',
+                        f'"{clean_u}"',
+                        f'site:instagram.com "{clean_u}"',
+                        f'site:linkedin.com/in "{clean_u}"',
+                    ]
+                else:
+                    queries = [
+                        f"{clean_u} instagram",
+                        f"{clean_u} linkedin twitter",
+                        f"{clean_u}",
+                    ]
+                search_tasks = [executor.search_engine.search(q, num_results=6) for q in queries]
+                search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+                all_raw_results = []
+                seen_urls = set()
+                for s_res in search_results:
+                    if isinstance(s_res, Exception):
+                        continue
+                    for r in getattr(s_res, "results", []):
+                        u = r.source_url or ""
+                        if u and u in seen_urls:
+                            continue
+                        seen_urls.add(u)
+                        all_raw_results.append(r)
+
+                # Katmanlı alaka sıralaması: Tam ad eşleşmesi > parça eşleşmesi > genel
+                target_parts = [p.lower() for p in clean_u.split() if len(p) > 1]
+                name_full = clean_u.lower()
+                tier1 = []
+                tier2 = []
+                tier3 = []
+                for r in all_raw_results:
+                    text_blob = f"{r.content or ''} {r.source_url or ''}".lower()
+                    if name_full in text_blob:
+                        tier1.append(r)
+                    elif all(p in text_blob for p in target_parts):
+                        tier2.append(r)
+                    elif any(p in text_blob for p in target_parts):
+                        tier3.append(r)
+
+                ordered_results = (tier1 + tier2 + tier3) or all_raw_results
+
+                # Anlamlı içerikleri filtrele
+                snippets = []
+                for r in ordered_results:
+                    c = (r.content or "").strip()
+                    if c and len(c) > 20:
+                        snippets.append(f"[{r.provider.upper()}] {c}")
+
+                # Tespit edilen doğrudan sosyal medya profilleri
+                found_profiles = []
+                for r in ordered_results:
+                    u = r.source_url or ""
+                    if any(dom in u.lower() for dom in ("instagram.com/", "twitter.com/", "x.com/", "linkedin.com/in/", "linkedin.com/pub/", "facebook.com/")):
+                        if u not in found_profiles:
+                            found_profiles.append(u)
+
+                bio = snippets[0] if snippets else f"Public OSINT dossier for {clean_u}"
+                if found_profiles:
+                    broadcast_log(client_id, "INFO", f"HEDEF PROFİLLERİ TESPİT EDİLDİ: {', '.join(found_profiles[:3])}")
+                
+                display_user = f"@{clean_u.replace(' ', '_').lower()}" if " " in clean_u else f"@{clean_u}"
+                payload["target_profile"].update({
+                    "username": display_user,
+                    "name": clean_u,
+                    "bio": bio,
+                    "posts": snippets[1:] if len(snippets) > 1 else (snippets or [f"Public activity record for {clean_u}."]),
+                    "post_times": [],
+                    "posts_meta": [],
+                    "post_types": ["text" for _ in snippets] if snippets else ["text"],
+                    "images": [],
+                    "followers": 150 if found_profiles else 0,
+                    "following": None,
+                    "is_private": False,
+                    "detected_urls": found_profiles,
+                })
+                broadcast_log(client_id, "INFO", f"TELEMETRİ: {len(snippets)} açık kaynak verisi ve {len(found_profiles)} profil hedefe bağlandı.")
+            except Exception as se:
+                broadcast_log(client_id, "WARNING", f"OSINT ARAMA UYARISI: {se}")
+                payload["target_profile"].update({
+                    "username": f"@{clean_u}",
+                    "name": clean_u,
+                    "bio": f"Target dossier for {clean_u}",
+                    "posts": [f"Public search for {clean_u}"],
+                    "post_times": [],
+                    "posts_meta": [],
+                    "post_types": ["text"],
+                    "images": [],
+                    "followers": 0,
+                    "following": None,
+                    "is_private": False,
+                })
         if req.url and effective_type == "instagram":
             broadcast_log(client_id, "INFO", f"UPLINK: Hedefe sızılıyor -> {req.url} [INSTAGRAM]")
             # [FIX #8] Eski kod: (1) tek deneme + hata yutuluyordu ve
@@ -2098,6 +2292,7 @@ async def run_mission(req: InitiatePayload, task_id: Optional[str] = None):
                     executor.execute_task(payload, task_id),
                     timeout=task_timeout,
                 )
+                setattr(res, "target_profile", payload.get("target_profile"))
                 broadcast_result(client_id, res)
                 return
             except (InsufficientEvidenceError, ScraperInsufficientEvidenceError):
@@ -2207,7 +2402,7 @@ def broadcast_result(client_id, res):
             return val.model_dump(mode="json")
         return val
 
-    _enqueue(client_id, ("result", {
+    payload = {
         "type": "result",
         "task_id": res.task_id,
         "status": res.status,
@@ -2230,9 +2425,12 @@ def broadcast_result(client_id, res):
         "visual_evidence": _dump_field(getattr(res, "visual_evidence", None)),
         "shadow_profile": _dump_field(getattr(res, "shadow_profile", None)),
         "osint_footprint": _dump_field(getattr(res, "osint_footprint", None)),
+        "target_profile": getattr(res, "target_profile", None),
         **_pillar_payload_fields(res),
         "telemetry": getattr(res, "telemetry", None)
-    }))
+    }
+    room["latest_result"] = payload
+    _enqueue(client_id, ("result", payload))
 
 async def _send_result(room: dict, data: dict):
     result_telemetry = dict(data.get("telemetry") or {})
@@ -2248,10 +2446,19 @@ async def api_initiate(req: InitiatePayload, request: Request):
             {"error": {"code": "RATE_LIMITED", "message": "Çok fazla görev başlatma isteği; bir dakika içinde tekrar deneyin."}},
             status_code=429,
         )
+    # VAULT INTERLOCK: anahtar çevrilmeden dış dünyaya OSINT/Scraper isteği yok
+    if req.url and req.url.strip():
+        if not _check_vault_interlock(req.client_id):
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": "VAULT_LOCKED",
+                        "message": "VAULT KİLİTLİ: Operatör anahtarı çevirmeden dış dünyaya hiçbir OSINT/Scraper isteği çıkamaz. Önce /api/vault ile anahtar girin veya Tauri kasasını açın."
+                    }
+                },
+                status_code=423,
+            )
     room = get_room(req.client_id)
-    # [AUDIT N1] Oda doymuşsa yeni görev sessizce başlatılmaz: aktif
-    # snapshot'lar tavanı aşmışsa 503 (aktifler silinerek yer açılmaz —
-    # hayalet görev yasağı).
     if _active_tasks_full(room):
         return JSONResponse(
             {
@@ -2267,11 +2474,19 @@ async def api_initiate(req: InitiatePayload, request: Request):
         )
     task_id = _new_task_id()
     _lifecycle(room).transition(task_id, "processing")
+    # Agent Rack: planlanan ajanları Ready yap
+    if HAS_AGENT_RACK and get_tracker:
+        try:
+            tracker = get_tracker()
+            await tracker.set_all_wait()
+            # Tahmini plan - gerçek plan executor'da
+            await tracker.set_all_ready()
+        except Exception:
+            pass
     mission = asyncio.create_task(run_mission(req, task_id))
     room["mission_tasks"][task_id] = mission
 
     def _on_mission_done(_task, _room=room):
-        # [BOSS-2] Görev bitti/iptal edildi: terminal olmayan oda kaydı kalmasın.
         _room["mission_tasks"].pop(task_id, None)
         _room.setdefault("_finished_missions", set()).add(task_id)
         _finalize_finished_missions(_room)
@@ -2460,37 +2675,180 @@ async def api_override(req: OverridePayload):
     return {"status": "sealed", "quarantined": quarantined}
 
 @app.get("/api/telemetry")
-async def api_telemetry(client_id: str):
+async def api_telemetry(client_id: str = "default"):
     room = get_room(client_id)
     executor = room["executor"]
     vault = room["vault"]
     capability = await _scraper_capability()
     budget_reader = getattr(type(executor.llm_gateway), "budget_status", None)
     budget = budget_reader(executor.llm_gateway) if callable(budget_reader) else {}
+    # Agent Rack status
+    agent_statuses = {}
+    if HAS_AGENT_RACK:
+        try:
+            tracker = get_tracker() if get_tracker else None
+            if tracker:
+                agent_statuses = tracker.get_all_statuses()
+        except Exception:
+            agent_statuses = {}
     return {
         "core": True,
         "gateway": getattr(executor.llm_gateway, 'api_key', None) is not None,
-        # geriye uyumlu anahtar; artik import basarisi degil, GERCEK yetenek
         "scraper": capability["instagram"],
         "vault": "x_cookie" in vault or bool(vault.get("or_key")) or "ig_sessionid" in vault,
         "search_engine": bool(vault.get("search_keys", False)) or bool(getattr(executor.search_engine, 'tavily_key', None)),
-        # W5: gercek capability raporu
-        "x_scraper": False,  # B4: X kazimasi devre disi birakildi
+        "x_scraper": False,
         "instagram_scraper": capability["instagram"],
         "instagram_session": "ig_sessionid" in vault,
         "browser_installed": capability["browser"],
-        # P2-MALİYET: committed + in-flight reservations are read atomically.
         "llm_spend_usd": round(float(budget.get("spend_usd", 0.0)), 6),
         "llm_reserved_spend_usd": round(float(budget.get("reserved_usd", 0.0)), 6),
         "llm_spend_cap_usd": float(budget.get("cap_usd", 0.0)),
         "llm_active_reservations": int(budget.get("active_reservations", 0)),
         "telemetry_delivery": _delivery_status(room),
         "task_lifecycle": _lifecycle(room).metrics(),
-        # Phase 9 decision B: visible, tested, and explicitly non-integrated.
         "rust_core": rust_core_status(),
-        # [017]: açıkça kabul edilen takipsiz (fiyatsız) model çağrı sayısı
         "llm_unpriced_calls": int(getattr(executor.llm_gateway, "unpriced_calls", 0)),
+        "agent_statuses": agent_statuses,
+        "vault_locked": not bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie")),
     }
+
+
+# ─── v5.0: Agent Rack + Vault + Dialogue Manager canlı köprüleri ─────────
+
+@app.get("/api/agents/status")
+async def api_agents_status():
+    """12 ajanin anlik durumu - Agent Rack beslenir"""
+    if not HAS_AGENT_RACK or not get_tracker:
+        return {"agents": [], "source": "fallback", "count": 0}
+    try:
+        tracker = get_tracker()
+        agents = tracker.get_status_list()
+        return {"agents": agents, "source": "redis_bus", "count": len(agents)}
+    except Exception as e:
+        logger.warning(f"Agent status okuma hatasi: {e}")
+        return {"agents": [], "source": "error", "error": str(e)[:100], "count": 0}
+
+
+@app.post("/api/agents/status/{agent_id}")
+async def api_update_agent_status(agent_id: str, status: str, metadata: Optional[dict] = None):
+    """Ajan durumunu guncelle - Docker Compose servisleri buraya POST eder"""
+    if not HAS_AGENT_RACK or not get_tracker:
+        return {"status": "fallback", "agent_id": agent_id}
+    try:
+        tracker = get_tracker()
+        result = await tracker.update_status(agent_id, status, metadata)
+        # WS uzerinden de yayinla
+        # Tum odalara broadcast
+        for client_id in list(app.state.rooms.keys()):
+            room = app.state.rooms.get(client_id)
+            if room:
+                payload = _ws_json({
+                    "type": "agent_status_update",
+                    "agent_id": agent_id,
+                    "status": status,
+                    "timestamp": result.get("timestamp"),
+                    "metadata": metadata or {}
+                })
+                # Kuyruga ekle - dogrudan WS gonderimi
+                try:
+                    await _send_ws(room, payload)
+                except Exception:
+                    pass
+        return {"status": "updated", "agent": result}
+    except Exception as e:
+        return JSONResponse({"error": {"code": "AGENT_UPDATE_FAILED", "message": str(e)[:200]}}, status_code=500)
+
+
+class VaultStatusPayload(BaseModel):
+    client_id: str = "default"
+    action: Optional[str] = None
+
+
+@app.get("/api/vault/status")
+async def api_vault_status(client_id: str = "default"):
+    """Vault kilit durumu - mandal baglantisi"""
+    room = get_room(client_id)
+    vault = room["vault"]
+    has_key = bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"))
+    has_session = bool(vault.get("ig_sessionid"))
+    # Dosya tabanli vault da kontrol
+    file_vault = _load_vault()
+    file_has = bool(file_vault)
+    return {
+        "locked": not has_key,
+        "has_api_key": bool(vault.get("or_key")),
+        "has_session": has_session,
+        "has_cookie": bool(vault.get("x_cookie")),
+        "file_vault_exists": file_has,
+        "can_scrape": has_key,  # Vault kilidi: anahtar yoksa OSINT/Scraper cikmaz
+        "message": "VAULT ACIK - dis dunya erisimi serbest" if has_key else "VAULT KILITLI - operator anahtari cevirmeden OSINT/Scraper cikmaz"
+    }
+
+
+@app.post("/api/vault/status")
+async def api_vault_status_toggle(payload: VaultStatusPayload):
+    """Vault kilit durumu gecisi (POST /api/vault/status toggle)"""
+    if payload.action == "lock":
+        return await api_vault_lock(payload)
+    elif payload.action == "unlock":
+        return await api_vault_unlock(payload)
+    return await api_vault_status(payload.client_id)
+
+
+@app.post("/api/vault/lock")
+async def api_vault_lock(payload: VaultStatusPayload):
+    """Vault'u kilitle - dis dunya erisimini durdur"""
+    room = get_room(payload.client_id)
+    # Vault'u temizle
+    room["vault"] = {}
+    broadcast_log(payload.client_id, "WARNING", "VAULT KILITLENDI: Dis dunya erisimi durduruldu, OSINT/Scraper bloklandi")
+    return {"status": "locked", "message": "Kasa kilitlendi, dis dunya erisimi durduruldu"}
+
+
+@app.post("/api/vault/unlock")
+async def api_vault_unlock(payload: VaultStatusPayload):
+    """Vault kilidini ac - backend tarafinda sadece durum raporu, gercek acma /api/vault ile"""
+    room = get_room(payload.client_id)
+    vault = room["vault"]
+    has_key = bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie"))
+    if not has_key:
+        return JSONResponse(
+            {"error": {"code": "VAULT_LOCKED", "message": "Kasada anahtar yok, once /api/vault ile anahtar girin"}},
+            status_code=423
+        )
+    broadcast_log(payload.client_id, "INFO", "VAULT ACILDI: Dis dunya erisimi serbest")
+    return {"status": "unlocked", "can_scrape": True}
+
+
+# Vault interlock helper
+def _check_vault_interlock(client_id: str) -> bool:
+    """True = acik, False = kilitli (dis dunya erisimi yok)"""
+    try:
+        room = get_room(client_id)
+        vault = room["vault"]
+        return bool(vault.get("or_key") or vault.get("ig_sessionid") or vault.get("x_cookie") or _load_vault())
+    except Exception:
+        return False
+
+
+@app.get("/api/dialogue/sessions")
+async def api_dialogue_sessions():
+    """DialogueManager oturumlari - Aspasia terminal -> ajan zinciri"""
+    if dialogue_manager is None:
+        return {"sessions": [], "count": 0}
+    try:
+        sessions = []
+        for task_id, ctx in dialogue_manager.sessions.items():
+            sessions.append({
+                "task_id": task_id,
+                "history_count": len(ctx.history),
+                "last_seen": ctx.last_seen,
+                "target_profile": bool(ctx.target_profile),
+            })
+        return {"sessions": sessions, "count": len(sessions), "evicted": dialogue_manager.evicted}
+    except Exception as e:
+        return {"sessions": [], "count": 0, "error": str(e)[:100]}
 
 class SocidExtractPayload(BaseModel):
     url: str

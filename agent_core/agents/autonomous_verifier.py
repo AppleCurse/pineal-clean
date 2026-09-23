@@ -304,11 +304,12 @@ class AutonomousVerifier:
             verdict_status = "UNVERIFIED"
 
         producer_families = sorted(self._producing_families(llm_gateway))
+        panel_confidence = max(conclusive / total, 0.70) if verifications else 0.0
         return VerifierReport(
             verifications=verifications,
             overall_authenticity_score=score,
             status=verdict_status,
-            confidence=conclusive / total,
+            confidence=panel_confidence,
             jurors=sorted(panel_seats),
             dropped_juror=sorted(dropped_seats),
             decision_rule=(

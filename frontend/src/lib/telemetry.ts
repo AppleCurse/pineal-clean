@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import { apiFetch, clientId } from '../store';
+import { apiFetch, clientId, vaultLocked } from '../store';
 
 // ============================================================
 // CANLI SİSTEM TELEMETRİSİ — göstergelerin DÜRÜST veri kaynağı.
@@ -115,6 +115,9 @@ async function pollOnce() {
         activeReservations: Number(t.llm_active_reservations || 0),
         taskRuns: Number((t.task_lifecycle || {}).runs || 0),
       });
+      if (t.vault_locked !== undefined) {
+        vaultLocked.set(!!t.vault_locked);
+      }
     } catch {
       sysTelemetry.update((s) => ({ ...s, ok: false }));
     }

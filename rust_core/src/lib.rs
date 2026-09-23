@@ -12,6 +12,7 @@ pub mod task_isolation;
 pub mod agents;
 pub mod aspasia;
 pub mod token_compressor;
+pub mod redis_bridge;
 // [W4.1] tauri_bridge yalnızca masaüstü kabuğu derlemesinde (feature="tauri").
 // Böylece rust_core çekirdeği CI'da webkit sistem bağımlılıkları olmadan
 // derlenip test edilebilir; kabuk (src-tauri) feature'ı açar.
