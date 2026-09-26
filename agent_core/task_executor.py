@@ -1754,6 +1754,15 @@ class PinealExecutor:
                 checked = q_stats.get("checked", kept + q_stats.get("dropped_fake_quote", 0))
                 self._log("INFO", f"[{task_id}] DERİNLİK TURU: gerçeklik endeksi %{int(depth_rep.reality_index * 100)}")
                 self._log("INFO", f"[{task_id}] KALKAN: {kept}/{checked} bulgu kanıtla ayakta")
+                # [A-KAPANIŞ] Hakem → DepthReport izi: hangi claim_id hangi bulguyu etkiledi.
+                trace = getattr(depth_rep, "verification_trace", None) or {}
+                if trace.get("claims_available"):
+                    self._log(
+                        "INFO",
+                        f"[{task_id}] HAKEM İZİ: {len(trace.get('linked_findings') or [])} bulgu "
+                        f"{trace.get('claims_available')} iddiadan {len(trace.get('claim_ids_used') or [])} kimliğe bağlı; "
+                        f"reddedilen kimlik={trace.get('rejected_claim_ids', 0)}",
+                    )
                 self._rack_update("depth_analyst", "ready")
             except Exception as e:
                 self._rack_update("depth_analyst", "wait")
