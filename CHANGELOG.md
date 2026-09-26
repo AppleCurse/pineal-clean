@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — 2026-09-26 — A-KAPANIŞ: Verifier → DepthReport izlenebilirliği
+
+- **Ölçülen kusur (A1 CONTROL/TREATMENT diff):** DepthAnalyst, prompt'taki hakem
+  `evidence_quote`'unu birebir alıntılayıp çelişki üretiyordu; `quote_guard`
+  korpusu yalnız profil/görsel/timing/public_web metinlerinden oluştuğu için bu
+  KANITLI çelişki "uydurma alıntı" sayılıp imha ediliyordu
+  (`dropped_fake_quote=1`, `contradictions=[]`). Geriye yalnız `reality_rationale`
+  kalıyor; onda da hangi `claim_id`'nin kararı değiştirdiği izlenemiyordu.
+- **Düzeltme 1 — `agent_core/services/quote_guard.py`:** yalnız KESİN statülü
+  (DOĞRULANDI/YALAN/ÇELİŞKİLİ) `bio_extracted` hakem alıntıları korpusa girer.
+  Güvenlik gerekçesi: AutonomousVerifier kanıt alanlarını SADECE kanıt
+  kapısından geçen oydan doldurur (url ∈ arama sonuçları + alıntı kaynakta
+  birebir + destek oranı); BİLİNMİYOR/sözlük-dışı statü, kimliksiz kayıt,
+  `canonical_observation_checks` ve çağıran-enjekte `verifications`
+  (executor görev başında siler) çıpa OLAMAZ. `verifications` yoksa korpus
+  BİREBİR eski hâli.
+- **Düzeltme 2 — `DepthFinding.source_claim_id / verification_status /
+  verification_link_basis` + `DepthReport.verification_trace`:** bağ
+  deterministik kurulur — (a) LLM'in yazdığı `source_claim_id` hakemin ürettiği
+  bir kimlik değilse bağ düşer (`rejected_claim_ids`), (b) kimlik yoksa ayakta
+  kalan alıntı bir hakem alıntısıyla eşleşiyorsa `quote_match` ile bağlanır,
+  (c) `verification_status`'u YALNIZ kod yazar (LLM statüsü bağ yoksa silinir,
+  varsa hakem kaydıyla ezilir). Rapor düzeyi iz: `claims_available`,
+  `quote_anchors`, `linked_findings[]`, `claim_ids_used[]`,
+  `rationale_claim_ids[]`, `rationale_anchored_to_verification`.
+  Executor log satırı: `HAKEM İZİ: n bulgu … kimliğe bağlı`.
+- **Kilit:** `tests/unit/test_depth_verification_trace.py` (A1 CONTROL vs
+  TREATMENT alan-diff'i kalıcı test) + `tests/integration/
+  test_depth_verification_trace_executor.py` (executor içinde WRITE→READ→USE→
+  ALTER→FINAL; negatif kol: enjekte `verifications` çıpa olamaz).
+  Tam paket: 1410 passed / 25 failed — 25'i değişiklik öncesiyle birebir aynı
+  (opsiyonel OSINT bağımlılıkları maigret/holehe/socid/invisible_playwright +
+  uvicorn bayrağı; bu değişiklikle ilgisiz).
+- **Kapsam dışı (bilinçli):** B6 legacy kolunda (`PINEAL_ENABLE_CANONICAL_
+  MESSAGE_CONTEXT` kapalı) PatternInterrupt `target_analysis`'i ham okur;
+  bu deneyin kontrol koludur, varsayılanı değiştirmek ayrı karar.
+
 ## Unreleased — 2026-09-18 — C8: decision_config.yaml ÖLÜ ANAHTAR TEMİZLİĞİ
 
 - **[C8] `config/decision_config.yaml` içinden 4 ölü anahtar kaldırıldı:**

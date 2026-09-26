@@ -9,6 +9,14 @@ class DepthFinding(BaseModel):
     observation: str
     evidence_quotes: List[str] = []
     confidence_note: str = ""
+    # [A-KAPANIŞ] Hakem (AutonomousVerifier) iddiasına deterministik bağ.
+    # LLM yalnız `source_claim_id` önerebilir; kimlik hakemin ürettiği bir
+    # claim_id değilse QuoteGuard bağı düşürür. `verification_status` ve
+    # `verification_link_basis` ("llm_claim_id" | "quote_match") YALNIZ kod
+    # tarafından yazılır — LLM'in yazdığı statü bağ yoksa silinir, varsa ezilir.
+    source_claim_id: Optional[str] = None
+    verification_status: Optional[str] = None
+    verification_link_basis: Optional[str] = None
     model_config = ConfigDict(extra="allow")
 
 class DepthReport(BaseModel):
@@ -21,6 +29,10 @@ class DepthReport(BaseModel):
     essence_one_liner: str
     follower_audit_summary: Optional[str] = None
     quote_guard: Optional[Dict[str, Any]] = None
+    # [A-KAPANIŞ] Rapor düzeyi iz (quote_guard.guard_report yazar): hangi hakem
+    # sonucu hangi bulguyu/çelişkiyi etkiledi — claims_available, quote_anchors,
+    # linked_findings[], claim_ids_used[], rationale_claim_ids[], rejected_claim_ids.
+    verification_trace: Optional[Dict[str, Any]] = None
     model_config = ConfigDict(extra="allow")
 
 class DepthAnalyst:
@@ -125,6 +137,10 @@ class DepthAnalyst:
             "- BİLİNMİYOR = kanıt yok; YALAN değildir. ÇELİŞKİLİ ve YALAN ayrı statülerdir.\n"
             "- Kanonik gözlem kontrollerindeki provenance/hesaplama uyumsuzluğu yalnızca bütünlük bulgusudur; olgusal çürütme değildir.\n"
             "- Doğrulama statülerini psikolojik kişilik niteliğine dönüştürme; yalnız ilgili iddiayı statüsüyle birlikte aktar.\n"
+            "- Bir bulgu/çelişki yukarıdaki bir bio iddiasına dayanıyorsa 'source_claim_id' alanına o iddianın "
+            "'claim_id' değerini BİREBİR yaz. Kesin statülü (DOĞRULANDI/YALAN/ÇELİŞKİLİ) iddiaların 'evidence_quote' "
+            "metni kaynak korpusuna dahildir; 'evidence_quotes' içinde birebir alıntılayabilirsin. "
+            "'verification_status' alanını SEN doldurma; kod, claim_id üzerinden hakem statüsünü kendisi bağlar.\n"
             f"{upstream_block}\n"
         )
 
