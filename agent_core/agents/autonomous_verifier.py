@@ -35,8 +35,10 @@ Yeni sözleşme (hepsi kodda, hiçbiri görünmez kural değil):
     PARTIALLY_VERIFIED (belirsiz oy onayı engeller).
 """
 
-from pydantic import BaseModel, ConfigDict
-from typing import Dict, Iterable, List, Optional, Tuple
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Dict, Iterable, List, Literal, Optional, Tuple
+
+from agent_core.services.claim_decision_gate import DIRECT_REFUTATION_BASIS
 
 #: Kapalı oy sözlüğü — jüri bunların dışında bir kelimeyle ONAY veremez.
 VOTE_VERIFIED = "DOĞRULANDI"
@@ -157,10 +159,41 @@ class VerificationResult(BaseModel):
     seat_errors: Dict[str, str] = {}
     dropped_juror: List[str] = []
     decision_rule: str = ""
+    # Claim identity and source are attached by the verifier, never by the jury.
+    claim_id: Optional[str] = None
+    claim_origin: Optional[Literal["bio_extracted"]] = None
+    claim_source_refs: List[str] = Field(default_factory=list)
+    direct_refutation_confirmed: bool = False
+    direct_refutation_basis: str = ""
+
+
+class CanonicalObservationCheck(BaseModel):
+    """Internal evidence-integrity result; it deliberately has no truth verdict."""
+
+    claim_id: str
+    claim_origin: Literal["canonical_observation"] = "canonical_observation"
+    evidence_id: str
+    source_kind: Literal["pillar_bundle", "tier2_agent_output"] = "pillar_bundle"
+    epistemic_type: Literal["observation"] = "observation"
+    claim_text: str
+    source_engine: str
+    source_status: Optional[str] = None
+    provenance_refs: List[str] = Field(default_factory=list)
+    factual_truth_status: Literal["BİLİNMİYOR"] = "BİLİNMİYOR"
+    factual_verdict_issued: Literal[False] = False
+    provenance_integrity: Literal[
+        "valid", "missing", "mismatch", "present_unverified", "not_checked"
+    ]
+    source_consistency: Literal["consistent", "mismatch", "not_checked"]
+    reproducibility: Literal["reproduced", "mismatch", "not_checked"]
+    downstream_decision_state: Literal["NO_FACTUAL_VERDICT"] = "NO_FACTUAL_VERDICT"
+    decision_note: str
 
 
 class VerifierReport(BaseModel):
-    verifications: List[VerificationResult] = []
+    verifications: List[VerificationResult] = Field(default_factory=list)
+    canonical_observation_checks: List[CanonicalObservationCheck] = Field(default_factory=list)
+    rejected_canonical_observation_count: int = 0
     overall_authenticity_score: float = 0.0
     status: str = "UNVERIFIED"
     confidence: float = 0.0
@@ -428,10 +461,195 @@ class AutonomousVerifier:
             decision_rule=" | ".join([rule, *rules]),
         )
 
+    @staticmethod
+    def _stable_claim_id(origin: str, source_ref: str, claim_text: str) -> str:
+        import hashlib
+
+        identity = chr(0).join((origin, source_ref, _canonical_token(claim_text)))
+        return "clm_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+
+    @classmethod
+    def _bio_claim_fields(cls, claim_text: str) -> dict:
+        return {
+            "claim_id": cls._stable_claim_id(
+                "bio_extracted", "target_profile.bio", claim_text
+            ),
+            "claim_origin": "bio_extracted",
+            "claim_source_refs": ["target_profile.bio"],
+        }
+
+    @staticmethod
+    def _direct_refutation_is_audited(result: VerificationResult) -> bool:
+        """A conservative refutation predicate built only from audited panel data."""
+        return bool(
+            result.truth_status == VOTE_FALSE
+            and result.evidence_url.strip()
+            and result.evidence_quote.strip()
+            and result.contradiction_detail.strip()
+            and len(result.juror_votes) >= 2
+            and all(vote == VOTE_FALSE for vote in result.juror_votes.values())
+            and result.vote_audit
+            and set(result.vote_audit) == set(result.juror_votes)
+            and all(rule.startswith("kanit_kapisi_gecildi:") for rule in result.vote_audit.values())
+            and not result.invalid_votes
+            and not result.seat_errors
+        )
+
+    @staticmethod
+    def _check_canonical_observations(
+        input_data: Dict,
+    ) -> Tuple[List[CanonicalObservationCheck], int]:
+        """Check canonical observation lineage without external search or truth claims."""
+        from agent_core.domain.evidence_models import EvidenceItem
+        from agent_core.services.pillar_evidence_adapter import adapt_pillar_bundle
+
+        bundle_supplied = input_data.get("pillar_bundle") is not None
+        bundle_recomputed = False
+        pillar_by_id = {}
+        if bundle_supplied:
+            try:
+                pillar_by_id = {
+                    item.evidence_id: item
+                    for item in adapt_pillar_bundle(
+                        input_data.get("pillar_bundle"),
+                        target_profile=input_data.get("target_profile"),
+                    )
+                }
+                bundle_recomputed = True
+            except Exception:
+                # An unavailable/invalid source bundle means "not checked", not false.
+                bundle_recomputed = False
+
+        raw_tier2 = input_data.get("canonical_observation_evidence")
+        tier2_supplied = isinstance(raw_tier2, list) and bool(raw_tier2)
+        tier2_recomputed = False
+        tier2_by_id = {}
+        if tier2_supplied and isinstance(input_data.get("target_analysis"), (dict, BaseModel)):
+            try:
+                from agent_core.services.tier2_evidence_adapter import canonicalize_tier2_output
+
+                tier2_by_id = {
+                    item.evidence_id: item
+                    for item in canonicalize_tier2_output(
+                        "human_behavior", input_data.get("target_analysis")
+                    )
+                    if item.epistemic_type == "observation"
+                }
+                tier2_recomputed = True
+            except Exception:
+                tier2_recomputed = False
+
+        groups = (
+            (
+                "pillar_bundle",
+                input_data.get("forensic_evidence"),
+                pillar_by_id,
+                bundle_recomputed,
+                bundle_supplied,
+            ),
+            (
+                "tier2_agent_output",
+                raw_tier2,
+                tier2_by_id,
+                tier2_recomputed,
+                tier2_supplied,
+            ),
+        )
+        checks: List[CanonicalObservationCheck] = []
+        rejected = 0
+        for source_kind, raw_items, expected_by_id, can_recompute, source_supplied in groups:
+            if not isinstance(raw_items, list):
+                continue
+            for raw_item in raw_items:
+                try:
+                    item = EvidenceItem.model_validate(raw_item)
+                except Exception:
+                    rejected += 1
+                    continue
+                if item.epistemic_type != "observation":
+                    continue
+
+                expected = expected_by_id.get(item.evidence_id) if can_recompute else None
+                if expected is not None:
+                    matches = item == expected
+                    refs_match = item.provenance_refs == expected.provenance_refs
+                    provenance_integrity = (
+                        "missing" if not item.provenance_refs
+                        else "valid" if refs_match
+                        else "mismatch"
+                    )
+                    source_consistency = "consistent" if matches else "mismatch"
+                    reproducibility = "reproduced" if matches else "mismatch"
+                    source_label = "pillar bundle" if source_kind == "pillar_bundle" else "Tier-2 agent output"
+                    note = (
+                        f"The canonical adapter reproduced this item from the supplied {source_label}; "
+                        "this is an integrity check, not a factual verdict."
+                        if matches
+                        else f"The supplied item differs from the deterministic {source_label} adapter output; "
+                        "this is an integrity check, not a factual verdict."
+                    )
+                elif can_recompute:
+                    provenance_integrity = "missing" if not item.provenance_refs else "mismatch"
+                    source_consistency = "mismatch"
+                    reproducibility = "mismatch"
+                    note = (
+                        "The item ID was not reproduced from its supplied canonical source; "
+                        "this is not a factual refutation."
+                    )
+                else:
+                    provenance_integrity = (
+                        "present_unverified" if item.provenance_refs
+                        else "missing" if source_supplied
+                        else "not_checked"
+                    )
+                    source_consistency = "not_checked"
+                    reproducibility = "not_checked"
+                    note = (
+                        "No usable source output was available for recomputation; "
+                        "no factual verdict is issued."
+                    )
+
+                checks.append(CanonicalObservationCheck(
+                    claim_id=AutonomousVerifier._stable_claim_id(
+                        "canonical_observation", item.evidence_id, item.content
+                    ),
+                    evidence_id=item.evidence_id,
+                    source_kind=source_kind,
+                    claim_text=item.content,
+                    source_engine=item.source_engine,
+                    source_status=item.source_status,
+                    provenance_refs=list(item.provenance_refs),
+                    provenance_integrity=provenance_integrity,
+                    source_consistency=source_consistency,
+                    reproducibility=reproducibility,
+                    decision_note=note,
+                ))
+        return checks, rejected
+
+    async def execute(self, input_data: Dict, memory, llm_gateway) -> VerifierReport:
+        """Run independent internal integrity checks and bio-only external verification."""
+        internal_checks, rejected_count = self._check_canonical_observations(input_data)
+        try:
+            report = await self._verify_bio_claims(input_data, memory, llm_gateway)
+        except Exception:
+            # External provider/panel failure must not discard internal lineage results.
+            report = VerifierReport(
+                verifications=[],
+                overall_authenticity_score=0.0,
+                status="UNVERIFIED",
+                confidence=0.0,
+                data_confidence=False,
+                fallback_reason="external_verification_error",
+            )
+        return report.model_copy(update={
+            "canonical_observation_checks": internal_checks,
+            "rejected_canonical_observation_count": rejected_count,
+        })
+
     # [BOSS-9] Bu ajan upstream bulgu bloğunu BİLİNÇLİ olarak okumaz: doğrulama
     # bağımsız olmalıdır. Diğer ajanların doğrulanmamış çıkarımları prompt'a
     # girerse "bağımsız hakem" işlevi kanıtla değil komşu iddiayla hizalanır.
-    async def execute(self, input_data: Dict, memory, llm_gateway) -> VerifierReport:
+    async def _verify_bio_claims(self, input_data: Dict, memory, llm_gateway) -> VerifierReport:
         target_profile = input_data.get('target_profile', {})
         bio = target_profile.get('bio', '')
 
@@ -504,6 +722,7 @@ class AutonomousVerifier:
         rules: set = set()
         accounting = {"cast": 0, "counted": 0, "voided_by_gate": 0, "invalid": 0, "seat_errors": 0}
         for claim in claim_data.claims:
+            claim_fields = self._bio_claim_fields(claim.claim_text)
             query = claim.claim_text
             name = target_profile.get("name", "")
             username = target_profile.get("username", "")
@@ -517,6 +736,13 @@ class AutonomousVerifier:
 
             outcome = await self.search_engine.search(query, num_results=2)
             if not outcome.available:
+                verifications.append(VerificationResult(
+                    claim_text=claim.claim_text,
+                    truth_status=VOTE_UNKNOWN,
+                    contradiction_detail="Arama sağlayıcısı bu iddia için kanıt sağlayamadı.",
+                    decision_rule="arama_kullanilamadi",
+                    **claim_fields,
+                ))
                 return VerifierReport(
                     verifications=verifications,
                     overall_authenticity_score=0.0,
@@ -534,6 +760,7 @@ class AutonomousVerifier:
                     evidence_url="",
                     contradiction_detail="İnternette bu iddiayı doğrulayan / yalanlayan iz bulunamadı.",
                     decision_rule="arama_sonucu_yok",
+                    **claim_fields,
                 ))
                 continue
 
@@ -562,6 +789,12 @@ class AutonomousVerifier:
             panel_verdict = await self._verify_with_panel(
                 verify_prompt, claim.claim_text, llm_gateway, sources=sources
             )
+            direct_refutation = self._direct_refutation_is_audited(panel_verdict)
+            panel_verdict = panel_verdict.model_copy(update={
+                **claim_fields,
+                "direct_refutation_confirmed": direct_refutation,
+                "direct_refutation_basis": DIRECT_REFUTATION_BASIS if direct_refutation else "",
+            })
             verifications.append(panel_verdict)
             panel_seats.update(panel_verdict.juror_votes)
             dropped_seats.update(panel_verdict.dropped_juror)
